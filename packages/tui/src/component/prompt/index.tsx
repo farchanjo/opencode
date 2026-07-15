@@ -1577,7 +1577,7 @@ export function Prompt(props: PromptProps) {
               </Show>
             </Match>
           </Switch>
-          <box gap={2} flexDirection="row">
+          <box gap={2} flexDirection="row" flexShrink={0}>
             <Show when={editorContextLabelState() !== "none" ? editorFileLabelDisplay() : undefined}>
               {(file) => (
                 <text fg={editorContextLabelState() === "pending" ? theme.secondary : theme.textMuted}>{file()}</text>
