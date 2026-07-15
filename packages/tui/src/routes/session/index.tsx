@@ -2366,9 +2366,14 @@ function Shell(props: ToolProps) {
   const input = createMemo(() => (command() ? `${isRunning() ? "" : "$ "}${command()}` : ""))
   const content = createMemo(() => [input(), output()].filter(Boolean).join("\n\n"))
   const collapsed = createMemo(() => collapseToolOutput(content(), maxLines, maxChars()))
-  const limited = createMemo(() => {
-    if (expanded() || !collapsed().overflow) return content()
-    return collapsed().output
+  const visible = createMemo(() => {
+    const command = input()
+    if (expanded()) return { input: command, output: output() }
+    const preview = collapsed().overflow ? collapsed().output : content()
+    return {
+      input: preview.slice(0, command.length),
+      output: preview.slice(command.length).replace(/^\n+/, ""),
+    }
   })
   const expandable = createMemo(() => Boolean(shellID()) || collapsed().overflow)
   const toggle = () => {
@@ -2393,17 +2398,16 @@ function Shell(props: ToolProps) {
           <Show
             when={isRunning()}
             fallback={
-              <text>
-                <span style={{ fg: theme.text }}>{limited().slice(0, input().length)}</span>
-                <span style={{ fg: theme.textMuted }}>{limited().slice(input().length)}</span>
-              </text>
+              <text fg={theme.text}>{visible().input}</text>
             }
           >
             <Spinner color={color()}>
-              <span style={{ fg: theme.text }}>{limited().slice(0, input().length)}</span>
-              <span style={{ fg: theme.textMuted }}>{limited().slice(input().length)}</span>
+              <span style={{ fg: theme.text }}>{visible().input}</span>
             </Spinner>
           </Show>
+        </Show>
+        <Show when={visible().output}>
+          {(value) => <text fg={theme.textMuted}>{value()}</text>}
         </Show>
         <Show when={shellID()}>
           <StatusBadge>Background</StatusBadge>
