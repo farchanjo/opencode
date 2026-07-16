@@ -202,3 +202,9 @@ yield * prompt.cancel(chat.id)
 - Testing debounce or throttle behavior, where the sleep **is** the test.
 - Letting real wall-clock advance past a genuine timestamp resolution boundary (e.g. mtime granularity).
 - Simulating network latency in race-regression tests that intentionally exercise ordering.
+
+## Spec Kit governance on `fcustom`
+
+- `doc/arch` is the source of truth: check `speckit status`/`speckit next`, active feature, and guard before changing tests.
+- Follow `specify → clarify` (when needed) → `plan → tasks → analyze → implement → validate`, with incremental validation and the repository hook; record changed decisions.
+- Do not implement Smart Routing while alternatives are open or without explicit authorization. Root `AGENTS.md` and the constitution govern; keep these test rules intact.

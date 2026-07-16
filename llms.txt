@@ -1,0 +1,11 @@
+# opencode
+
+> opencode is a spec-driven project whose validated source of truth lives in doc/arch; specs come first and code follows.
+
+spec-first: doc/arch is the source of truth — run `speckit status` then `speckit next` and read the spec before writing any code.
+
+## Documentation
+
+- [Agent context](AGENTS.md): dense LLM context
+- [Human overview](README.md): approachable overview
+- [Spec corpus](doc/arch/): the validated source of truth

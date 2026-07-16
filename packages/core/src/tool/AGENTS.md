@@ -57,3 +57,9 @@ Producer capture limits are separate. For example, Bash keeps `AppProcess.maxOut
 - Plugin boot has not been redesigned to register canonical tools through `Tools.Service`; do not redesign it as part of leaf migrations.
 - MCP and future Session-scoped registrations still need an explicit canonical registration design.
 - The public Session result shape currently exposes managed `outputPaths`; full storage encapsulation requires a future opaque managed-output reference design.
+
+## Spec Kit governance on `fcustom`
+
+- `doc/arch` is the source of truth: check `speckit status`/`speckit next`, active feature, and guard before changing Core tools.
+- Follow `specify → clarify` (when needed) → `plan → tasks → analyze → implement → validate`, with incremental validation and the repository hook; record changed decisions.
+- Do not implement Smart Routing while alternatives are open or without explicit authorization. Root `AGENTS.md` and the constitution govern; keep these tool rules intact.

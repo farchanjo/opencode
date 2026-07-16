@@ -129,3 +129,9 @@ Use `Effect.cached` when multiple concurrent callers should share a single in-fl
 Use `EffectBridge` for native or external callbacks (`@parcel/watcher`, `node-pty`, native `fs.watch`, plugin callbacks, etc.) that need to re-enter Effect services with instance/workspace context.
 
 Plain async code should pass explicit context or stay inside an Effect fiber; do not add ambient instance context shims.
+
+## Spec Kit governance on `fcustom`
+
+- `doc/arch` is the source of truth: check `speckit status`/`speckit next`, active feature, and guard before changing opencode.
+- Follow `specify → clarify` (when needed) → `plan → tasks → analyze → implement → validate`, with incremental validation and the repository hook; record changed decisions.
+- Do not implement Smart Routing while alternatives are open or without explicit authorization. Root `AGENTS.md` and the constitution govern; keep these opencode rules intact.

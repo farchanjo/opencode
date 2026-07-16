@@ -13,3 +13,9 @@ Use these patterns for server and HttpApi middleware tests in this directory.
 - Use `tmpdirScoped({ git: true })` plus `Project.use.fromDirectory(dir)` for project-backed requests.
 - If a test needs persisted state without matching runtime state, keep direct database setup inside a narrowly named helper that explains that state.
 - Add comments for non-obvious test topology, especially tests involving both the local test server and a fake upstream server.
+
+## Spec Kit governance on `fcustom`
+
+- `doc/arch` is the source of truth: check `speckit status`/`speckit next`, active feature, and guard before changing server tests.
+- Follow `specify → clarify` (when needed) → `plan → tasks → analyze → implement → validate`, with incremental validation and the repository hook; record changed decisions.
+- Do not implement Smart Routing while alternatives are open or without explicit authorization. Root `AGENTS.md` and the constitution govern; keep these server-test rules intact.

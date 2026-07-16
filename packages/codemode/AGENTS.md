@@ -21,3 +21,9 @@
 - Think deliberately about richer binary boundaries before allowing `Blob`, `File`, `ArrayBuffer`, streams, or typed arrays beyond today's JSON-like values. If CodeMode supports binary tool args/results, use explicit tagged data shapes and clear size limits rather than relying on ambient runtime serialization.
 - Keep host capabilities explicit. Globals such as `fetch`, `crypto`, filesystem handles, extra modules, or network clients should be opt-in runtime capabilities with obvious policy defaults, not ambient authority. Default to unavailable unless a host deliberately provides the capability.
 - If `fetch` is added, model it as a host-provided outbound capability with policy controls: allowed origins, methods, headers, response size, timeout, and whether response bodies may be returned, emitted, or only summarized through a tool.
+
+## Spec Kit governance on `fcustom`
+
+- `doc/arch` is the source of truth: check `speckit status`/`speckit next`, active feature, and guard before changing Code Mode.
+- Follow `specify → clarify` (when needed) → `plan → tasks → analyze → implement → validate`, with incremental validation and the repository hook; record changed decisions.
+- Do not implement Smart Routing while alternatives are open or without explicit authorization. Root `AGENTS.md` and the constitution govern; keep these package rules intact.

@@ -1,0 +1,17 @@
+# speckit project configuration (ADR-0029): the merged control-plane
+# source of truth. Lives under doc/arch, so it is committed and in guard scope.
+
+[git]
+email = "farchanjo@gmail.com"
+
+# The ACTIVE spec scope is the UNION of the static globs below (operator-managed)
+# and derived globs computed at startup: doc/arch/sdd/NNN-slug/** for the active
+# feature (its branch), doc/.specify/**, and doc/arch/** (always). Do NOT list
+# the derived globs here.
+[guard]
+mode = "enforce"               # "enforce" (default) | "advisory"
+overrideFlag = "--allow-out-of-spec"
+specScopeGlobs = [
+  # Add implementation directories the implement phase may write, e.g.:
+  # "src/**",
+]

@@ -1,0 +1,118 @@
+#!/bin/sh
+set -eu
+
+# Spec Kit governance is intentionally limited to fcustom. Other branches keep
+# the repository's existing commit behavior.
+branch=$(git symbolic-ref --quiet --short HEAD 2>/dev/null || true)
+[ "$branch" = "fcustom" ] || exit 0
+
+repo_root=$(git rev-parse --show-toplevel)
+cd "$repo_root"
+
+if ! git diff --cached --check; then
+  printf '%s\n' "pre-commit: staged diff contains whitespace errors; fix them before committing." >&2
+  exit 1
+fi
+
+if [ -x "/Users/farchanjo/bin/speckit" ]; then
+  speckit_bin="/Users/farchanjo/bin/speckit"
+elif command -v speckit >/dev/null 2>&1; then
+  speckit_bin=$(command -v speckit)
+else
+  printf '%s\n' "pre-commit: Speckit was not found." >&2
+  printf '%s\n' "Install Speckit or make /Users/farchanjo/bin/speckit or speckit on PATH; commit aborted." >&2
+  exit 1
+fi
+
+printf '%s\n' "pre-commit: running Speckit incremental validation for staged changes..."
+
+# Speckit's --changed mode reports findings intersecting a changed file, which
+# is not sufficient for legacy findings in a file being edited. Compare the
+# complete JSON finding sets from HEAD and from a disposable staged worktree.
+validation_dir=$(mktemp -d "${TMPDIR:-/tmp}/opencode-speckit.XXXXXX")
+baseline_dir=$(mktemp -d "${TMPDIR:-/tmp}/opencode-speckit-base.XXXXXX")
+baseline_json=$(mktemp "${TMPDIR:-/tmp}/opencode-speckit-base.XXXXXX.json")
+candidate_json=$(mktemp "${TMPDIR:-/tmp}/opencode-speckit-candidate.XXXXXX.json")
+staged_patch=$(mktemp "${TMPDIR:-/tmp}/opencode-speckit-staged.XXXXXX.patch")
+cleanup() {
+  git worktree remove --force "$validation_dir" >/dev/null 2>&1 || true
+  git worktree remove --force "$baseline_dir" >/dev/null 2>&1 || true
+  rm -f "$baseline_json" "$candidate_json" "$staged_patch"
+}
+trap cleanup EXIT HUP INT TERM
+
+if ! git diff --cached --binary --no-ext-diff > "$staged_patch"; then
+  printf '%s\n' "pre-commit: unable to capture the staged diff for validation; commit aborted." >&2
+  exit 1
+fi
+
+if ! git worktree add --quiet --detach "$validation_dir" HEAD; then
+  printf '%s\n' "pre-commit: unable to create an isolated validation worktree; commit aborted." >&2
+  exit 1
+fi
+
+if ! git worktree add --quiet --detach "$baseline_dir" HEAD; then
+  printf '%s\n' "pre-commit: unable to create the baseline validation worktree; commit aborted." >&2
+  exit 1
+fi
+
+if ! git -C "$validation_dir" apply --allow-empty --whitespace=nowarn "$staged_patch"; then
+  printf '%s\n' "pre-commit: unable to project the staged diff for validation; commit aborted." >&2
+  exit 1
+fi
+
+set +e
+(
+  cd "$baseline_dir"
+  "$speckit_bin" validate --json > "$baseline_json"
+)
+baseline_status=$?
+(
+  cd "$validation_dir"
+  "$speckit_bin" validate --json > "$candidate_json"
+)
+candidate_status=$?
+set -e
+
+if ! command -v bun >/dev/null 2>&1; then
+  printf '%s\n' "pre-commit: Bun is required to compare Speckit JSON findings; commit aborted." >&2
+  exit 1
+fi
+
+set +e
+bun -e '
+  const [basePath, candidatePath] = Bun.argv.slice(1)
+  const base = JSON.parse(await Bun.file(basePath).text())
+  const candidate = JSON.parse(await Bun.file(candidatePath).text())
+  if (!Array.isArray(base.findings) || !Array.isArray(candidate.findings)) {
+    throw new Error("Speckit JSON did not contain a findings array")
+  }
+  const identity = (finding) => JSON.stringify([
+    finding.artifact,
+    finding.rule,
+    finding.message,
+    finding.heading,
+    finding.lineStart,
+    finding.lineEnd,
+    finding.severity,
+  ])
+  const baseline = new Set(base.findings.map(identity))
+  const novel = [...new Set(candidate.findings
+    .filter((finding) => !baseline.has(identity(finding)))
+    .map((finding) => `${finding.artifact}:${finding.rule}:${finding.lineStart ?? "?"}`))]
+  if (novel.length > 0) {
+    for (const finding of novel) console.error(`pre-commit: new Speckit finding ${finding}`)
+    process.exit(1)
+  }
+' "$baseline_json" "$candidate_json"
+comparison_status=$?
+set -e
+
+if [ "$comparison_status" -ne 0 ]; then
+  printf '%s\n' "pre-commit: staged changes introduce new Speckit findings; fix the reported artifacts." >&2
+  exit 1
+fi
+
+if [ "$baseline_status" -ne 0 ] || [ "$candidate_status" -ne 0 ]; then
+  printf '%s\n' "pre-commit: validation completed; only pre-existing findings were present." >&2
+fi

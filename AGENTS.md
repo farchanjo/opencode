@@ -159,3 +159,22 @@ const table = sqliteTable("session", {
 - Keep delivery vocabulary explicit. Prompts steer by default and promote at the next safe provider-turn boundary while the current drain requires continuation. An explicit `queue` input remains pending until the Session would otherwise become idle; promote one queued input at that boundary, then reevaluate continuation before promoting another. Promoting any new user input resets the selected agent's provider-turn allowance; a batch of steers resets it once.
 - Keep EventV2 replay owner claims separate from clustered Session execution ownership.
 - Keep the System Context algebra, registry, and built-ins in `src/system-context`; keep Context Source producers with their observed domains, and keep Session History selection plus Context Epoch persistence Session-owned.
+
+## Spec Kit on `fcustom`
+
+- On branch `fcustom`, the installed `speckit` library is the source of truth for requirements, decisions, and execution changes. `doc/arch` is the project source of truth; run `speckit status` and `speckit next` before changing anything.
+- Respect the active feature and the guard. Follow `specify → clarify` (when needed) → `plan → tasks → analyze → implement → validate`, and use incremental validation plus the repository hook.
+- When a decision or acceptance criterion changes, update the affected artifact and record the changed decision. Preserve upstream/project behavior unless the artifacts document an intentional divergence.
+- Do not implement Smart Routing while alternatives remain open and without explicit authorization. Do not edit `doc/.specify/` databases by hand or bypass the guard; require official validation before completion.
+
+### Versioned commit hook
+
+Run `make install-hooks` once per clone to set the local-only `core.hooksPath` to
+`.husky`; the target is idempotent and does not change global Git configuration.
+On `fcustom`, `.husky/pre-commit` runs `git diff --cached --check` and the
+official `speckit validate --json` in both `HEAD` and a disposable worktree with
+only the staged patch applied. It compares deterministic finding identities
+(artifact, rule, message, heading, line span, and severity), so pre-existing
+findings in an edited file do not block while newly introduced findings do.
+The hook does not run on other branches. A missing Speckit or Bun executable is
+an explicit failure, never an automatic bypass.
