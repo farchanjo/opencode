@@ -7,7 +7,7 @@
 
 .DEFAULT_GOAL := help
 
-.PHONY: help build test check validate verify analyze spec-status install-hooks
+.PHONY: help build test lint check validate verify analyze spec-status install-hooks
 
 help: ## Show this help
 	@awk 'BEGIN {FS = ":.*##"; printf "Usage: make <target>\n\nTargets:\n"} /^[a-zA-Z0-9_-]+:.*##/ {printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -21,6 +21,9 @@ build: ## Build the project (TODO: wire to your build system)
 
 test: ## Run the test suite (TODO: wire to your test runner)
 	@echo "TODO: test opencode — replace this recipe with your test command"
+
+lint: ## Run the project linter
+	bun run lint
 
 # ---------------------------------------------------------------------------
 # Spec — speckit spec-driven workflow gates (ready to use).
