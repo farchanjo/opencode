@@ -962,7 +962,7 @@ function App(props: { pair?: DialogPairCredentials }) {
         },
       },
     ].map((command) => ({
-      namespace: "palette",
+      namespace: command.hidden ? undefined : "palette",
       ...command,
     })),
   )
