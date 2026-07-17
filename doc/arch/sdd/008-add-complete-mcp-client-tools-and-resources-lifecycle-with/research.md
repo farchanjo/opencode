@@ -23,10 +23,10 @@ These MUST NOT be reopened as clarifications that reverse the authority model.
 
 ## Ownership and dual-plane grammar
 
-| Plane | IDs / path | Owner |
-| ----- | ---------- | ----- |
+| Plane          | IDs / path                                                                                                     | Owner                                                         |
+| -------------- | -------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
 | Operator admin | `mcp.server.*`, `mcp.auth.*`, `mcp.resource.admin.*`, `mcp.logging.*`, `mcp.experimental.*`, `mcp.extension.*` | Feature 007 registry/auth/audit; **schemas SSOT Feature 008** |
-| Runtime data | Canonical adapter + Permission (`mcp:server:…`) | Feature 008 runtime; **not** Feature 007 command IDs |
+| Runtime data   | Canonical adapter + Permission (`mcp:server:…`)                                                                | Feature 008 runtime; **not** Feature 007 command IDs          |
 
 No dual authority: LLM never invokes Feature 007 `mcp.*` IDs; operator admin never
 via ToolRegistry/MCP/custom/`session.command`.
@@ -36,17 +36,17 @@ via ToolRegistry/MCP/custom/`session.command`.
 Official specification index:
 https://modelcontextprotocol.io/specification/2025-11-25/
 
-| Concept | Spec meaning | OpenCode rule |
-| ------- | ------------ | ------------- |
-| Transport message stream | JSON-RPC over stdio / Streamable HTTP / legacy SSE | Not partial tool content |
-| Progress (`notifications/progress`) | progressToken + progress + optional total/message; **progress MUST increase** | Metadata only; UI/OTEL; UI coalesce does not change wire monotonicity |
-| Resource updated | Server signals resource change | Policy-gated re-read; not content push |
-| Experimental Tasks | CreateTaskResult; taskSupport; tasks/get/result/list/cancel; notifications/tasks/status; input_required | Map to Feature 002/005; not partial content |
-| Standard call cancel | `notifications/cancelled` | Non-task-augmented tools/call |
-| Task cancel | `tasks/cancel` | Task-augmented only when `mcp.tasks` on |
-| Content stream extension | **Nonstandard** experimental | Namespaced, negotiated, **off by default** |
-| `tools/call` result | One final `CallToolResult` | Never claim standard partial content |
-| OutputSpool offset/limit | OpenCode Feature 005 app API | Not an MCP wire claim |
+| Concept                             | Spec meaning                                                                                            | OpenCode rule                                                         |
+| ----------------------------------- | ------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
+| Transport message stream            | JSON-RPC over stdio / Streamable HTTP / legacy SSE                                                      | Not partial tool content                                              |
+| Progress (`notifications/progress`) | progressToken + progress + optional total/message; **progress MUST increase**                           | Metadata only; UI/OTEL; UI coalesce does not change wire monotonicity |
+| Resource updated                    | Server signals resource change                                                                          | Policy-gated re-read; not content push                                |
+| Experimental Tasks                  | CreateTaskResult; taskSupport; tasks/get/result/list/cancel; notifications/tasks/status; input_required | Map to Feature 002/005; not partial content                           |
+| Standard call cancel                | `notifications/cancelled`                                                                               | Non-task-augmented tools/call                                         |
+| Task cancel                         | `tasks/cancel`                                                                                          | Task-augmented only when `mcp.tasks` on                               |
+| Content stream extension            | **Nonstandard** experimental                                                                            | Namespaced, negotiated, **off by default**                            |
+| `tools/call` result                 | One final `CallToolResult`                                                                              | Never claim standard partial content                                  |
+| OutputSpool offset/limit            | OpenCode Feature 005 app API                                                                            | Not an MCP wire claim                                                 |
 
 Key official pages:
 
@@ -81,13 +81,13 @@ Key official pages:
 
 ## SDK baseline: `@modelcontextprotocol/sdk@1.29.0`
 
-| Fact | Evidence |
-| ---- | -------- |
-| Declared dependency | `packages/opencode/package.json` → `"@modelcontextprotocol/sdk": "1.29.0"` |
-| Installed package version | `packages/opencode/node_modules/@modelcontextprotocol/sdk/package.json` → `1.29.0` |
-| Protocol constant in client types | `dist/cjs/types.d.ts` → `LATEST_PROTOCOL_VERSION = "2025-11-25"` |
-| Client sends protocolVersion on initialize | `dist/cjs/client/index.js` uses `LATEST_PROTOCOL_VERSION` |
-| Transports present | `StreamableHTTPClientTransport`, `SSEClientTransport`, `StdioClientTransport` |
+| Fact                                       | Evidence                                                                           |
+| ------------------------------------------ | ---------------------------------------------------------------------------------- |
+| Declared dependency                        | `packages/opencode/package.json` → `"@modelcontextprotocol/sdk": "1.29.0"`         |
+| Installed package version                  | `packages/opencode/node_modules/@modelcontextprotocol/sdk/package.json` → `1.29.0` |
+| Protocol constant in client types          | `dist/cjs/types.d.ts` → `LATEST_PROTOCOL_VERSION = "2025-11-25"`                   |
+| Client sends protocolVersion on initialize | `dist/cjs/client/index.js` uses `LATEST_PROTOCOL_VERSION`                          |
+| Transports present                         | `StreamableHTTPClientTransport`, `SSEClientTransport`, `StdioClientTransport`      |
 
 SDK behavior relevant to Feature 008 phases:
 
@@ -143,30 +143,30 @@ catalog yet; risk of conflating runtime and admin.
 
 ## Gap summary closed by Feature 008
 
-| Area | Today | Target |
-| ---- | ----- | ------ |
-| Progress | Discarded no-op | UI/Process Table/EventBus/OTEL; wire monotonic |
-| Cancel | AbortSignal partial | Standard → `notifications/cancelled`; task → `tasks/cancel` |
-| Resource subscribe | Absent | Capability + `mcp.resource.admin.*` + policy |
-| Large results | Truncate + path | Feature 005 OutputRef |
-| Experimental Tasks | Commented off | Full 2025-11-25 Tasks behind `mcp.tasks` |
-| Native admin | Ad hoc | Feature 007 `mcp.*` + 008 schemas |
-| Canonical adapter | Dual paths | One behavior plane |
+| Area               | Today               | Target                                                      |
+| ------------------ | ------------------- | ----------------------------------------------------------- |
+| Progress           | Discarded no-op     | UI/Process Table/EventBus/OTEL; wire monotonic              |
+| Cancel             | AbortSignal partial | Standard → `notifications/cancelled`; task → `tasks/cancel` |
+| Resource subscribe | Absent              | Capability + `mcp.resource.admin.*` + policy                |
+| Large results      | Truncate + path     | Feature 005 OutputRef                                       |
+| Experimental Tasks | Commented off       | Full 2025-11-25 Tasks behind `mcp.tasks`                    |
+| Native admin       | Ad hoc              | Feature 007 `mcp.*` + 008 schemas                           |
+| Canonical adapter  | Dual paths          | One behavior plane                                          |
 
 ## Alignment with Features 001–007
 
-| Feature | Integration |
-| ------- | ----------- |
-| 001 | Sampling cannot bypass Smart/budget/LangLock; OTEL content-free |
-| 002 | MCP call/task = Process Table child; progress UI; cancel tree |
-| 003 | Optional scheduled/wake only under resource policy |
-| 004 | MCP content external LangLock exemption |
-| 005 | Every call/read OutputGroup; preview + OutputRef |
-| 006 | Semantic reindex of resources only opt-in + classification |
-| 007 | Operator-only `mcp.*` registry/auth/audit; schemas owned by 008 |
-| ADR-0001 | No URI/content/call/session metric labels |
-| ADR-0002 | Smart routing authority unchanged |
-| ADR-0003 | Native command authority; MCP never admin path (proposed) |
+| Feature  | Integration                                                     |
+| -------- | --------------------------------------------------------------- |
+| 001      | Sampling cannot bypass Smart/budget/LangLock; OTEL content-free |
+| 002      | MCP call/task = Process Table child; progress UI; cancel tree   |
+| 003      | Optional scheduled/wake only under resource policy              |
+| 004      | MCP content external LangLock exemption                         |
+| 005      | Every call/read OutputGroup; preview + OutputRef                |
+| 006      | Semantic reindex of resources only opt-in + classification      |
+| 007      | Operator-only `mcp.*` registry/auth/audit; schemas owned by 008 |
+| ADR-0001 | No URI/content/call/session metric labels                       |
+| ADR-0002 | Smart routing authority unchanged                               |
+| ADR-0003 | Native command authority; MCP never admin path (proposed)       |
 
 ## Out of research scope
 

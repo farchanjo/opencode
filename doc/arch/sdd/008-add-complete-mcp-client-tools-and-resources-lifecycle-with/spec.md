@@ -33,21 +33,21 @@ OutputRef.
 
 **Ownership split (no dual authority).**
 
-| Concern | Owner |
-| ------- | ----- |
-| MCP runtime behavior, wire semantics, domain op **schemas** for `mcp.*` | Feature 008 |
-| Operator command **registry**, principal/auth, CAS, audit, thin adapters | Feature 007 |
-| Process Table child, cancel tree, EventBus, progress UI projection | Feature 002 |
-| OutputGroup / OutputRef / spool | Feature 005 |
-| Smart / budgets / OTEL labels | Feature 001 / ADR-0001 |
-| Optional semantic resource index | Feature 006 (opt-in only) |
+| Concern                                                                  | Owner                     |
+| ------------------------------------------------------------------------ | ------------------------- |
+| MCP runtime behavior, wire semantics, domain op **schemas** for `mcp.*`  | Feature 008               |
+| Operator command **registry**, principal/auth, CAS, audit, thin adapters | Feature 007               |
+| Process Table child, cancel tree, EventBus, progress UI projection       | Feature 002               |
+| OutputGroup / OutputRef / spool                                          | Feature 005               |
+| Smart / budgets / OTEL labels                                            | Feature 001 / ADR-0001    |
+| Optional semantic resource index                                         | Feature 006 (opt-in only) |
 
 **Operator admin vs runtime LLM grammar (single authority model).**
 
-| Plane | Namespace / path | Who | What |
-| ----- | ---------------- | --- | ---- |
-| **Operator admin/query** | Feature 007 command IDs only: `mcp.server.*`, `mcp.auth.*`, `mcp.resource.admin.*`, `mcp.logging.*`, `mcp.experimental.*`, `mcp.extension.*` | Human operator via Settings / palette / native slash / CLI / App internal API | Setup, connect, policy, subscribe admin, capabilities, experimental flags |
-| **Runtime data plane** | Canonical MCP adapter (Feature 008); Permission patterns e.g. `mcp:<server>:<uri\|tool>` | LLM / agent under permission | `tools/call`, runtime tools list cache, resources list/read as tool-mediated content — **never** Feature 007 command IDs, never ToolRegistry admin |
+| Plane                    | Namespace / path                                                                                                                             | Who                                                                           | What                                                                                                                                               |
+| ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Operator admin/query** | Feature 007 command IDs only: `mcp.server.*`, `mcp.auth.*`, `mcp.resource.admin.*`, `mcp.logging.*`, `mcp.experimental.*`, `mcp.extension.*` | Human operator via Settings / palette / native slash / CLI / App internal API | Setup, connect, policy, subscribe admin, capabilities, experimental flags                                                                          |
+| **Runtime data plane**   | Canonical MCP adapter (Feature 008); Permission patterns e.g. `mcp:<server>:<uri\|tool>`                                                     | LLM / agent under permission                                                  | `tools/call`, runtime tools list cache, resources list/read as tool-mediated content — **never** Feature 007 command IDs, never ToolRegistry admin |
 
 Runtime resource/tool access is **not** registered as Feature 007 commands and is
 **not** management authority. Operator `mcp.resource.admin.*` is the only
@@ -57,13 +57,13 @@ custom/`session.command`.
 
 **Protocol truth (non-negotiable).**
 
-| Stream / concept | What it is | What it is not |
-| ---------------- | ---------- | -------------- |
-| Transport message stream | JSON-RPC over stdio / Streamable HTTP / legacy SSE | Partial tool content |
+| Stream / concept                    | What it is                                                                                             | What it is not                                                              |
+| ----------------------------------- | ------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------- |
+| Transport message stream            | JSON-RPC over stdio / Streamable HTTP / legacy SSE                                                     | Partial tool content                                                        |
 | Progress (`notifications/progress`) | Metadata: progressToken, progress, optional total/message; wire progress **MUST increase** (monotonic) | Partial tool/resource content; UI coalesce does not relax wire monotonicity |
-| Resource updated | Signal to re-read under policy | Automatic content push or partial body |
-| Experimental Tasks lifecycle | CreateTaskResult, tasks/get/result/list/cancel, notifications/tasks/status, input_required | Partial content stream |
-| Content stream extension | **Nonstandard**, namespaced, capability-negotiated, **disabled by default** | Standard MCP; silent default |
+| Resource updated                    | Signal to re-read under policy                                                                         | Automatic content push or partial body                                      |
+| Experimental Tasks lifecycle        | CreateTaskResult, tasks/get/result/list/cancel, notifications/tasks/status, input_required             | Partial content stream                                                      |
+| Content stream extension            | **Nonstandard**, namespaced, capability-negotiated, **disabled by default**                            | Standard MCP; silent default                                                |
 
 MCP standard `tools/call` returns **one final** `CallToolResult`. Progress is
 **metadata**, not partial content. `resources/updated` causes **policy-gated
@@ -213,7 +213,7 @@ Priority uses P1 (must have), P2 (should have), and P3 (could have).
 13. Top-level tools and code-mode MUST share one canonical adapter for policy,
     lifecycle, permissions, and OutputSpool. Presentation adapters may differ;
     behavior MUST NOT.
-13a. Tool annotations MUST be treated as untrusted unless the server trust profile
+    13a. Tool annotations MUST be treated as untrusted unless the server trust profile
     explicitly elevates them.
 
 ### Progress
@@ -227,7 +227,7 @@ Priority uses P1 (must have), P2 (should have), and P3 (could have).
 16. Progress events MUST be bounded, carry optional total and message with
     provenance, and update Feature 002 Process Table child status. They MUST NOT
     enter LLM context/turns by default and MUST NOT be persisted as tool output.
-16a. Progress MUST be observable via UI, EventBus, and OTEL metrics without high-
+    16a. Progress MUST be observable via UI, EventBus, and OTEL metrics without high-
     cardinality content labels.
 
 ### Cancellation
@@ -641,21 +641,21 @@ Priority uses P1 (must have), P2 (should have), and P3 (could have).
 
 ## Initial Traceability Matrix
 
-| Outcome | Requirements | Acceptance scenarios | Phase |
-| ------- | ------------ | -------------------- | ----- |
-| Protocol truth / non-claims | FR1–FR6 | 5, 6, 19 | 1 |
-| Capability negotiation | FR7–FR9 | 1, 16, 25 | 1 |
-| Tools list/call/content / annotations | FR10–FR13a | 4, 8, 14, 26 | 1 |
-| Progress UI-only + wire monotonic | FR14–FR16a | 5, 22 | 1 |
-| Standard cancel (`notifications/cancelled`) | FR17 | 7 | 1 |
-| Task cancel (`tasks/cancel`) + Process Table | FR18, FR38–FR40 | 30–33 | 2–3 |
-| Resources + policy + dual plane | FR19–FR26 | 9–11, 20–21, 29 | 1–2 |
-| Prompts / logging | FR27–FR28 | 23–24 | 2 |
-| Roots scope | FR9 | 25 | 1 |
-| Transports / OAuth | FR29–FR32 | 1–3, 12–13 | 1–2 |
-| OutputSpool large results | FR33–FR37 | 6, 8 | 1 |
-| Experimental Tasks full | FR41–FR44 | 16, 30–33 | 2–3 |
-| Sampling / elicitation / content-stream | FR45–FR47 | 16–19 | 2–3 |
-| Native `mcp.*` management | FR48–FR50 | 15, 29 | 1 |
-| LangLock external + semantic opt-in | FR52–FR53 | 27–28 | 1–2 |
-| Security / privacy / OTEL / UI | FR51–FR57, NFRs | 20–22 | 1–2 |
+| Outcome                                      | Requirements    | Acceptance scenarios | Phase |
+| -------------------------------------------- | --------------- | -------------------- | ----- |
+| Protocol truth / non-claims                  | FR1–FR6         | 5, 6, 19             | 1     |
+| Capability negotiation                       | FR7–FR9         | 1, 16, 25            | 1     |
+| Tools list/call/content / annotations        | FR10–FR13a      | 4, 8, 14, 26         | 1     |
+| Progress UI-only + wire monotonic            | FR14–FR16a      | 5, 22                | 1     |
+| Standard cancel (`notifications/cancelled`)  | FR17            | 7                    | 1     |
+| Task cancel (`tasks/cancel`) + Process Table | FR18, FR38–FR40 | 30–33                | 2–3   |
+| Resources + policy + dual plane              | FR19–FR26       | 9–11, 20–21, 29      | 1–2   |
+| Prompts / logging                            | FR27–FR28       | 23–24                | 2     |
+| Roots scope                                  | FR9             | 25                   | 1     |
+| Transports / OAuth                           | FR29–FR32       | 1–3, 12–13           | 1–2   |
+| OutputSpool large results                    | FR33–FR37       | 6, 8                 | 1     |
+| Experimental Tasks full                      | FR41–FR44       | 16, 30–33            | 2–3   |
+| Sampling / elicitation / content-stream      | FR45–FR47       | 16–19                | 2–3   |
+| Native `mcp.*` management                    | FR48–FR50       | 15, 29               | 1     |
+| LangLock external + semantic opt-in          | FR52–FR53       | 27–28                | 1–2   |
+| Security / privacy / OTEL / UI               | FR51–FR57, NFRs | 20–22                | 1–2   |
