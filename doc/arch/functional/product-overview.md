@@ -2,8 +2,8 @@
 
 Functional documentation for opencode, written from the user's point of
 view: what the product does, who uses it, how the main flow runs, and how we
-know it works. Keep this in sync with the executable specs under
-`doc/arch/specs/features/`.
+know it works. Keep this in sync with feature specifications under
+`doc/arch/sdd/*/spec.md` (acceptance scenarios and requirements).
 
 ## Overview
 
@@ -39,16 +39,15 @@ Replace the placeholder steps above with the product's real main flow.
 
 ## Acceptance
 
-Acceptance criteria for opencode are expressed as executable
-specifications. The authoritative behavior lives in the Gherkin corpus under
-`doc/arch/specs/features/`; each `.feature` file there is a scenario the
-product must satisfy.
+Acceptance criteria for opencode are expressed as prioritized acceptance
+scenarios inside each feature specification under `doc/arch/sdd/*/spec.md`.
 
-- Every user-visible behavior has a matching feature in
-  `doc/arch/specs/features/`.
+- Every user-visible behavior has matching acceptance scenarios in the owning
+  feature `spec.md`.
 - A change to the Main Flow above starts with a change to those specs, not to
   the code.
-- Run `speckit verify` to check the implementation against the feature corpus.
+- Run `speckit validate` and feature scoring before implementation; executable
+  Gherkin corpora may be reintroduced later by explicit feature decision.
 
 ## Observability
 

@@ -75,9 +75,22 @@ requirements and decisions; it is not an ADR and does not authorize implementati
   rehydration, misfire handling, ownership, and notification delivery remain feature
   requirements and open questions.
 
+## Feature 007 native-only control plane (factual cross-ref)
+
+Scheduled-job administration (list/status/show/create/update/enable/disable/delete/
+reschedule/run-now/history/watch) is native-only via
+[Feature 007 Operator Control Plane](../007-add-a-unified-native-operator-control-plane-for-all-opencode/spec.md)
+and [ADR-0003](../../adr/0003-operator-control-plane-and-native-command-authority.md)
+(proposed). Job admin creates native lifecycle occurrences, not LLM turns. This note
+does not restate Feature 007 requirements.
+
 ## Related evidence
 
 - [Feature 001 specification](../001-define-one-cohesive-smart-agent-routing-and-opentelemetry/spec.md)
 - [Feature 002 specification](../002-build-an-event-driven-asynchronous-task-lifecycle-engine/spec.md)
+- [Feature 005 OutputSpool and ArtifactStore](../005-add-a-canonical-file-backed-outputspool-and-paged/spec.md)
+- [Feature 006 Semantic Agent and Skill Retrieval (Milvus)](../006-add-milvus-backed-multilingual-semantic-retrieval-and/spec.md)
+- [Feature 007 Unified Native Operator Control Plane](../007-add-a-unified-native-operator-control-plane-for-all-opencode/spec.md)
 - [ADR-0001 — OpenTelemetry telemetry foundation](../../adr/0001-opentelemetry-telemetry-foundation.md)
 - [ADR-0002 — Core Smart Agent Routing](../../adr/0002-core-smart-agent-routing.md)
+- [ADR-0003 — Operator Control Plane and native command authority](../../adr/0003-operator-control-plane-and-native-command-authority.md)

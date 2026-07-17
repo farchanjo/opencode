@@ -21,6 +21,33 @@ and [ADR-0002 Core Smart Agent Routing](../../adr/0002-core-smart-agent-routing.
 The future ADR **Task Process Lifecycle and Operational Observation** is required
 before `plan` or implementation; it is intentionally not created here.
 
+**Hierarchy alignment (Feature 001 / ADR-0002, not a scope rewrite).** Feature 002
+MUST project the confirmed Architect/Manager/Worker hierarchy and validation states
+into Process Table rows, lifecycle events, and live panel surfaces without mixing
+sessions. Routing semantics, role pools, and classification remain owned by Feature
+001; this feature owns observation, projection, admission visibility, panel
+surfaces, direct-child Session UI, and session-owned Todo lifecycle authority for
+that tree.
+
+**Confirmed hierarchical Session UI.** Process Table MAY retain the full authorized
+root tree. Each Session view (TUI, direct/mini, App) shows ONLY direct children where
+`parent_session_id == current_session_id`. Main/Architect view shows only Managers
+or Workers called directly — never grandchildren or Workers nested under a Manager.
+Entering a Manager/Agent Session shows only that Session's direct children; deeper
+descendants are lazy-loaded by level, never flattened into main. Mouse/click and
+keyboard are required; back/breadcrumb preserve state/selection and allow Architect
+→ Manager → Worker navigation (exact responsive details remain clarification).
+Root-tree Ctrl+C still reaches all invisible descendants; visibility does not limit
+control scope. Permissions/questions from deeper descendants that escalate to root
+are a control-plane exception, not a card-flattening rule. Any prior requirement that
+rendered a full root tree inside one Session view is superseded by direct-child-only
+Session views with semantic parity across TUI/direct/App.
+
+**Confirmed mandatory session-owned Todo.** Every goal-bearing Session (Architect,
+Manager, Worker/agent/subagent, including simple tasks) owns exactly one Todo
+aggregate. Requirements 1–20 in the Todo section below are product requirements;
+hidden lifecycle agents remain clarification/exemption candidates.
+
 ## User Stories
 
 ### P1 — Lifecycle visibility and safety
@@ -56,6 +83,56 @@ before `plan` or implementation; it is intentionally not created here.
   future scope is authorized so that lifecycle operations are discoverable without
   exposing controls to an LLM, tool, MCP call, or prompt template.
 
+### P1 — Live subagent and process panel
+
+- As an operator, I want a read-only live card for every authorized **direct-child**
+  subagent/process of the current Session so that queued, running, streaming,
+  waiting, cancelling, and terminal work is understandable without opening each
+  child, without flattening grandchildren into the current view.
+- As an operator, I want the live panel to represent the Architect/Manager/Worker
+  hierarchy and validation statuses for the authorized root so that orchestration
+  roles and Worker execution are distinguishable without mixing sessions, while
+  each Session view shows only direct children.
+- As a user, I want usage provenance and missing-data states to be honest so that an
+  unavailable live usage signal never appears as a false zero.
+- As a user, I want the panel to remain bounded, reconnectable, accessible, and
+  isolated between subagents so that high update rates do not degrade execution or
+  disclose another session's data.
+
+### P1 — Hierarchical Session navigation
+
+- As an operator, I want Main/Architect to show only directly called Managers or
+  Workers so that nested Workers under a Manager never appear as main-level cards.
+- As an operator, I want opening a Manager Session to show only that Manager's direct
+  Workers, and opening a Worker to show only its direct children if permitted, so
+  that depth is lazy-loaded by level.
+- As a user, I want back/breadcrumb navigation that preserves state/selection across
+  Architect → Manager → Worker so that hierarchical browsing is reversible.
+
+### P1 — Mandatory session-owned Todo
+
+- As a user, I want every goal-bearing Session — including simple tasks and
+  subagents — to own a durable Todo snapshot so that work cannot start empty or
+  complete while required items remain open.
+- As an operator, I want Todo to rehydrate after compaction, restart, and resume with
+  the same version so that message summary cannot replace work authority.
+- As a parent Architect/Manager, I want my own dispatch/validation Todo while only
+  observing child TodoRef/version/counts, never editing child lists.
+- As a user, I want each Session UI to show that Session's Todo even when idle, so
+  incomplete durable work is never hidden by cache eviction or idle state.
+
+### P1 — Root-tree cancellation
+
+- As an operator, I want Ctrl+C during execution to request cancellation of the current
+  root process tree so that main, foreground/background agents, and subagents stop
+  through one native lifecycle boundary, including descendants not currently visible
+  in the direct-child Session UI.
+- As a user, I want Esc to remain dismiss/back/navigation and not cancel a root tree so
+  that modal and browsing behavior remains safe and predictable.
+- As an operator, I want cancellation acknowledgement and unknown remote effects
+  visible on every affected card so that cancellation is not confused with OS kill or
+  mutation reversal.
+
 ## Functional Requirements
 
 ### Architecture and canonical ownership
@@ -90,6 +167,9 @@ before `plan` or implementation; it is intentionally not created here.
    root/session/parent-session identity, task/process/parent-process/root-process
    identity, agent and actor kind, runtime instance, sequence, correlation and
    causation IDs, visibility, timestamp, attempt/generation, and redacted metadata.
+   When hierarchical Smart Routing is active, envelopes MUST carry hierarchy role,
+   delegation depth/path when known, and validation-related outcome fields needed for
+   Process Table projection, without prompts or complete outputs.
 10. Events MUST be segmented by session, process, and root tree. Ordering MUST be
     defined per aggregate/session/process and MUST NOT promise one global order.
 11. The main context MAY observe its root-session tree subject to authorization; an
@@ -145,7 +225,11 @@ before `plan` or implementation; it is intentionally not created here.
     timestamps, attempt/generation/lease, agent/task class/profile/effort,
     provider/model/variant, dependencies/children/pending inputs/steers,
     cancellation/exit/error, token/cost/TTFT/stream/total duration, and trace/span
-    IDs, subject to redaction and authorization.
+    IDs, subject to redaction and authorization. When Smart hierarchical routing is
+    active, each row MUST also retain hierarchy role (`architect` | `manager` |
+    `worker`), delegation depth and path, selected route path when known, fanout
+    requested versus granted when applicable, and validation state at that node,
+    without using high-cardinality IDs as metric labels.
 27. Terminal rows MUST retain reason and terminal timestamps. Retention and compaction
     MUST be bounded and observable.
 28. Prompts, complete results, tool payloads, personal paths, and secrets MUST remain
@@ -160,6 +244,10 @@ before `plan` or implementation; it is intentionally not created here.
     permit unbounded growth.
 31. Admission policy MUST be able to account for global, root/session, child,
     provider, agent, tool, event queue, OTEL queue, SQLite, token, and cost budgets.
+    When a Manager requests Worker fanout under Feature 001 hierarchical routing,
+    admission MUST grant total or partial concurrency under those limits and MUST
+    expose requested versus granted fanout in lifecycle projection; dynamic request
+    MUST NOT imply unbounded concurrency.
 32. Priority and fairness MUST be explicit for parent/child work. Steers MAY be
     coalesced according to policy, waiting work MUST be cancellable, and saturation
     MUST be observable.
@@ -205,20 +293,170 @@ before `plan` or implementation; it is intentionally not created here.
 47. The feature MUST reference ADR-0002 Smart Routing and provide validated local
     lifecycle evidence with window, confidence, and TTL. Smart Routing MUST NOT query
     a remote telemetry backend per Task or use an inconsistent snapshot.
-48. Manager brain observations of “decided to dispatch” MUST remain distinct from
-    executor events showing “started” or “completed”.
+48. Architect/Manager orchestration observations of “decided to dispatch”,
+    “validating”, or “escalating” MUST remain distinct from Worker/executor events
+    showing “started” or “completed”. Hierarchy role and validation state MUST not be
+    collapsed into a generic status update.
 
 ### Operator management
 
+**Normative transversal rule (Feature 007 Operator Control Plane).** All setup,
+configuration, and management for process/task control MUST use
+[Feature 007](../007-add-a-unified-native-operator-control-plane-for-all-opencode/spec.md)
+unified Operator Control Plane and native Settings/menu/palette/native-slash/CLI/App/
+Desktop adapters calling typed core domain commands/queries directly. MUST NOT use
+Config.command/custom templates, `session.command` prompt path, ToolRegistry, MCP
+tools/prompts, plugins, skills, shell commands issued by an LLM, or free-form model
+instructions as management authority. Native slash is intercepted before prompt
+admission/transcript; zero provider/model calls/tokens/cost by default; output not
+added to Message/Part/context by default. Mutations require operator principal,
+explicit scope, version/CAS, idempotency, and audit; secret refs only. Canonical
+process/task IDs: `process/task` status, tree, watch, cancel, steer, handoff. Todo
+work-item semantic updates remain restricted runtime data plane under permission/CAS;
+Todo policy/exemptions/retention/override, required-list clear, completion-gate
+bypass, and child Todo edit are not model-setup paths. Plugin/MCP/custom registries
+MUST NOT register reserved operator IDs.
+
 49. Future TUI/App/API/CLI views MAY expose tree, status, watch, and health with
     redacted status, attempt, owner, model, timing, cost, and lifecycle details only
-    within authorized scope; exact surfaces remain clarification.
-50. Administrative commands MUST be native operator-only interfaces, not LLM, tool,
-    MCP, or prompt-template interfaces. Final names, scope, and permissions remain
-    clarification.
-51. Cancel, handoff, and steer MUST use native services, require authorization, and
-    publish audit events. No action may be performed directly by editing the Process
-    Table or by an observer.
+    within authorized scope via Feature 007 adapters; exact surface chrome remains
+    clarification while canonical IDs are fixed by Feature 007.
+50. Administrative commands MUST be native operator-only interfaces registered in the
+    Feature 007 operator command registry, not LLM, tool, MCP, or prompt-template
+    interfaces. Final display aliases remain clarification; reserved IDs are not open.
+51. Cancel, handoff, and steer MUST use native services through Feature 007 typed
+    commands, require authorization, and publish audit events. No action may be
+    performed directly by editing the Process Table or by an observer.
+
+### Live subagent/process panel and hierarchical Session UI
+
+52. The system MUST provide a read-only panel/card projection for each authorized
+    **direct child** of the current Session while it is `queued`, `running`,
+    `streaming`, `waiting`, or `cancelling`, and MUST retain a bounded terminal card
+    after completion, failure, cancellation, or unknown outcome. Process Table MAY
+    retain the full authorized Architect/Manager/Worker tree internally. Session views
+    MUST NOT flatten grandchildren into the current render. The panel MUST NOT mix
+    sessions or invent routing authority.
+53. Each card MUST expose, when available and authorized: todo progress
+    (ref/version/counts when known); agent name and type; foreground/background Task
+    role; hierarchy role (`architect` | `manager` | `worker`) when hierarchical
+    routing is active; validation status when known; bounded description; textual
+    status; bounded/redacted current activity; model/provider/variant; normalized
+    reasoning and task effort; input/output/reasoning/cache-read/cache-write tokens;
+    usage provenance (`estimated` or `reported`) and source (`provider`, `runtime`, or
+    `local-estimate`); live elapsed time from monotonic timestamps; valid tokens/s;
+    output cursor/reference; and terminal outcome with final usage.
+54. The panel MUST use the local Process Table/Event projection as its source and MUST
+    not query a remote OTEL backend on the UI hot path. The projection MUST support
+    multi-subagent identity, reconnect reconstruction, and per-root/session isolation.
+55. If live usage is unavailable, the panel MUST display `streaming/generating` and
+    `tokens unavailable` or an equivalent explicit unavailable state; it MUST NOT show
+    zero or fabricate usage. Estimates MUST be optional and labeled. Provider-reported
+    usage MUST reconcile and replace an estimate at settlement. Unknown token fields
+    MUST NOT be summed.
+56. Current activity MUST use an allowlisted enum/structure such as `Read relative/path`,
+    `Edit`, `Run command`, `Waiting`, and `Generating`, with workspace-relative or
+    redacted paths. Prompts, reasoning text, raw tool input/output, secrets, absolute
+    paths, sensitive queries, and URLs MUST never reach the renderer by default.
+57. Live events MUST be coalesced or throttled. Terminal, cancellation, and tool
+    boundaries MUST have priority. A slow panel subscriber MUST NOT block an executor,
+    SessionRunner, or lifecycle producer.
+58. The panel MUST support narrow-terminal responsive layout, keyboard navigation,
+    mouse/click enter into a child Session, expand/collapse, text states independent of
+    color, and screen-reader semantics in App surfaces. An output cursor/reference MAY
+    open or expand authorized content; complete output MUST not be loaded by default.
+    [Feature 005 OutputSpool/ArtifactStore](../005-add-a-canonical-file-backed-outputspool-and-paged/spec.md) owns the definitive OutputRef/cursor
+    contract.
+    58a. Each Session view (TUI, direct/mini, App) MUST show only sessions/processes where
+    `parent_session_id == current_session_id`. Main/Architect view MUST show only
+    Managers or Workers called directly and MUST hide Workers nested under a Manager.
+    Opening a Manager/Agent Session MUST show only that Session's direct children;
+    deeper descendants MUST be lazy-loaded by level. Back/breadcrumb MUST preserve
+    state/selection and support Architect → Manager → Worker navigation (exact
+    responsive breadcrumb UX remains clarification). TUI/direct/App MUST converge
+    semantically on direct-child-only Session views.
+    58b. Permissions/questions that escalate from deeper descendants to the root MAY surface
+    as control-plane exceptions on the authorized root without flattening those
+    descendants' cards into the main Session view.
+
+### Mandatory session-owned Todo
+
+58c. Each Session MUST own exactly one Todo aggregate. Parent, child, and sibling
+Sessions MUST never share a list. Goal-bearing Architect, Manager, Worker/agent/
+subagent Sessions — including simple tasks — MUST apply the Todo requirements
+below. Hidden lifecycle agents (title/summary/compaction) are clarification/
+exemption candidates and MUST NOT be pretended to already use Todo tools.
+58d. Before goal-bearing execution or dispatch, the Session MUST have a non-empty
+durable Todo snapshot. Simple tasks MUST use at least one bounded item. An empty
+list MUST NOT bypass the gate. While executable work remains, exactly one item
+MUST be `in_progress`. Updates MUST persist on real semantic transitions, not
+per-token loops.
+58e. Future schema MUST support stable item ID, objective, typed status/priority,
+owner Session/role, version/CAS, result/evidence/OutputRefs, aggregate
+outcome/timestamps. Final field details remain clarification/plan.
+58f. Snapshot/version MUST be durable outside message prose and compaction and is the
+authority of logical work. Prompt/context builders MUST rehydrate the same
+snapshot/version after compaction, restart, resume/replay, and before the next
+turn. Textual summary MUST NOT diverge from or replace the snapshot.
+58g. Handoff/dispatch envelopes MUST carry TodoRef, version, bounded authorized
+summary, and Lang Lock tag/version. [Feature 005 OutputSpool](../005-add-a-canonical-file-backed-outputspool-and-paged/spec.md) MUST pass
+result/evidence/handoff via refs/slices, not full content.
+58h. Completion gate: Session/Task MUST NOT terminate as `completed` while required
+items are pending/in_progress, version mismatches, or a validation step is
+missing. The system MUST record `todo.completion_blocked`. Failure/cancel MUST
+preserve incomplete items and aggregate outcome/reason and MUST NOT falsely
+convert them to completed. Operator override, if any, remains clarification and
+MUST be audited.
+58i. Parent Architect/Manager MUST keep their own dispatch/validation Todo. They MAY
+observe child summary/ref/version/counts; when the operator opens a child Session,
+that Session's authorized list is visible. Parent model MUST NOT edit child Todo.
+Worker completion MUST NOT complete Manager; Manager validates Workers/synthesizes
+and completes its Todo; Architect validates Manager or direct Worker and completes
+its own.
+58j. Sibling isolation MUST apply before API/event/projection. Cross-root/project leak
+is a failure. Native policy MUST eventually allow Todo tool/operation for all
+goal-bearing primary/agents/subagents; prompt-only is insufficient. Existing
+subagent `todowrite` denial is a migration gap and MUST be covered by acceptance
+tests that assert target availability despite legacy deny.
+58k. Process Table MUST observe todo_ref/version/counts/consistency/outcome and MUST
+NOT execute or edit Todo. Todo MUST NOT schedule or cancel Tasks.
+58l. UI of each Session MUST display its Todo, including child Sessions, and MUST NOT
+clear or hide incomplete durable Todo when idle. App idle cache eviction MUST NOT
+erase incomplete durable Todo authority. Completed retention/archive remains
+clarification.
+58m. Todo events MUST include initialized, updated, completed, completion_blocked,
+failed, cancelled, stale, rehydrated, handoff_attached, plus compaction
+correlation. OTEL MUST export only enums/counts/buckets — no content or IDs as
+labels. Objective/item/progress/result/failure/handoff text follows Feature 004
+Lang Lock; UI chrome does not.
+
+### Ctrl+C root-tree cancellation
+
+59. Esc MUST remain dismiss, back, close-modal, detail, or navigation behavior and
+    MUST NOT cancel the current root process tree.
+60. Ctrl+C during execution MUST request native cancellation of the current root
+    process tree, including the main context and foreground/background agents and
+    subagents in `queued`, `waiting`, or `running` state, **including descendants not
+    currently visible** in the direct-child Session UI. Visibility MUST NOT limit
+    control scope. It MUST not affect another root session or project.
+61. After a root cancel request, admission MUST reject or quarantine new descendants
+    of that root. Propagation and acknowledgement MUST use native lifecycle APIs,
+    Event Bus, and Process Table state, never an LLM command, tool, prompt, or MCP call.
+62. Affected cards MUST expose `running`/`streaming` → `cancelling` → `cancelled`,
+    `failed`, or `unknown`, preserving committed progress and output. A provider,
+    tool, or remote process effect MAY remain unknown; cancellation MUST NOT promise
+    remote kill, reversal, or mutation rollback.
+63. Cancelling an active scheduled occurrence MUST cancel that occurrence/process only;
+    it MUST NOT disable or delete the future Job Definition.
+64. Root-tree cancellation MUST request seal or abort of OutputSpool writers while
+    preserving committed bytes. [Feature 005 OutputSpool/ArtifactStore](../005-add-a-canonical-file-backed-outputspool-and-paged/spec.md)
+    owns the content-plane seal/abort/settlement contract (OutputRef, cursor, committed
+    bytes). Feature 002 owns lifecycle terminal status and MUST NOT mark Task terminal
+    as successfully settled without Feature 005 settlement or an explicit intermediate
+    settling/unknown/corrupt condition.
+65. The system MUST distinguish first versus second Ctrl+C and behavior in idle input,
+    modal/dialog, PTY, copy-selection, and platform-specific terminal contexts. Timeout
+    and escalation behavior remain clarification questions.
 
 ## Non-Functional Requirements
 
@@ -238,6 +476,29 @@ before `plan` or implementation; it is intentionally not created here.
 - **Compatibility:** existing Task V1/V2, BackgroundJob, SessionExecution,
   SessionRunCoordinator, SessionRunner, EventV2, and schema/store behavior remains
   the baseline unless a later ADR records an intentional seam.
+- **Panel boundedness:** live update frequency, card count, terminal retention,
+  description/activity lengths, and subscriber buffers MUST be bounded and observable;
+  coalescing MUST preserve terminal and cancellation transitions.
+- **Usage accuracy:** usage fields MUST carry provenance and source; missing live usage
+  MUST remain unavailable, estimates MUST be labeled, and settlement reconciliation
+  MUST be deterministic and idempotent.
+- **Interaction safety:** Ctrl+C MUST target only the current authorized root tree;
+  Esc MUST remain navigation/dismissal; cancellation MUST use native lifecycle APIs
+  and preserve committed output.
+- **Accessibility:** panel status MUST be textual, keyboard navigable, responsive in
+  narrow terminals, and semantically exposed to screen readers without color-only
+  meaning.
+- **Hierarchy projection fidelity:** Process Table and live panel MUST distinguish
+  Architect, Manager, and Worker roles and their validation states for the authorized
+  root without session mixing or claiming routing authority owned by Feature 001.
+- **Direct-child Session UI:** TUI, direct/mini, and App Session views MUST show only
+  direct children of the current Session; Process Table MAY retain full authorized
+  tree for observation/control; grandchildren MUST never flatten into main.
+- **Mandatory session-owned Todo:** non-empty snapshot before goal-bearing work,
+  exactly one `in_progress` while work remains, durable version authority,
+  completion gate, rehydration after compaction/restart, sibling isolation, and
+  Process Table observation without Todo mutation MUST hold for Architect, Manager,
+  and Worker goal-bearing Sessions.
 
 ## Acceptance Criteria
 
@@ -310,6 +571,106 @@ implementation.
     SessionRunCoordinator, SessionRunner, and EventV2, when lifecycle events and
     projections run, then no second executor, runtime, event system, or table-driven
     control loop is used.
+23. **Multi-subagent panel.** Given multiple authorized foreground/background
+    **direct-child** subagents of the current Session, when their processes are
+    queued, running, streaming, waiting, or cancelling, then separate cards show
+    agent, role, description, status, activity, model identity, progress, and
+    acknowledgement without mixing sessions or showing grandchildren.
+    23a. **Hierarchy tree panel (direct children only).** Given an Architect root with a
+    Manager and Workers (or a direct Worker path), when the main Session view
+    renders, then it shows only Managers or Workers called directly, hides Workers
+    nested under a Manager, exposes hierarchy role and validation status for visible
+    cards, and does not mix another session or root.
+    23b. **Open Manager shows direct Workers.** Given a Manager with Workers, when the
+    operator opens the Manager Session, then only that Manager's direct Workers
+    appear; deeper descendants remain hidden until their parent Session is opened.
+    23c. **Open Worker shows direct children.** Given a Worker with permitted direct
+    children, when the operator opens that Worker Session, then only those direct
+    children appear.
+    23d. **Back/breadcrumb state.** Given navigation Architect → Manager → Worker, when
+    the operator uses back/breadcrumb, then prior Session view state and selection
+    are preserved without flattening the tree.
+    23e. **Direct Architect→Worker UI.** Given a direct Worker path without Manager, when
+    the main Architect Session renders, then the Worker appears as a direct child
+    card and no Manager level is invented.
+    23f. **Full-tree cancel with direct-only visible UI.** Given invisible Manager Workers
+    under the root, when Ctrl+C cancels the root tree, then all permitted descendants
+    including invisible ones transition through cancelling while the main view still
+    shows only direct children.
+24. **High update rate.** Given a burst of live events, when the panel subscriber is
+    slower than the producer, then updates coalesce/throttle, terminal/tool/cancel
+    boundaries remain visible, and execution is not blocked.
+25. **Missing live usage.** Given no live usage signal, when a card renders during
+    streaming, then it says `streaming/generating` and `tokens unavailable` rather
+    than showing zero or an invented number.
+26. **Final reconciliation.** Given an optional local estimate followed by provider
+    settlement, when the terminal event arrives, then reported usage replaces the
+    estimate with provenance/source and unknown fields are not summed.
+27. **Disconnect/reconnect.** Given a panel disconnect and reconnect, when local
+    projection state is rebuilt, then authorized cards and usage provenance reconstruct
+    without duplicate or cross-root content.
+28. **Path redaction.** Given tool activity containing an absolute path, command,
+    query, URL, prompt, or payload, when current activity reaches the renderer, then
+    only an allowlisted bounded redacted/relative representation is shown.
+29. **Root-tree Ctrl+C.** Given a current root with main, foreground/background agents,
+    and queued/waiting/running subagents, when Ctrl+C requests cancellation, then all
+    permitted descendants transition through cancelling and a terminal outcome while
+    another root/project is unchanged.
+30. **Descendant admission block.** Given a root cancellation request, when a child
+    attempts admission, then it is rejected/quarantined and the rejection is visible
+    in the lifecycle projection.
+31. **Esc isolation.** Given a detail, modal, navigation, or input view, when Esc is
+    pressed, then it dismisses/navigates/backs according to context and does not cancel
+    the root tree.
+32. **Remote unknown.** Given a provider/tool/remote effect during cancellation, when
+    the local lifecycle settles, then unknown is shown where remote termination is
+    unconfirmed and no false kill or rollback is reported.
+33. **Scheduled occurrence.** Given an active scheduled occurrence, when root Ctrl+C
+    cancels it, then only that occurrence/process is cancelled and the future Job
+    Definition remains enabled.
+34. **Accessibility.** Given keyboard-only, monochrome, narrow-terminal, and App
+    screen-reader contexts, when cards update, then status/action meaning remains
+    textual, navigable, responsive, and not color-dependent.
+35. **Terminal retention.** Given a completed/failed/cancelled process, when bounded
+    retention applies, then its final outcome, committed progress, final usage, and
+    cancellation acknowledgement remain visible until policy cleanup.
+36. **Missing telemetry.** Given OTEL is unavailable, when the panel renders, then
+    local Process Table/Event projection continues to show lifecycle state without a
+    remote telemetry query or blocked executor.
+37. **Output reference.** Given a card has authorized output, when expand/open is
+    requested, then it uses a bounded cursor/reference and does not load complete
+    output; the [Feature 005 OutputSpool/ArtifactStore](../005-add-a-canonical-file-backed-outputspool-and-paged/spec.md) writer/content contract remains explicit.
+38. **Simple singleton Todo.** Given a simple goal-bearing Session, when execution
+    starts, then a non-empty session-owned Todo with at least one bounded item exists
+    and empty-list bypass is rejected.
+39. **Subagent Todo migration.** Given a goal-bearing subagent under legacy policy
+    that denies `todowrite`, when the target native Todo policy is applied, then that
+    subagent Session still has an available session-owned Todo path; the legacy deny
+    is treated as a migration gap covered by test.
+40. **Premature completion blocked.** Given required Todo items pending or
+    in_progress, when Session/Task attempts `completed`, then completion is blocked
+    and `todo.completion_blocked` is recorded.
+41. **Compaction rehydrates same version.** Given durable Todo snapshot version V,
+    when compaction completes and the next turn builds context, then snapshot version
+    V is rehydrated and textual summary does not replace it.
+42. **Restart/resume snapshot survives.** Given durable Todo snapshot, when process
+    restarts or Session resumes/replays, then the same snapshot/version is available
+    before the next goal-bearing turn.
+43. **Handoff read-only child ref.** Given parent dispatch/handoff, when the envelope
+    is observed, then it carries child TodoRef/version and bounded summary while the
+    parent model cannot edit the child Todo.
+44. **Sibling/cross-root isolation.** Given two sibling or cross-root Sessions, when
+    Todo API/event/projection is requested, then only the authorized Session list is
+    delivered and no cross leak occurs.
+45. **Cancel preserves incomplete Todo.** Given incomplete Todo items, when Session
+    or process is cancelled, then incomplete items and aggregate outcome/reason are
+    preserved and not falsely marked completed.
+46. **App idle does not hide incomplete Todo.** Given incomplete durable Todo, when
+    the Session becomes idle or App cache eviction runs, then incomplete Todo remains
+    durable and is not cleared/hidden as empty by idle UI policy.
+47. **Content-free Todo OTEL.** Given Todo lifecycle events, when metrics export,
+    then only enums/counts/buckets are labeled and Todo content/IDs are absent from
+    metric labels.
 
 ## Security Requirements
 
@@ -334,6 +695,23 @@ implementation.
 8. **Transport and storage.** OTLP transport and persisted lifecycle metadata MUST
    follow the Telemetry Foundation's configured TLS, secure storage, redaction, and
    retention policy; no credentials are stored in event metadata.
+9. **Panel authorization.** Project/root/session/tree authorization and redaction MUST
+   occur before panel projection, card rendering, output cursor access, or reconnect
+   reconstruction. Operator/manager principal policy remains an explicit gap for
+   clarification/ADR.
+10. **Cancellation authorization.** Ctrl+C cancellation MUST use the canonical
+    permission and lifecycle authority, reject descendants after the root request, and
+    never imply remote kill, rollback, or access to another root/project.
+11. **Content minimization.** Absolute paths, prompts, reasoning text, raw tool
+    payloads/output, secrets, sensitive query/URL values, and uncommitted output MUST
+    remain outside cards and renderer payloads by default.
+12. **Todo isolation and authority.** Todo aggregates MUST be session-scoped and
+    authorized before get/update/projection. Parent models MUST NOT edit child Todo.
+    Process Table observation MUST NOT become Todo mutation. Sibling and cross-root
+    Todo access is denied.
+13. **Todo content privacy.** Objective/item text, results, and evidence content MUST
+    not become metric labels or default exported OTEL content; refs/slices and
+    bounded summaries apply under redaction and Feature 004 Lang Lock for text axes.
 
 ## Observability
 
@@ -348,8 +726,23 @@ authorization outcomes, owner loss, and recovery without sensitive payloads.
 Metric labels use bounded enums/buckets and allowlisted catalog IDs under a budget.
 Task, session, and process IDs are trace/log correlation only. OTLP export is
 asynchronous and bounded. Smart Routing consumes local validated evidence with window,
-confidence, and TTL; it does not query a backend per Task. Brain dispatch decisions
-and executor start/completion events remain distinct.
+confidence, and TTL; it does not query a backend per Task. Architect/Manager dispatch, validation, and escalation observations remain distinct
+from Worker/executor start/completion events. Hierarchy role, delegation path, fanout
+requested/granted, and validation states are projected with bounded labels.
+
+Panel observability MUST include bounded state-transition, panel update/coalescing,
+usage-provenance, reconnect, output-reference, hierarchical enter/back navigation,
+and root-cancel metrics/spans. It MUST record cancellation request/ack/terminal/
+unknown outcomes and descendant-admission rejections without IDs as metric labels or
+content payloads. The panel reads local Process Table/Event projection; OTEL is
+export/diagnostic evidence and never the UI hot-path authority.
+
+Todo observability MUST include initialized/updated/completed/completion_blocked/
+failed/cancelled/stale/rehydrated/handoff_attached events with compaction
+correlation. Metrics use only enums/counts/buckets for status, consistency, and
+outcome classes. Todo content and item/session IDs MUST NOT be metric labels.
+Process Table may project todo_ref/version/counts/consistency/outcome without
+executing Todo.
 
 ## Compatibility and Migration
 
@@ -365,7 +758,27 @@ and executor start/completion events remain distinct.
   operator surfaces, and distributed future behavior require clarification and a
   future ADR before implementation.
 - ADR-0001 and ADR-0002 are referenced dependencies; this feature does not change
-  their proposed status or decisions.
+  their proposed status or decisions. Process Table and live panel MUST align with
+  ADR-0002 hierarchical adaptive roles (Architect/Manager/Worker) as observation
+  surfaces only; routing classification and role-pool configuration remain Feature
+  001 ownership.
+- Existing TUI child discovery/subagent footer, direct/mini footer, and App timeline
+  remain compatibility baselines; the new panel is a lifecycle projection, not a
+  replacement for transcript/timeline rendering. Direct-child Session UI supersedes
+  any prior full-root-tree-in-one-view behavior (including the TUI
+  `parentID = session.parentID ?? id` sibling/root discovery pattern) and requires
+  semantic parity across TUI/direct/App.
+- Existing Esc and session interrupt behavior remain distinct until the root-tree
+  Ctrl+C policy is implemented through native lifecycle APIs. Feature 003 scheduled
+  occurrences use the same cancellation boundary without disabling definitions and
+  each executable occurrence owns its own Todo.
+- Existing Todo schema/table/update, subagent `todowrite` denial, compaction without
+  Todo rehydration, missing completion gate, and App idle cache clear of Todo are
+  migration baselines documented in research.md; target policy is session-owned
+  mandatory Todo with durable rehydration and completion gate.
+- [Feature 005 OutputSpool/ArtifactStore](../005-add-a-canonical-file-backed-outputspool-and-paged/spec.md) owns the content-plane OutputRef/cursor, seal/abort, committed-byte, and settlement contract.
+  Feature 002 owns lifecycle terminal status and Process Table projection of bounded refs only.
+  Shared clarify remains limited to terminal↔settlement ordering, crash reconciliation between FS and control metadata, and generation fencing — not redefinition of either ownership boundary.
 
 ## Out of Scope
 
@@ -380,6 +793,17 @@ and executor start/completion events remain distinct.
   hot paths.
 - Final command names, API exposure, admission algorithm/default limits, distributed
   semantics, and V1/V2 migration choices before clarification/ADR.
+- Owning the Feature 005 content-plane seal/abort/settlement contract, or loading
+  complete output into a live card (bounded OutputRef/cursor only).
+- Treating OTEL remote data as the panel source or adding LLM/tool/MCP administration
+  to panel or cancellation controls.
+- Owning Smart Agent Routing classification, role-pool configuration, or validation
+  acceptance criteria (Feature 001 / ADR-0002). Feature 002 only projects hierarchy
+  role, fanout, and validation states for observation, owns direct-child Session UI
+  projection, and owns session-owned Todo lifecycle authority/observation seams.
+- Flattening the full authorized tree into Main/Architect Session cards.
+- Sharing one Todo list across parent/child/sibling Sessions, treating Process Table
+  as Todo editor/executor, or using prompt-only Todo without durable snapshot/version.
 
 ## Clarification Questions
 
@@ -436,25 +860,74 @@ and executor start/completion events remain distinct.
     rate, queue/retention bounds, admission ceilings, fairness, subscriber lag,
     terminal preservation, cancel storms, event storms, restart, OTEL outage, and
     fault injection? Which thresholds are provisional until acceptance testing?
+22. Which operator/manager principal and permission authority may view cards, expand
+    OutputRef/cursors, or request root cancellation, and what remains an explicit
+    Feature 001/ADR authorization gap?
+23. What is the exact first versus second Ctrl+C behavior and timeout/escalation policy?
+24. How do Ctrl+C and Esc behave in idle input, active input, modal/detail/navigation,
+    PTY/shell, copy-selection, and platform-specific terminal contexts?
+25. Which native lifecycle API owns root cancellation propagation and acknowledgement,
+    and how are queued/waiting descendants fenced from new admission?
+26. What shared terminal↔settlement ordering, intermediate settling states, and FS↔control
+    reconciliation algorithm integrate Feature 002 lifecycle terminal status with the
+    [Feature 005](../005-add-a-canonical-file-backed-outputspool-and-paged/spec.md) content-plane
+    seal/abort/settlement contract (Feature 005 owns seal/abort/OutputRef/cursor/committed
+    bytes; Feature 002 owns terminal lifecycle — do not reopen that ownership split)?
+27. What exact live usage schema and provider/runtime/local-estimate provenance rules
+    apply to token fields, effort, tokens/s validity, and settlement reconciliation?
+28. What card update coalescing/throttle, terminal-retention, responsive narrow-layout,
+    keyboard-navigation, and screen-reader quantitative limits form the acceptance
+    matrix?
+29. What Process Table and panel field schema projects hierarchy role, delegation
+    depth/path, fanout requested/granted, and validation state without inventing
+    routing authority or high-cardinality metric labels?
+30. How are Architect/Manager orchestration events distinguished from Worker executor
+    events in Event Bus vocabulary while remaining one lifecycle system?
+31. What exact breadcrumb UX, responsive truncation, and selection restoration apply
+    for Architect → Manager → Worker navigation across TUI/direct/App?
+32. What Todo schema fields, CAS conflict rules, failure status model, archive/
+    retention/reopen policy, and quantitative item limits are final?
+33. What pure social/no-goal chat and hidden lifecycle agent exemptions apply to the
+    non-empty Todo gate?
+34. What operator completion override authorization and audit trail exist, if any?
+35. How much child Todo content may a parent model observe versus ref/version/counts?
+36. What permission/question escalation surfaces from deeper descendants to root
+    without flattening cards?
+37. What task/tool denial migration path converts legacy subagent `todowrite` deny
+    into native goal-bearing Todo availability?
+
+Confirmed Feature 001 hierarchy decisions, direct-child Session UI, and mandatory
+session-owned Todo requirements are not reopened here; Feature 002 aligns
+observation, projection, UI navigation, and Todo lifecycle authority.
 
 ## Related Decisions
 
 - [Feature 001 Smart Agent Routing and Telemetry](../001-define-one-cohesive-smart-agent-routing-and-opentelemetry/spec.md)
 - [ADR-0001 — OpenTelemetry telemetry foundation](../../adr/0001-opentelemetry-telemetry-foundation.md)
 - [ADR-0002 — Core Smart Agent Routing](../../adr/0002-core-smart-agent-routing.md)
+- [ADR-0003 — Operator Control Plane and native command authority](../../adr/0003-operator-control-plane-and-native-command-authority.md) — proposed sole management authority.
 - [Plugin systems research](../../research/plugin-systems.md) — evidence only, not a decision.
 - Future ADR required before plan/implementation: **Task Process Lifecycle and Operational Observation** (not created).
 - Related scheduled-jobs feature: [003 Scheduled Jobs and Async Main-Context Notification](../003-add-persistent-bun-native-scheduled-jobs-with-event/spec.md)
+- Related content-plane feature: [005 OutputSpool and ArtifactStore](../005-add-a-canonical-file-backed-outputspool-and-paged/spec.md) — owns content-plane seal/abort/settlement; Feature 002 owns lifecycle terminal.
+- Related semantic retrieval feature: [006 Semantic Agent and Skill Retrieval (Milvus)](../006-add-milvus-backed-multilingual-semantic-retrieval-and/spec.md) — index job lifecycle and budget/wake projection only; lifecycle remains Feature 002.
+- Related management foundation: [007 Unified Native Operator Control Plane](../007-add-a-unified-native-operator-control-plane-for-all-opencode/spec.md) — process/task command IDs, auth, audit; not runtime execution authority.
+- Related MCP runtime: [008 Complete MCP Client Tools and Resources Lifecycle](../008-add-complete-mcp-client-tools-and-resources-lifecycle-with/spec.md) — MCP call/task children, progress UI, standard cancel vs tasks/cancel; lifecycle authority remains Feature 002.
 
 ## Initial Traceability Matrix
 
-| Outcome                            | Requirements       | Acceptance scenarios | Phase |
-| ---------------------------------- | ------------------ | -------------------- | ----- |
-| Canonical lifecycle ownership      | FR1–FR8, FR22–FR24 | 2, 6, 14, 22         | 1     |
-| Segmented typed observation        | FR9–FR19           | 2–5, 18              | 1     |
-| Process Table projection           | FR25–FR29          | 11, 13–15, 19        | 1     |
-| Admission and bounded backpressure | FR30–FR37          | 1, 7–8, 20–21        | 1     |
-| Watchdog and recovery safety       | FR38–FR42          | 9–13                 | 1–2   |
-| OTEL and routing evidence          | FR43–FR48          | 12, 16–17, 20        | 1–2   |
-| Operator management boundary       | FR49–FR51          | 18, 22               | 2     |
-| Security and privacy               | NFRs, security     | 3–5, 11–18           | 1–2   |
+| Outcome                              | Requirements                     | Acceptance scenarios | Phase |
+| ------------------------------------ | -------------------------------- | -------------------- | ----- |
+| Canonical lifecycle ownership        | FR1–FR8, FR22–FR24               | 2, 6, 14, 22         | 1     |
+| Segmented typed observation          | FR9–FR19                         | 2–5, 18              | 1     |
+| Process Table projection             | FR25–FR29                        | 11, 13–15, 19        | 1     |
+| Admission and bounded backpressure   | FR30–FR37                        | 1, 7–8, 20–21        | 1     |
+| Watchdog and recovery safety         | FR38–FR42                        | 9–13                 | 1–2   |
+| OTEL and routing evidence            | FR43–FR48                        | 12, 16–17, 20        | 1–2   |
+| Operator management boundary         | FR49–FR51                        | 18, 22               | 2     |
+| Live subagent/process panel          | FR52–FR58                        | 23–28, 34–37         | 1–2   |
+| Direct-child hierarchical Session UI | FR52, FR58a–FR58b                | 23–23f, 29, 34       | 1–2   |
+| Hierarchy role/validation projection | FR9, FR26, FR31, FR48, FR52–FR53 | 23, 23a, 16–17       | 1–2   |
+| Mandatory session-owned Todo         | FR58c–FR58m                      | 38–47, 23e           | 1–2   |
+| Root-tree Ctrl+C cancellation        | FR59–FR65                        | 29–33, 35, 23f       | 1–2   |
+| Security and privacy                 | NFRs, security                   | 3–5, 11–18, 23–47    | 1–2   |
