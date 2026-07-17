@@ -48,6 +48,9 @@ before `plan` or implementation and is intentionally not created here.
   observable so that cron fan-out cannot create unbounded execution or blind retries.
 - As a routing system, I want local scheduled-job evidence correlated with Feature 001
   and Feature 002 so that dispatch remains hard-gated and backend-independent.
+- As an operator, I want each executable scheduled occurrence to own its own Todo
+  aggregate so that Job Definitions never share a live work list and cancelling one
+  occurrence cannot rewrite future definition state.
 
 ### P2 — Native management
 
@@ -94,7 +97,16 @@ before `plan` or implementation and is intentionally not created here.
 8. A trigger MUST produce `job.trigger_due` and an occurrence before admission; it
    MUST then create or associate a Feature 002 Task Process through TaskTool,
    BackgroundJob, SessionExecution, SessionRunCoordinator, SessionRunner, and EventV2
-   services.
+   services. Each executable scheduled occurrence MUST receive its own session-owned
+   Todo aggregate under Feature 002 mandatory Todo rules before goal-bearing work
+   starts. A Job Definition MUST NOT share a Todo list with occurrences or with other
+   definitions.
+   8a. Each **admitted** scheduled occurrence MUST own its own
+   [Feature 005](../005-add-a-canonical-file-backed-outputspool-and-paged/spec.md)
+   **OutputGroup** for that occurrence's execution (process/attempt/generation). A Job
+   Definition MUST NOT share a mutable OutputGroup or spool channel with occurrences
+   or with other definitions. Lifecycle terminal status remains Feature 002 execution
+   authority; Feature 005 owns content-plane settlement for the occurrence's outputs.
 9. The scheduler MUST not execute business logic directly, bypass admission, bypass
    Smart Routing, or create a second executor, runtime, EventV2 system, or lifecycle.
 10. The occurrence MUST carry idempotency identity and correlation/causation to its
@@ -152,6 +164,9 @@ before `plan` or implementation and is intentionally not created here.
 22. A notification envelope MUST include notification/event/occurrence/job IDs,
     target root/session, source, type, priority, created/expiry timestamps,
     correlation/causation, redacted payload reference, delivery state, and ack state.
+    When the occurrence produced observed output, the envelope MUST carry only a
+    **bounded summary and Feature 005 OutputRef** (or equivalent opaque ref), never
+    full content, spool filesystem paths, or unbounded payloads.
 23. Data plane observation MUST be read-only. Control plane wake/queue/steer MUST use
     native SessionInput/SessionExecution APIs; observers cannot directly mutate a
     lifecycle or Process Table.
@@ -167,18 +182,34 @@ before `plan` or implementation and is intentionally not created here.
 
 ### Action targets and operator management
 
+**Normative transversal rule (Feature 007 Operator Control Plane).** All setup,
+configuration, and management for scheduled jobs MUST use
+[Feature 007](../007-add-a-unified-native-operator-control-plane-for-all-opencode/spec.md)
+unified Operator Control Plane and native Settings/menu/palette/native-slash/CLI/App/
+Desktop adapters calling typed core domain commands/queries directly. MUST NOT use
+Config.command/custom templates, `session.command` prompt path, ToolRegistry, MCP
+tools/prompts, plugins, skills, shell commands issued by an LLM, or free-form model
+instructions as management authority. Native slash is intercepted before prompt
+admission/transcript; zero provider/model calls/tokens/cost by default; output not
+added to Message/Part/context by default. Mutations require operator principal,
+explicit scope, version/CAS, idempotency, and audit; secret refs only. Canonical job
+IDs: list, status, show, create, update, enable, disable, delete, reschedule, run-now,
+history, watch. Job admin creates native lifecycle occurrences (Feature 002), not LLM
+turns. Plugin/MCP/custom registries MUST NOT register reserved operator IDs.
+
 28. Target/action types MUST be categorized as native maintenance/action, operator
     notification only, main-context wake/structured input, Smart Routing dispatch, or
     approved workflow/template.
 29. Shell or mutating tool actions MUST require explicit allowlist, permission,
     confirmation/policy, and secure secret references; arbitrary scheduling is not
     available to an untrusted LLM, plugin, or prompt.
-30. Native operator-only surfaces MUST conceptually provide list, status, show,
-    create, update, enable, disable, delete, run-now, history, and watch. Final names,
-    scopes, and permissions remain clarification.
+30. Native operator-only surfaces MUST provide Feature 007 canonical job operations:
+    list, status, show, create, update, enable, disable, delete, reschedule, run-now,
+    history, and watch. Final display aliases remain clarification; reserved IDs and
+    scopes are Feature 007 authority.
 31. `run-now` MUST create a normal occurrence and pass through admission, routing,
     permissions, and lifecycle events; it MUST not bypass scheduled-job identity or
-    Process Table semantics.
+    Process Table semantics. It MUST NOT start an LLM turn solely for administration.
 32. Human/JSON output MUST be redacted and versioned. Secrets MUST not occur in
     arguments, shell history, output, prompt templates, or LLM/tool/MCP surfaces.
 
@@ -207,6 +238,10 @@ before `plan` or implementation and is intentionally not created here.
 - **Compatibility:** existing SessionInput, SessionExecution, RunCoordinator,
   BackgroundJob, TaskTool, EventV2, command registries, config, and persistence remain
   canonical.
+- **Occurrence-owned Todo:** each executable occurrence Session owns exactly one Todo
+  aggregate under Feature 002; Job Definitions never share live Todo lists; cancel of
+  one occurrence preserves incomplete Todo for that occurrence without rewriting
+  future definitions.
 
 ## Acceptance Criteria
 
@@ -283,6 +318,23 @@ before `plan` or implementation and is intentionally not created here.
     a handler or OS-level process may be mutating, when control is applied, then stop
     or unregister is not reported as an OS kill or confirmed remote cancellation and
     no mutation is silently repeated or terminated without the native lifecycle result.
+26. **Occurrence-owned Todo.** Given an executable scheduled occurrence, when it is
+    admitted for goal-bearing work, then it has its own non-empty session-owned Todo
+    snapshot under Feature 002 and does not share the Job Definition's list or any
+    sibling occurrence list.
+27. **Cancel occurrence preserves definition and Todo independence.** Given an active
+    occurrence with incomplete Todo, when that occurrence is cancelled, then only that
+    occurrence/process is cancelled, incomplete Todo items and outcome/reason are
+    preserved for that occurrence, and the future Job Definition remains enabled and
+    unchanged for later triggers.
+28. **Occurrence-owned OutputGroup.** Given an admitted scheduled occurrence that
+    produces observed output, when execution runs, then that occurrence owns its own
+    Feature 005 OutputGroup and does not share a mutable OutputGroup or spool channel
+    with the Job Definition or sibling occurrences; lifecycle terminal remains Feature 002.
+29. **Notification carries bounded summary/ref only.** Given an occurrence with sealed
+    or open output, when a main-context notification is delivered, then the envelope
+    includes only a bounded summary and Feature 005 OutputRef (opaque), never full
+    content or spool filesystem paths.
 
 ## Security Requirements
 
@@ -327,8 +379,10 @@ local authority remains usable during outage.
 - Definitions persist in the existing canonical configuration/persistence layer; Bun
   registrations are rehydrated at startup and reconciled rather than treated as the
   durable source.
-- Triggered work uses Feature 002 Task Lifecycle Event Bus and Process Table and
-  Feature 001 routing; no scheduler-owned executor, event bus, or bypass path exists.
+- Triggered work uses Feature 002 Task Lifecycle Event Bus and Process Table,
+  Feature 002 session-owned Todo per occurrence, Feature 005 OutputGroup per
+  admitted occurrence, and Feature 001 routing; no scheduler-owned executor, event
+  bus, shared Todo/OutputGroup, or bypass path exists.
 - SessionInput, SessionExecution, RunCoordinator, BackgroundJob, TaskTool, EventV2,
   native command registries, permissions, config, and session store remain canonical.
 - Bun in-process and OS-level cron differences, supported platforms, timezones,
@@ -346,6 +400,10 @@ local authority remains usable during outage.
 - Polling loops, manual sleep schedulers, bypassing Task lifecycle or Smart Routing.
 - Unbounded catch-up, queues, notification/event fan-out, or raw notification injection
   into unsafe active turns.
+- Sharing one Todo list across Job Definition and occurrences, or rewriting future
+  Job Definition Todo state when cancelling a single occurrence.
+- Sharing one mutable OutputGroup/spool across Job Definition and occurrences, or
+  carrying full occurrence output/content/paths in notification envelopes.
 
 ## Clarification Questions
 
@@ -384,17 +442,24 @@ local authority remains usable during outage.
 - [Feature 002 Task Lifecycle Event Bus and Process Table](../002-build-an-event-driven-asynchronous-task-lifecycle-engine/spec.md)
 - [ADR-0001 — OpenTelemetry telemetry foundation](../../adr/0001-opentelemetry-telemetry-foundation.md)
 - [ADR-0002 — Core Smart Agent Routing](../../adr/0002-core-smart-agent-routing.md)
+- [ADR-0003 — Operator Control Plane and native command authority](../../adr/0003-operator-control-plane-and-native-command-authority.md) — proposed sole management authority.
 - [Feature 003 research](research.md) — evidence, not a decision.
+- Related content-plane feature: [005 OutputSpool and ArtifactStore](../005-add-a-canonical-file-backed-outputspool-and-paged/spec.md) — occurrence output groups and notification refs; lifecycle remains Feature 002 execution authority.
+- Related semantic retrieval feature: [006 Semantic Agent and Skill Retrieval (Milvus)](../006-add-milvus-backed-multilingual-semantic-retrieval-and/spec.md) — scheduled index reconciliation natively, no LLM by default; coalesced triggers.
+- Related management foundation: [007 Unified Native Operator Control Plane](../007-add-a-unified-native-operator-control-plane-for-all-opencode/spec.md) — jobs command IDs, auth, audit; not runtime execution authority.
+- Related MCP runtime: [008 Complete MCP Client Tools and Resources Lifecycle](../008-add-complete-mcp-client-tools-and-resources-lifecycle-with/spec.md) — optional scheduled/wake for resource policy only; no automatic wake per update; ownership unchanged.
 - Future ADR required before plan/implementation: **Scheduled Job Runtime and Async Notification Channel** (not created).
 
 ## Initial Traceability Matrix
 
-| Outcome                            | Requirements              | Acceptance scenarios | Phase |
-| ---------------------------------- | ------------------------- | -------------------- | ----- |
-| Durable native scheduling          | FR1–FR7                   | 1–4, 13              | 1     |
-| Event-consistent occurrences       | FR8–FR14                  | 6, 11, 13, 18–20     | 1     |
-| Misfire/overlap/admission safety   | FR15–FR19                 | 3, 5, 12, 21         | 1     |
-| Authorized async notifications     | FR20–FR27                 | 7–10, 17             | 1–2   |
-| Operator management                | FR28–FR32                 | 14, 17               | 2     |
-| OTEL and Process Table integration | NFRs, FR8–FR14, FR43–FR48 | 11–12, 15–16, 18     | 1–2   |
-| Security and privacy               | Security Requirements     | 8–10, 16–20          | 1–2   |
+| Outcome                            | Requirements              | Acceptance scenarios    | Phase |
+| ---------------------------------- | ------------------------- | ----------------------- | ----- |
+| Durable native scheduling          | FR1–FR7                   | 1–4, 13                 | 1     |
+| Event-consistent occurrences       | FR8–FR14                  | 6, 11, 13, 18–20, 26–29 | 1     |
+| Occurrence-owned Todo              | FR8                       | 26–27                   | 1     |
+| Occurrence OutputGroup + notif ref | FR8a, FR22                | 28–29                   | 1     |
+| Misfire/overlap/admission safety   | FR15–FR19                 | 3, 5, 12, 21            | 1     |
+| Authorized async notifications     | FR20–FR27                 | 7–10, 17                | 1–2   |
+| Operator management                | FR28–FR32                 | 14, 17                  | 2     |
+| OTEL and Process Table integration | NFRs, FR8–FR14, FR43–FR48 | 11–12, 15–16, 18        | 1–2   |
+| Security and privacy               | Security Requirements     | 8–10, 16–20             | 1–2   |

@@ -47,9 +47,15 @@ telemetry foundation.
   catalog identifiers under a configurable budget. Sensitive content, prompts,
   secrets, personal paths, complete files, and tool payloads are redacted or
   excluded by default. Grafana is not a required UI or signal store.
-- Telemetry management uses native operator-only palette, slash, CLI, and
-  Settings operations. These operations are not LLM interfaces, tools, MCP
-  calls, or transcript content.
+- Telemetry management uses the Feature 007 unified Operator Control Plane and
+  native operator-only palette, slash, CLI, and Settings adapters calling typed
+  core domain commands/queries directly. These operations are not LLM interfaces,
+  tools, MCP calls, or transcript content. MUST NOT use Config.command/custom
+  templates, `session.command`, ToolRegistry, plugins, skills, or free-form model
+  instructions as management authority. Native slash is intercepted before prompt
+  admission; zero provider/model calls/tokens/cost by default; output not added to
+  Message/Part/context by default. Mutations require operator principal, explicit
+  scope, version/CAS, idempotency, and audit; secret refs only.
 
 ### Consequences
 
@@ -82,7 +88,14 @@ telemetry foundation.
 ## Related
 
 - Feature specification: [001 Smart Agent Routing and Telemetry Foundation](../sdd/001-define-one-cohesive-smart-agent-routing-and-opentelemetry/spec.md)
-- Depends on / related decision: [0002 — Core Smart Agent Routing](0002-core-smart-agent-routing.md)
+- This ADR is the **telemetry foundation** and does **not** depend on ADR-0002. Consumers
+  of telemetry (including [0002 — Core Smart Agent Routing](0002-core-smart-agent-routing.md))
+  depend on or relate to this foundation; they do not invert the dependency.
+- Related ADR: [0003 — Operator Control Plane and native command authority](0003-operator-control-plane-and-native-command-authority.md) — proposed sole management authority for telemetry configure/status/test and all operator admin surfaces.
 - Research evidence: [Plugin systems research note](../research/plugin-systems.md)
 - Related feature: [002 Task Lifecycle Event Bus and Process Table](../sdd/002-build-an-event-driven-asynchronous-task-lifecycle-engine/spec.md)
 - Related feature: [003 Scheduled Jobs and Async Main-Context Notification](../sdd/003-add-persistent-bun-native-scheduled-jobs-with-event/spec.md)
+- Related feature: [005 OutputSpool and ArtifactStore](../sdd/005-add-a-canonical-file-backed-outputspool-and-paged/spec.md) — content-plane metrics only; no content/path/ref labels
+- Related feature: [006 Semantic Agent and Skill Retrieval (Milvus)](../sdd/006-add-milvus-backed-multilingual-semantic-retrieval-and/spec.md) — semantic latency/candidates/fallback metrics only; no query text/vectors/entity IDs as labels
+- Related feature: [007 Unified Native Operator Control Plane](../sdd/007-add-a-unified-native-operator-control-plane-for-all-opencode/spec.md) — management foundation; not runtime execution authority
+- Related feature: [008 Complete MCP Client Tools and Resources Lifecycle](../sdd/008-add-complete-mcp-client-tools-and-resources-lifecycle-with/spec.md) — MCP connect/call/progress/read/subscribe spans and metrics; no URI/content/call/session IDs as labels
