@@ -497,7 +497,7 @@ vocabulary is enforced (see the Traceability reconciliation note).
   C16, AC1, AC6, AC7, AC10, AC19, AC22, AC23, AC24, AC25, AC26). Acceptance: `bun test
   packages/opencode` green against the standalone server when present and against fakes
   otherwise.
-- [ ] T043 [S25] Add fault-injection tests under `packages/opencode/test/semantic/**` driving
+- [x] T043 [S25] Add fault-injection tests under `packages/opencode/test/semantic/**` driving
   the degradation matrix (Milvus down, reranker timeout, embedding down, cold index, no binding
   pinned → typed gap code + catalog/lexical floor, no model substitution, fail-closed opt-in),
   the cutover fault matrix (select/reindex do not activate the alias, cutover CAS success/
