@@ -294,3 +294,134 @@ and [ADR-0003](../../adr/0003-operator-control-plane-and-native-command-authorit
 audit; **runtime data plane** = lifecycle execution plus session-owned Todo work-item
 semantic updates under permission/CAS (not Todo policy/setup mutation). This note does
 not restate Feature 007 requirements.
+
+## EventV2 mechanics and single-bus feasibility
+
+The EventV2 primitives already carry everything the lifecycle bus needs; a second event
+system is unnecessary and forbidden (FR6, C2).
+
+- `EventV2.define({ type, durable?, schema })` builds a typed `Definition` at
+  [`packages/schema/src/event.ts:42-70`](../../../../packages/schema/src/event.ts#L42-L70).
+  The optional `durable: { version, aggregate }` annotation is the sole difference between
+  a durable and a live class; a live event omits it. The published `Payload` carries the
+  `evt_` id, optional `metadata`, and, for durable events, `durable: { aggregateID, seq,
+  version }` at [`packages/schema/src/event.ts:29-40`](../../../../packages/schema/src/event.ts#L29-L40).
+  This directly realizes the C4 durable/live split without any new envelope machinery.
+- `Event.durable(...)` and `Event.latest(...)` at
+  [`packages/schema/src/event.ts:76-108`](../../../../packages/schema/src/event.ts#L76-L108)
+  build the versioned-type maps (`${type}.${version}`) that gate replay, so lifecycle
+  schema evolution reuses the same versioning contract (FR24).
+- `EventV2.readAggregate` replays a durable aggregate ordered by `seq` with a bounded
+  `limit` and `hasMore` cursor at
+  [`packages/core/src/event.ts:63-108`](../../../../packages/core/src/event.ts#L63-L108).
+  This is the mechanism that rebuilds the Process Table on restart (C6) and proves
+  terminal preservation without global order or exactly-once delivery (C5).
+- `EventV2.PublishOptions.commit(seq)` runs a local operational projection atomically with
+  a new durable event and is explicitly "not replayed or serialized" at
+  [`packages/core/src/event.ts:118-124`](../../../../packages/core/src/event.ts#L118-L124).
+  A Process Table row can therefore commit atomically with its durable lifecycle event
+  while the durable aggregate stays the single source of truth.
+- Subscriber backpressure already exists: `allBounded` wraps `listen` in a
+  `Queue.dropping` with an explicit capacity and a `SubscriberOverflowError` at
+  [`packages/core/src/event.ts:110-113`](../../../../packages/core/src/event.ts#L110-L113)
+  and [`packages/core/src/event.ts:177-189`](../../../../packages/core/src/event.ts#L177-L189).
+  The lifecycle subscriber-bound requirement (FR35, C10) reuses this dropping-queue posture
+  rather than inventing a new bounded channel.
+- Retention is available through `pruneDurable(aggregateID, typePrefix, olderThanMs,
+  limit)` at [`packages/core/src/event.ts:148-159`](../../../../packages/core/src/event.ts#L148-L159),
+  already used for Feature 007 `operator.audit` retention; bounded terminal-row cleanup
+  (FR27, AC15) reuses it.
+
+## Durable event manifest and terminal preservation
+
+The durable inventory is a single registry the lifecycle durable definitions join, not a
+parallel store.
+
+- `DurableEventManifest.Durable` composes `SessionV1`, `SessionEvent`, and `OperatorEvent`
+  durable definitions through `Event.durable([...])` at
+  [`packages/schema/src/durable-event-manifest.ts:8-21`](../../../../packages/schema/src/durable-event-manifest.ts#L8-L21);
+  its own comment names it the "canonical durable event inventory (Feature002 +
+  Feature007 operator.audit)", confirming that Feature 002 lifecycle durable definitions
+  are expected to be added here — one inventory, keyed by versioned type.
+- The core `Interface` exposes `durable(...)`, `project(...)`, `replay(...)`,
+  `replayAll(...)`, `claim(...)`, and `readDurablePage(...)` at
+  [`packages/core/src/event.ts:126-172`](../../../../packages/core/src/event.ts#L126-L172).
+  `claim(aggregateID, ownerID)` and the `readDurablePage` bounded reader give the
+  reconciliation and owner-lease seams (C12, C13) a canonical home without a new table.
+
+## Feature 001 telemetry instruments — reuse target (C18)
+
+Feature 002 adds lifecycle spans and metrics but no new exporter, SDK, or pipeline.
+
+- `packages/core/src/observability/telemetry-instruments.ts` already defines the eight
+  concept spans (including `task.execute`, `llm.request`, `tool.execute`, `fallback`) at
+  [`telemetry-instruments.ts:19-29`](../../../../packages/core/src/observability/telemetry-instruments.ts#L19-L29),
+  the bounded label enums (`status`, `task_class`, `hierarchy_role`, `execution_boundary`,
+  effort tiers) at
+  [`telemetry-instruments.ts:36-48`](../../../../packages/core/src/observability/telemetry-instruments.ts#L36-L48),
+  the `OTHER` sentinel and `boundEnum` helper, and `createCardinalityAllowlist(budget)`
+  that admits up to `budget` distinct dynamic IDs and collapses the rest to `other` at
+  [`telemetry-instruments.ts:52-87`](../../../../packages/core/src/observability/telemetry-instruments.ts#L52-L87).
+  Lifecycle metrics reuse these helpers so `task_id`/`session_id`/`process_id` never become
+  metric labels (AC17).
+- Metric primitives (`Metric.histogram`/`counter`/`gauge`) and the export-queue depth/
+  capacity/drop/error instruments at
+  [`telemetry-instruments.ts:94-131`](../../../../packages/core/src/observability/telemetry-instruments.ts#L94-L131)
+  provide the queue-pressure signals (FR37) the lifecycle bounded queues also emit.
+
+## Feature 001 routing and hierarchy events — consumed read-only (C1)
+
+The lifecycle projection reads the eight Feature 001 events; it never redefines, re-emits,
+or re-owns them.
+
+- `event-v2-bridge.ts` registers one `EventV2.define` `Definition` per union member
+  (`routing.decision`, `routing.fallback`, `hierarchy.dispatch`, `hierarchy.validation`,
+  `hierarchy.escalation`, `capability.mismatch`, `todo.initialized`,
+  `todo.completion_blocked`) at
+  [`packages/opencode/src/event-v2-bridge.ts:29-72`](../../../../packages/opencode/src/event-v2-bridge.ts#L29-L72)
+  and exposes a single `publishRoutingEvent` switch that attaches instance/workspace
+  `Location` before publishing at
+  [`packages/opencode/src/event-v2-bridge.ts:82-146`](../../../../packages/opencode/src/event-v2-bridge.ts#L82-L146).
+  The `listen` finalizer re-emits every event to the global bus and mirrors durable events
+  onto the sync stream at
+  [`packages/opencode/src/event-v2-bridge.ts:148-176`](../../../../packages/opencode/src/event-v2-bridge.ts#L148-L176).
+  Feature 002 adds a parallel `publishLifecycleEvent` on this exact bridge, reusing the
+  `dataFields`/one-Definition-per-member pattern, so the lifecycle wire shape cannot drift
+  from its schema owner and no raw tagged union is wired to the bus.
+- Because the eight routing/hierarchy/todo events already carry `session_id`, `turn_id`,
+  and `decision_id`, the lifecycle envelope reuses those correlation fields verbatim (C15)
+  rather than recomputing hierarchy role, delegation path, fanout, or validation outcome.
+
+## Alternatives considered
+
+- **Projection-over-EventV2 versus a second lifecycle bus (chosen; C2).** A dedicated
+  Task Lifecycle Event Bus with its own transport, ordering, and durability was rejected.
+  EventV2 already supplies typed definitions, per-aggregate durable ordering, bounded
+  dropping subscribers, atomic local commit, replay, and retention (evidence above), and
+  the routing-events bridge is a working precedent. A second bus would create a parallel
+  event authority (violating FR6/AC22), duplicate durability and backpressure logic, and
+  force cross-bus ordering reconciliation. The lifecycle engine is therefore an in-process
+  bounded projection/adaptation layer over the one authority.
+- **Effect Stream/PubSub versus adding RxJS (chosen: Effect; FR19).** The observation API
+  (`observeSession`/`observeProcess`/`observeTree`/`observeGlobal`) needs read-only streams
+  with scoped finalizers. Effect `Stream`/`PubSub`/`Scope` already back `EventV2.subscribe`
+  and `allBounded`, and the coordinator already composes `FiberSet`/`Deferred` teardown.
+  Adding RxJS purely for an Observable abstraction would duplicate lifecycle-cleanup
+  semantics the runtime already guarantees and is explicitly out of scope.
+- **In-memory projection versus a Process Table store of record (chosen: in-memory; C6).**
+  Persisting the Process Table as its own table would make it a second source from which
+  events could be reconstructed (violating FR4) and risk divergence from the durable
+  aggregate. Rebuilding the table by replaying `readAggregate` and reconciling against
+  durable Sessions keeps a single source of truth and yields honest `unknown`/
+  `unreconciled` state after restart with no false recovery.
+- **Single shared bucketed watchdog versus one timer per Task (chosen: shared; C12).** A
+  per-Task timer scales with concurrency and pressures the scheduler. A single shared
+  bucketed sweeper with in-memory lease and heartbeat state (never written per-heartbeat to
+  SQLite) bounds watchdog cost independent of Task count and matches the high-I/O-concurrency
+  posture (FR38).
+- **Per-scope token-bucket admission versus a fixed `maxAgents` ceiling (chosen:
+  token-bucket; C11).** A flat `maxAgents` policy has no declared ownership, fairness,
+  capacity source, or observable rejection (forbidden by FR34). A per-scope token-bucket
+  over measured global/root/session/child/provider/agent/tool/event-queue/OTEL/SQLite/
+  token/cost budgets scales to measured safe capacity, exposes requested-versus-granted
+  fanout, and makes saturation observable.

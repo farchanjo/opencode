@@ -75,6 +75,9 @@ Acceptance criteria live as prioritized scenarios in each feature `spec.md`.
 - **Smart routing lifecycle** — the routing decision state machine is modeled in
   [routing-decision statechart](../statecharts/routing-decision.md) (classify →
   hard gates → rank → persist → dispatch → validate → fallback).
+- **Task process lifecycle** — the ten-state Process Table state machine is modeled
+  in [task-lifecycle statechart](../statecharts/task-lifecycle.md) (created →
+  queued → waiting/running → cancelling/completed/failed/zombie/unknown).
 
 ## Phase 2 deferred (explicit)
 
