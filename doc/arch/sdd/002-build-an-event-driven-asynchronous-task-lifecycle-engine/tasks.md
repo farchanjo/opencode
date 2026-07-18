@@ -150,59 +150,59 @@ only and never holds management authority of its own.
 
 ### Application and adapters (Phase 3)
 
-- [ ] T025 [S5] Author `packages/opencode/src/lifecycle/eventv2-adapter.ts` mapping
+- [x] T025 [S5] Author `packages/opencode/src/lifecycle/eventv2-adapter.ts` mapping
   each lifecycle event to its EventV2 `Definition` and back, committing durable events
   atomically via `EventV2.PublishOptions.commit(seq)` and publishing live events
   without a sequence, and subscribing the projection through `EventV2.Service.listen`
   (C3, C4).
-- [ ] T026 [S10] Author `packages/opencode/src/lifecycle/observation-service.ts`
+- [x] T026 [S10] Author `packages/opencode/src/lifecycle/observation-service.ts`
   implementing `observeSession`, `observeProcess`, `observeTree`, and
   `observeGlobal(filter)` over Effect Stream/PubSub with scoped finalizers so
   subscribe/unsubscribe is leak-free and no Observable controls lifecycle state (FR14,
   FR15, FR16, C14).
-- [ ] T027 [S10] Author `packages/opencode/src/lifecycle/authorization.ts` applying the
+- [x] T027 [S10] Author `packages/opencode/src/lifecycle/authorization.ts` applying the
   canonical Permission/Policy visibility filter and metadata redaction before delivery
   and projection, rejecting sibling and cross-project access as a
   `sibling_leak_rejected` failure (FR11, FR12, FR13, C14).
-- [ ] T028 [S11] Author `packages/opencode/src/lifecycle/handoff.ts` publishing one
+- [x] T028 [S11] Author `packages/opencode/src/lifecycle/handoff.ts` publishing one
   durable single-owner handoff event carrying source/target session and process,
   reason, generation, correlation, and causation, projectable to both affected
   sessions and their permitted root tree (FR22, C16).
-- [ ] T029 [S11] Author `packages/opencode/src/lifecycle/cancel.ts` implementing the
+- [x] T029 [S11] Author `packages/opencode/src/lifecycle/cancel.ts` implementing the
   native root-tree cancel path through `SessionRunCoordinator.interrupt`, transitioning
   visible and invisible descendants through `cancelling`, fencing new descendant
   admission, distinguishing first versus second Ctrl+C within the escalation window,
   and promising no remote kill, reversal, or mutation rollback (FR59–FR62, C17).
-- [ ] T030 [S12] Extend `packages/opencode/src/lifecycle/eventv2-adapter.ts` and
+- [x] T030 [S12] Extend `packages/opencode/src/lifecycle/eventv2-adapter.ts` and
   `packages/core/src/lifecycle/process-table.ts` with the `settling`/`unknown`/
   `corrupt` terminal settlement sub-states so a Task is never marked terminal-as-settled
   until Feature 005 reports settlement, projecting bounded `OutputRef`/cursor only
   (FR64, C20).
-- [ ] T031 [S13] Author `packages/opencode/src/operator/lifecycle/**` with the typed
+- [x] T031 [S13] Author `packages/opencode/src/operator/lifecycle/**` with the typed
   `ProcessPort` domain implementations for `process.status|tree|watch|cancel|steer|
   handoff` and `task.status|tree|watch|cancel`, each emitting audit events and
   registering through the Feature 007 registry with zero model calls, redacted output,
   and no output added to Message/Part/context by default; reserved IDs are never
   registered by plugin/MCP/custom registries (FR49–FR51, C19).
-- [ ] T032 [S15] Extend `packages/opencode/src/lifecycle/eventv2-adapter.ts` to consume
+- [x] T032 [S15] Extend `packages/opencode/src/lifecycle/eventv2-adapter.ts` to consume
   the Feature 001 `todo.initialized`/`todo.completion_blocked` events read-only, publish
   the Feature 002 session-owned `todo.*` events at their existing seams, and project
   `todo_ref`/version/counts/consistency/outcome into Process Table rows without
   mutating any Todo, with sibling isolation before projection (FR58k, C23–C25).
-- [ ] T033 [S10–S13] Author the barrel `packages/opencode/src/lifecycle/index.ts`
+- [x] T033 [S10–S13] Author the barrel `packages/opencode/src/lifecycle/index.ts`
   re-exporting the eventv2 adapter, observation service, authorization, handoff, and
   cancel modules.
 
 ### CLI and TUI surfaces (Phase 4)
 
-- [ ] T034 [S16] Author `packages/cli/src/**/process/**` for `opencode process
+- [x] T034 [S16] Author `packages/cli/src/**/process/**` for `opencode process
   status|tree|watch|cancel|steer|handoff`, each dispatching through the Feature 007
   registry to the `ProcessPort`, emitting human and JSON output with redacted rows, and
   making zero provider/model calls.
-- [ ] T035 [S16] Author `packages/cli/src/**/task/**` for `opencode task
+- [x] T035 [S16] Author `packages/cli/src/**/task/**` for `opencode task
   status|tree|watch|cancel`, resolving a logical Task to its `process_id`/attempt/
   generation set through the Feature 007 registry with zero model calls.
-- [ ] T036 [S16] Author `packages/tui/src/routes/session/process-panel/**` rendering
+- [x] T036 [S16] Author `packages/tui/src/routes/session/process-panel/**` rendering
   direct-child-only cards (`parent_session_id == current_session_id`) with hierarchy
   role, validation status, bounded/redacted activity, live usage with provenance and
   explicit unavailable state, live elapsed and valid tokens/s, breadcrumb navigation
