@@ -452,7 +452,7 @@ vocabulary is enforced (see the Traceability reconciliation note).
   yields the same effective binding/version/audit (FR29, FR35, C15, AC19, AC21, AC22).
   Acceptance: `bun test packages/cli` asserts human and JSON output, surface parity with zero
   admin-time model tokens, confirmation on mutating verbs, and no secret/path in output.
-- [ ] T039 [S24] Author `packages/tui/src/**/operator/semantic/**` rendering the Semantic
+- [x] T039 [S24] Author `packages/tui/src/**/operator/semantic/**` rendering the Semantic
   Search / Models panel over the `semantic.*` provider/model/binding/index commands as a thin
   adapter over the Feature 007 registry with registry-generated names, showing capability badges
   (embedding, reranker, multilingual, dimensions, limits, validated/declared/failed/stale) with
