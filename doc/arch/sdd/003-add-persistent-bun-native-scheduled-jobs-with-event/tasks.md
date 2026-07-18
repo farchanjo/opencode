@@ -191,7 +191,7 @@ and the `jobs.*` operator command domain are distinct reserved namespaces (C13).
 
 ### Application and adapters (Phase 3)
 
-- [ ] T021 [S9] Author `packages/opencode/src/jobs/bun-cron-adapter.ts`
+- [x] T021 [S9] Author `packages/opencode/src/jobs/bun-cron-adapter.ts`
   implementing `SchedulerPort` over the in-process `Bun.cron(schedule, handler)`
   form: register/unregister/reschedule plus `Bun.cron.parse` for the next UTC
   instant behind the `NextOccurrencePort`, capability declaration separately for
@@ -200,7 +200,7 @@ and the `jobs.*` operator command domain are distinct reserved namespaces (C13).
   the callback and no permanent polling loop; the callback only claims the
   occurrence and delegates to the trigger service (FR4, FR5, FR9, C1, C2, AC1,
   AC22).
-- [ ] T022 [S10] Author `packages/opencode/src/jobs/persistence.ts` persisting
+- [x] T022 [S10] Author `packages/opencode/src/jobs/persistence.ts` persisting
   `JobDefinition` and `ScheduleRegistration` (durable intent + registration
   state) in the Feature 007 Config.Service authority through the reused
   ConfigPort/SecretPort — a new durable job-definition table, atomic within
@@ -208,7 +208,7 @@ and the `jobs.*` operator command domain are distinct reserved namespaces (C13).
   only, and the external Bun registration modeled as an idempotent effect paired
   with compensation with no cross-system transaction (FR3, FR6, FR32, C5, C10,
   C21, AC13, AC23).
-- [ ] T023 [S11] Author `packages/opencode/src/jobs/trigger-service.ts`
+- [x] T023 [S11] Author `packages/opencode/src/jobs/trigger-service.ts`
   publishing `job.trigger_due`, creating the occurrence under its idempotency
   tuple before admission, then creating or associating a canonical Feature 002
   Task Process through TaskTool/BackgroundJob/SessionExecution/
@@ -220,7 +220,7 @@ and the `jobs.*` operator command domain are distinct reserved namespaces (C13).
   emitting `job.*` via `publishJobEvent`; no second executor, runtime, event bus,
   or lifecycle (FR8, FR8a, FR9, FR13, FR14, FR17, C11, C14, C15, C16, AC11, AC12,
   AC20, AC26, AC27, AC28).
-- [ ] T024 [S13] Author `packages/opencode/src/jobs/notification-service.ts`
+- [x] T024 [S13] Author `packages/opencode/src/jobs/notification-service.ts`
   implementing `NotificationPort` over the Feature 002 bounded Effect
   Stream/PubSub observation seam segmented by root/session/project: enqueue
   (`job.notification_enqueued`), safe-active-turn-boundary delivery
@@ -231,16 +231,16 @@ and the `jobs.*` operator command domain are distinct reserved namespaces (C13).
   explicit and audited, delivery never depends on an LLM, and the envelope
   carries only a bounded summary + opaque Feature 005 OutputRef (FR20, FR22,
   FR23, FR24, FR25, FR26, C8, C9, C15, C19, AC7, AC8, AC10, AC21, AC29).
-- [ ] T025 [S14] Author `packages/opencode/src/jobs/authorization.ts` applying
+- [x] T025 [S14] Author `packages/opencode/src/jobs/authorization.ts` applying
   the canonical Feature 007 Permission/Policy visibility filter and metadata
   redaction before notification delivery and projection, rejecting
   cross-session/cross-project access as a `cross_scope_leak_rejected` failure
   (never a silent drop), and keeping secrets/payloads/paths out of envelopes,
   metrics, logs, and traces by default (FR21, FR32, Security 4, C10, AC9, AC16).
-- [ ] T026 [S11–S14] Author the barrel `packages/opencode/src/jobs/index.ts`
+- [x] T026 [S11–S14] Author the barrel `packages/opencode/src/jobs/index.ts`
   re-exporting the Bun.cron adapter, persistence, trigger service, notification
   service, and authorization modules.
-- [ ] T027 [S15] Author `packages/opencode/src/operator/jobs/**` with the typed
+- [x] T027 [S15] Author `packages/opencode/src/operator/jobs/**` with the typed
   `JobsPort` domain implementations for `jobs.list|status|show|create|update|
   enable|disable|delete|reschedule|run-now|history|watch`, each emitting audit
   events and registered through the Feature 007 registry with zero provider/model
@@ -250,7 +250,7 @@ and the `jobs.*` operator command domain are distinct reserved namespaces (C13).
   mutating work, and `run-now` creating a normal occurrence through admission/
   routing/permissions/lifecycle without starting an LLM turn for administration
   (FR28, FR30, FR31, FR32, Security 5, Security 7, C12, C17, AC14, AC17, AC25).
-- [ ] T028 [S15] Extend the Feature 007 reserved catalog
+- [x] T028 [S15] Extend the Feature 007 reserved catalog
   `packages/core/src/operator/catalog.ts` to add the missing `jobs.*` command
   entries (`jobs.show`, `jobs.reschedule`, `jobs.history`, `jobs.watch`) so the
   domain covers the full canonical operations list, bump
