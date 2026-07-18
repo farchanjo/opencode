@@ -35,6 +35,9 @@ const capture = () => {
     replayAll: () => Effect.succeed(undefined),
     remove: () => Effect.void,
     claim: () => Effect.void,
+    pruneDurable: () => Effect.succeed(0),
+    readDurablePage: () =>
+      Effect.succeed({ events: [] as const, hasMore: false, lastSeq: -1 }),
   })
   return {
     published,

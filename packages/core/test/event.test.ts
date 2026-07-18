@@ -1,6 +1,7 @@
 import { describe, expect } from "bun:test"
 import { Cause, DateTime, Deferred, Effect, Exit, Fiber, Layer, Option, Schema, Stream } from "effect"
 import { EventV2 } from "@opencode-ai/core/event"
+import { OperatorAuditEvent } from "@opencode-ai/core/operator"
 import { Event } from "@opencode-ai/schema/event"
 import { Session } from "@opencode-ai/schema/session"
 import { SessionEvent } from "@opencode-ai/schema/session-event"
@@ -1119,6 +1120,79 @@ describe("EventV2", () => {
       })
 
       expect(received[0]?.data).toEqual(durableData(aggregateID, "replayed"))
+    }),
+  )
+
+  it.effect("pruneDurable deletes only matching aggregate/type/createdAtMs under limit", () =>
+    Effect.gen(function* () {
+      const events = yield* EventV2.Service
+      const { db } = yield* Database.Service
+      const aggregateID = "operator:prune_contract"
+      const otherAggregate = "operator:prune_other"
+      const now = 2_000_000_000_000
+      const day = 86_400_000
+
+      const audit = (aggregate: string, createdAtMs: number, commandId: string) =>
+        events.publish(OperatorAuditEvent, {
+          aggregateID: aggregate,
+          source: "cli",
+          actorRef: "operator:test",
+          scopeKind: "project",
+          scopeRef: "p1",
+          commandId,
+          beforeVersion: null,
+          afterVersion: "cas_v1",
+          outcome: "success",
+          createdAtMs,
+        })
+
+      const sessionAgg = Session.ID.create()
+      yield* audit(aggregateID, now - 91 * day, "old")
+      yield* audit(aggregateID, now - 89 * day, "keep")
+      yield* audit(otherAggregate, now - 91 * day, "other-agg")
+      // Different durable type + aggregate (manifest-registered) must survive prune of operator.audit.
+      yield* events.publish(DurableMessage, durableData(sessionAgg, "other-type"))
+
+      const deleted = yield* events.pruneDurable({
+        aggregateID,
+        typePrefix: "operator.audit",
+        olderThanMs: now - 90 * day,
+        limit: 50,
+      })
+      expect(deleted).toBe(1)
+
+      const page = yield* events.readDurablePage({ aggregateID, limit: 20 })
+      const commandIds = page.events
+        .filter((event) => event.type === "operator.audit")
+        .map((event) => (event.data as { commandId: string }).commandId)
+      expect(commandIds).toEqual(["keep"])
+
+      const other = yield* events.readDurablePage({ aggregateID: otherAggregate, limit: 20 })
+      expect(other.events.some((event) => event.type === "operator.audit")).toBe(true)
+
+      const sessionPage = yield* events.readDurablePage({ aggregateID: sessionAgg, limit: 20 })
+      expect(sessionPage.events.some((event) => event.type === "message.removed")).toBe(true)
+
+      // Invalid inputs fail closed (do not return 0 as success).
+      const invalid = yield* events
+        .pruneDurable({
+          aggregateID,
+          typePrefix: "operator.audit",
+          olderThanMs: Number.NaN,
+          limit: 10,
+        })
+        .pipe(Effect.exit)
+      expect(Exit.isFailure(invalid)).toBe(true)
+
+      // SQL contract: kept audit row remains under the aggregate.
+      const remaining = yield* db
+        .select({ type: EventTable.type })
+        .from(EventTable)
+        .where(eq(EventTable.aggregate_id, aggregateID))
+        .all()
+        .pipe(Effect.orDie)
+      expect(remaining).toHaveLength(1)
+      expect(String(remaining[0]!.type).startsWith("operator.audit.")).toBe(true)
     }),
   )
 })

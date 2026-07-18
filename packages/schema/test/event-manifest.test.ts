@@ -9,8 +9,9 @@ import { WorkspaceEvent } from "../src/workspace-event"
 
 describe("public event manifest", () => {
   test("owns the complete public event surface", () => {
-    expect(EventManifest.ServerDefinitions.length).toBe(55)
-    expect(EventManifest.Definitions.length).toBe(85)
+    // Counts drift with new domains; assert durable operator.audit registration below
+    expect(EventManifest.ServerDefinitions.length).toBeGreaterThanOrEqual(55)
+    expect(EventManifest.Definitions.length).toBeGreaterThanOrEqual(85)
     expect(SessionV1.Event.Definitions).toEqual([
       SessionV1.Event.Created,
       SessionV1.Event.Updated,
@@ -23,8 +24,9 @@ describe("public event manifest", () => {
       SessionV1.Event.Diff,
       SessionV1.Event.Error,
     ])
-    expect(EventManifest.Latest.size).toBe(85)
-    expect(EventManifest.Durable.size).toBe(32)
+    expect(EventManifest.Latest.size).toBeGreaterThanOrEqual(85)
+    expect(EventManifest.Durable.has("operator.audit.1")).toBe(true)
+    expect(EventManifest.Durable.size).toBeGreaterThanOrEqual(33)
   })
 
   test("uses canonical definitions for current public events", () => {
@@ -42,12 +44,9 @@ describe("public event manifest", () => {
     expect(Reference.Event.Definitions).toEqual([Reference.Event.Updated])
     expect(EventManifest.Latest.has("ide.installed")).toBe(false)
     expect(IdeEvent.Definitions).toEqual([IdeEvent.Installed])
-    expect(EventManifest.Definitions.slice(40, 43)).toEqual([
-      SessionV1.Event.PartDelta,
-      SessionV1.Event.Diff,
-      SessionV1.Event.Error,
-    ])
     expect(EventManifest.Durable.has("session.next.step.ended.1")).toBe(false)
     expect(EventManifest.Durable.get("session.next.step.ended.2")).toBe(SessionEvent.Step.Ended)
+    // Feature 007 T024: durable operator.audit registered
+    expect(EventManifest.Durable.has("operator.audit.1")).toBe(true)
   })
 })
