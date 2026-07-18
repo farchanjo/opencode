@@ -329,7 +329,7 @@ schema modules so a single vocabulary is enforced (see the Traceability note).
   secret), the allowlist eight-entry shape, and `protocol/langlock` parity against
   `contracts/ports.ts` (FR3, FR21, FR27, Security 5, C8, AC14). Acceptance:
   `bun test packages/schema` and `bun test packages/protocol` green.
-- [ ] T039 [S20] Add integration tests under `packages/opencode/test/langlock/**` through
+- [x] T039 [S20] Add integration tests under `packages/opencode/test/langlock/**` through
   the Feature 007 sandbox stores under `.dev/` for Config.Service policy persistence plus
   CAS and the en-US default, immutable injection with post-transform reapplication,
   envelope stamping with start-time version capture preserved across resume/replay/
