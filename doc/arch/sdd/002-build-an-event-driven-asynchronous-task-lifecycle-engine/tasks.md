@@ -14,7 +14,7 @@ only and never holds management authority of its own.
 
 ### Schema and protocol foundation (Phase 1)
 
-- [ ] T001 [S0] Author `packages/schema/src/lifecycle/ids.ts` and
+- [x] T001 [S0] Author `packages/schema/src/lifecycle/ids.ts` and
   `packages/schema/src/lifecycle/correlation-ids.ts` with the branded identifiers from
   `data-model.md`: `TaskId`, `ProcessId`, `ParentProcessId`, `RootProcessId`,
   `SessionId`, `ParentSessionId`, `RootSessionId`, `RuntimeInstanceId`, `LeaseId`,
@@ -22,7 +22,7 @@ only and never holds management authority of its own.
   `ModelId`, `ProviderName`, `VariantName`, `TodoRef`, `TodoVersion`; each a
   `Schema.String.pipe(Schema.brand("Lifecycle.*"))` mirroring `ids.cue` and
   `correlation.cue` one-to-one, with no cross-feature import (FR7, C8, C15).
-- [ ] T002 [S0] Author `packages/schema/src/lifecycle/values.ts` and
+- [x] T002 [S0] Author `packages/schema/src/lifecycle/values.ts` and
   `packages/schema/src/lifecycle/usage-values.ts` with the shared value objects:
   `Sequence`, `Attempt`, `Generation`, `SchemaVersion`, `DelegationDepth`,
   `FanoutCount`, `ItemCount`, `Reason`, `Description`, `ActivityLabel`, `TokenCount`,
@@ -30,60 +30,60 @@ only and never holds management authority of its own.
   `OutputRef`, `Cursor`, `Confidence`, reusing `PositiveInt`/`NonNegativeInt`/
   `Schema.Finite` from `packages/schema/src/schema.ts` and mirroring `values.cue` and
   `usage-values.cue` (FR26, C21).
-- [ ] T003 [S0] Author `packages/schema/src/lifecycle/enums.ts` with the ten-member
+- [x] T003 [S0] Author `packages/schema/src/lifecycle/enums.ts` with the ten-member
   `ProcessState`, the 26-member `LifecycleEventType` (prefixed `lifecycle.*`),
   `EventClass` (`durable`/`live`), `TerminalReason`, `SettlementState`, `Visibility`,
   `AgentKind`, and `ActorKind` as `Schema.Literals([...])`, mirroring `enums.cue`
   (FR20, FR25, C4, C7, C20).
-- [ ] T004 [S0] Author `packages/schema/src/lifecycle/enums-observation.ts` with
+- [x] T004 [S0] Author `packages/schema/src/lifecycle/enums-observation.ts` with
   `UsageProvenance`, `UsageSource`, `ActivityKind`, `HierarchyRole`,
   `ValidationOutcome`, `AnomalyKind`, `CancelOutcome`, `WatchdogOutcome`,
   `AdmissionScope`, `AdmissionDecision`, and `ObservationKind`, mirroring
   `enums-observation.cue` (C9, C11, C14, C15, C17, C21).
-- [ ] T005 [S1] Author `packages/schema/src/lifecycle/envelope.ts` composing the
+- [x] T005 [S1] Author `packages/schema/src/lifecycle/envelope.ts` composing the
   bounded sub-structs `EventKind`, `TreeIdentity`, `ProcessIdentity`, `Ordering`,
   `Delivery`, and `HierarchyContext` into `LifecycleEnvelope`, with `hierarchy` as
   `Schema.NullOr(HierarchyContext)` present only when Smart hierarchical routing is
   active and `redacted_metadata` as a bounded `Schema.Record`, mirroring
   `envelope.cue`/`envelope-parts.cue`/`envelope-hierarchy.cue` (FR9, FR13, C15).
-- [ ] T006 [S3] Author `packages/schema/src/lifecycle/usage.ts` with `TokenBreakdown`
+- [x] T006 [S3] Author `packages/schema/src/lifecycle/usage.ts` with `TokenBreakdown`
   (each token field optional so an absent key is unavailable), `UsageProvenanceMark`,
   and `LiveUsage` carrying `available`, `provenance`, `source`, monotonic
   `elapsed_ms`, and null-unless-valid `tokens_per_second`, mirroring `usage.cue`
   (FR55, C21).
-- [ ] T007 [S2] Author `packages/schema/src/lifecycle/events.ts`,
+- [x] T007 [S2] Author `packages/schema/src/lifecycle/events.ts`,
   `events-durable.ts`, and `events-live.ts` with the detail sub-objects
   (`AdmissionDetail`, `HandoffDetail`, `TerminalDetail`, `WatchdogDetail`,
   `ToolActivityDetail`, `SteerDetail`, `ReconcileDetail`), one `Schema.Struct` per
   vocabulary member, and the closed `LifecycleEvent` `Schema.TaggedUnion("type", ...)`
   over all 26 members, keeping `extend`, `promote`, `steer`, and `handoff` distinct,
   mirroring `events.cue`/`events-durable.cue`/`events-live.cue` (FR20, FR21).
-- [ ] T008 [S3] Author `packages/schema/src/lifecycle/process-row.ts` and
+- [x] T008 [S3] Author `packages/schema/src/lifecycle/process-row.ts` and
   `process-row-parts.ts` composing `RowIdentity`, `RowLineage` (relations/ownership/
   graph), `RowStatus`, `RowProfile` (classification/model), `RowAccounting` (usage/
   outcome/telemetry), and `Schema.NullOr(RowHierarchy)` into `ProcessRow`, keeping
   prompts/results/payloads/paths/secrets out by default, mirroring `process-row.cue`
   and its part files (FR26, FR28, C15, C18).
-- [ ] T009 [S8, S9, S11] Author `packages/schema/src/lifecycle/admission.ts`,
+- [x] T009 [S8, S9, S11] Author `packages/schema/src/lifecycle/admission.ts`,
   `watchdog.ts`, and `cancel.ts` with `CapacitySignals`, `TokenBucketState`,
   `AdmissionBucket`, `AdmissionResult`, `WatchdogLease`, `ZombieAssessment`,
   `ReconcileRecord` (with `auto_retry: Schema.Literal(false)`), `RootCancelScope`,
   and `CancelRequestRecord`, mirroring `admission.cue`/`watchdog.cue`/`cancel.cue`
   (C11, C12, C13, C17).
-- [ ] T010 [S4] Author `packages/schema/src/lifecycle/observation.ts` with
+- [x] T010 [S4] Author `packages/schema/src/lifecycle/observation.ts` with
   `ObservationScope`, `ObservationFilter`, `AnomalyRecord`, and `ObservationResult`
   (carrying an already-authorized-and-redacted `LifecycleEvent` plus a nullable
   anomaly), mirroring `observation.cue` (FR14, C9, C14).
-- [ ] T011 [S15] Author `packages/schema/src/lifecycle/todo-events.ts` with the
+- [x] T011 [S15] Author `packages/schema/src/lifecycle/todo-events.ts` with the
   session-owned `todo.updated`, `todo.completed`, `todo.failed`, `todo.cancelled`,
   `todo.stale`, `todo.rehydrated`, and `todo.handoff_attached` members carrying
   `TodoRef`/`TodoVersion`/bounded counts only, distinct from the Feature 001
   `todo.initialized`/`todo.completion_blocked` events consumed read-only (FR58m,
   C23–C25).
-- [ ] T012 [S0–S4] Author the barrel `packages/schema/src/lifecycle/index.ts`
+- [x] T012 [S0–S4] Author the barrel `packages/schema/src/lifecycle/index.ts`
   re-exporting every lifecycle schema module and register the barrel in
   `packages/schema/src/index.ts`.
-- [ ] T013 [S4] Author `packages/protocol/src/lifecycle/ports.ts`,
+- [x] T013 [S4] Author `packages/protocol/src/lifecycle/ports.ts`,
   `packages/protocol/src/lifecycle/commands.ts`, and
   `packages/protocol/src/lifecycle/index.ts` mirroring `contracts/ports.ts`:
   the `LifecyclePort`, `ObservationPort`, and `ProcessPort` interfaces plus the
