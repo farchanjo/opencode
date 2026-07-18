@@ -126,14 +126,14 @@ and the `jobs.*` operator command domain are distinct reserved namespaces (C13).
 
 ### Domain scheduler engine (Phase 2)
 
-- [ ] T013 [S5] Author `packages/core/src/jobs/cron.ts` performing 5-field +
+- [x] T013 [S5] Author `packages/core/src/jobs/cron.ts` performing 5-field +
   IANA-timezone parse/validate and next-occurrence computation over the injected
   `NextOccurrencePort`/`ClockPort` (wrapping `Bun.cron.parse` in the adapter
   layer, never importing the Bun runtime in the domain), applying minimum
   interval, DST duplicate/skipped/leap normalization per the configured policy,
   and measuring schedule lag from the nominal due instant, mirroring
   `schedule.cue` semantics (FR7, C4, AC4, AC22).
-- [ ] T014 [S6] Author `packages/core/src/jobs/occurrence-state-machine.ts`
+- [x] T014 [S6] Author `packages/core/src/jobs/occurrence-state-machine.ts`
   encoding the C6 transition table (`due`→{`claimed`,`misfired`,`skipped`,
   `coalesced`}; `claimed`→{`admitted`,`overlap_rejected`,`overlap_replaced`,
   `unknown`}; `overlap_replaced`→`admitted`; `admitted`→{`executing`,
@@ -142,7 +142,7 @@ and the `jobs.*` operator command domain are distinct reserved namespaces (C13).
   one idempotency tuple to a single execution with an observable `duplicate_of`
   outcome, and never authoring sequence/attempt/generation (executor-owned),
   matching `doc/arch/statecharts/job-occurrence.md` (FR10, FR11, C6, AC6).
-- [ ] T015 [S7] Author `packages/core/src/jobs/misfire.ts` and
+- [x] T015 [S7] Author `packages/core/src/jobs/misfire.ts` and
   `packages/core/src/jobs/overlap.ts`: the misfire evaluator over
   `skip|fire_once|bounded_catch_up|coalesce` with a bounded catch-up ceiling and
   no infinite catch-up, and the overlap evaluator over
@@ -152,7 +152,7 @@ and the `jobs.*` operator command domain are distinct reserved namespaces (C13).
   keeps `replace` mutation-safe (never silently stops or kills a mutating
   handler/process), with provisional constants as explicit overridable data
   (FR15, FR16, C3, C19, AC3, AC5, AC24).
-- [ ] T016 [S8] Author `packages/core/src/jobs/scheduler-engine.ts` and
+- [x] T016 [S8] Author `packages/core/src/jobs/scheduler-engine.ts` and
   `packages/core/src/jobs/reconciliation.ts`: the engine mapping a definition to
   a registration intent, computing the idempotency tuple, and measuring lag from
   nominal due; and startup rehydration that replays persisted definitions,
@@ -169,13 +169,13 @@ and the `jobs.*` operator command domain are distinct reserved namespaces (C13).
   idempotent projector keyed on event id plus `(aggregateID, seq)` that reuses the
   Feature 002 dedupe posture and never invents terminal state, so terminal and
   definition-mutation events are never coalesced or dropped (FR11, FR12, C8, AC18).
-- [ ] T018 [S12] Extend `packages/opencode/src/event-v2-bridge.ts` with
+- [x] T018 [S12] Extend `packages/opencode/src/event-v2-bridge.ts` with
   `publishJobEvent` mirroring `publishLifecycleEvent`/`publishRoutingEvent`
   (location attach, single publish boundary) and extend
   `packages/schema/src/durable-event-manifest.ts` to join the durable `job.*`
   definitions into the `Durable` inventory through `Event.durable([...])`, so no
   second event authority or channel exists (C5, C8, C13).
-- [ ] T019 [S16] Author `packages/core/src/jobs/jobs-instruments.ts` adding the
+- [x] T019 [S16] Author `packages/core/src/jobs/jobs-instruments.ts` adding the
   `job.schedule|trigger|claim|notify|dispatch|execute|retry|reconcile` spans
   linked to the Feature 001 `task.execute`/session-execution/LLM/tool/fallback
   spans, the enabled-definition / due / triggered / misfired / skipped /
@@ -185,7 +185,7 @@ and the `jobs.*` operator command domain are distinct reserved namespaces (C13).
   cardinality allowlist (IDs in traces/logs only; over-budget values map to
   `other`; async bounded export never blocks the trigger/execution hot path)
   (Observability, C18, AC15, AC16).
-- [ ] T020 [S5–S16] Author the barrel `packages/core/src/jobs/index.ts`
+- [x] T020 [S5–S16] Author the barrel `packages/core/src/jobs/index.ts`
   re-exporting the cron, occurrence state machine, misfire, overlap, scheduler
   engine, reconciliation, event bus, and instruments modules.
 
