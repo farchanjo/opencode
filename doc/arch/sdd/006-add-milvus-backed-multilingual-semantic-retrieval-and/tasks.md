@@ -376,7 +376,7 @@ vocabulary is enforced (see the Traceability reconciliation note).
   reranker cutover requiring no re-embedding, mirroring C12 (FR12, FR32, C12). Acceptance:
   `bun test packages/opencode` covers a CAS-success cutover of all collections together, a CAS
   contention reject, rollback, and a reranker cutover with no re-embed.
-- [ ] T032 [S21] Author `packages/opencode/src/semantic/credential-resolver.ts` resolving
+- [x] T032 [S21] Author `packages/opencode/src/semantic/credential-resolver.ts` resolving
   provider and Milvus credentials as SecretRef-only through the Feature 007 SecretPort with OS
   keychain mandatory for stored secrets and env-ref allowed for CI only, so `rotate-secret`
   changes only `secret_ref`/version without changing endpoint/model/binding identity, secrets
