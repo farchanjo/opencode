@@ -115,6 +115,26 @@ specScopeGlobs = [
   "packages/opencode/test/routing/**",
   "packages/opencode/test/telemetry/**",
   "packages/tui/test/**",
+
+  # Feature 002 implement-phase paths (T001-T041): lifecycle schema/protocol
+  # modules, the framework-free domain engine, application adapters, operator
+  # command impls, CLI process/task commands, the TUI process panel, and the
+  # lifecycle test suites. Narrow, file-exact globs.
+  # Shared seams already in scope and not duplicated:
+  #   packages/opencode/src/event-v2-bridge.ts (Feature 001),
+  #   packages/schema/src/durable-event-manifest.ts + packages/core/src/event.ts
+  #     + packages/opencode/src/operator/** (Feature 007),
+  #   packages/schema/src/index.ts + packages/schema/test/** (Feature 001),
+  #   packages/protocol/test/** + packages/tui/test/** (Feature 001).
+  "packages/schema/src/lifecycle/**",
+  "packages/protocol/src/lifecycle/**",
+  "packages/core/src/lifecycle/**",
+  "packages/opencode/src/lifecycle/**",
+  "packages/cli/src/**/process/**",
+  "packages/cli/src/**/task/**",
+  "packages/tui/src/routes/session/process-panel/**",
+  "packages/core/test/lifecycle/**",
+  "packages/opencode/test/lifecycle/**",
 ]
 
 # Waivers for intentional near-empty files (warnings only; errors are never
