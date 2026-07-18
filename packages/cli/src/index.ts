@@ -94,6 +94,50 @@ const Handlers = Runtime.handlers(Commands, {
       set: () => import("./output/quota-set"),
     },
   },
+  semantic: {
+    provider: {
+      list: () => import("./semantic/provider-list"),
+      add: () => import("./semantic/provider-add"),
+      update: () => import("./semantic/provider-update"),
+      test: () => import("./semantic/provider-test"),
+      disable: () => import("./semantic/provider-disable"),
+      delete: () => import("./semantic/provider-delete"),
+      "rotate-secret": () => import("./semantic/provider-rotate-secret"),
+    },
+    model: {
+      list: () => import("./semantic/model-list"),
+      discover: () => import("./semantic/model-discover"),
+      register: () => import("./semantic/model-register"),
+      validate: () => import("./semantic/model-validate"),
+      disable: () => import("./semantic/model-disable"),
+    },
+    embedding: {
+      show: () => import("./semantic/embedding-show"),
+      select: () => import("./semantic/embedding-select"),
+      validate: () => import("./semantic/embedding-validate"),
+      reindex: () => import("./semantic/embedding-reindex"),
+      cutover: () => import("./semantic/embedding-cutover"),
+      rollback: () => import("./semantic/embedding-rollback"),
+    },
+    reranker: {
+      show: () => import("./semantic/reranker-show"),
+      select: () => import("./semantic/reranker-select"),
+      validate: () => import("./semantic/reranker-validate"),
+      cutover: () => import("./semantic/reranker-cutover"),
+      rollback: () => import("./semantic/reranker-rollback"),
+    },
+    binding: {
+      status: () => import("./semantic/binding-status"),
+      history: () => import("./semantic/binding-history"),
+    },
+    index: {
+      status: () => import("./semantic/index-status"),
+      test: () => import("./semantic/index-test"),
+      reindex: () => import("./semantic/index-reindex"),
+      reconcile: () => import("./semantic/index-reconcile"),
+      "show-collections": () => import("./semantic/index-show-collections"),
+    },
+  },
 })
 
 Runtime.run(Commands, Handlers, { version: "local" }).pipe(

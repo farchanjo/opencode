@@ -21,6 +21,15 @@ const MISFIRE_POLICIES = ["skip", "fire_once", "bounded_catch_up", "coalesce"] a
 
 const QUOTA_SCOPES = ["global", "root", "session", "process", "channel"] as const
 
+// -- semantic (Feature 006) closed choice sets, declared before first use ----
+
+const SEMANTIC_RESIDENCY = ["local-offline", "local", "remote"] as const
+const SEMANTIC_CAPABILITY_KINDS = ["embedding", "reranker", "embedding-similarity", "multilingual"] as const
+const SEMANTIC_ENDPOINT_MODES = ["embeddings", "rerank", "chat-completions"] as const
+const SEMANTIC_RERANK_PROFILES = ["native-rerank", "structured-chat", "embedding-similarity"] as const
+const SEMANTIC_COLLECTIONS = ["agents", "skills", "skill_chunks", "tools"] as const
+const SEMANTIC_SLOTS = ["embedding", "reranker"] as const
+
 export const Commands = Spec.make(typeof OPENCODE_CLI_NAME === "string" ? OPENCODE_CLI_NAME : "opencode", {
   description: "OpenCode 2.0 preview command line interface",
   commands: [
@@ -458,6 +467,253 @@ export const Commands = Spec.make(typeof OPENCODE_CLI_NAME === "string" ? OPENCO
         }),
       ],
     }),
+    Spec.make("semantic", {
+      description:
+        "Manage the Milvus-backed multilingual semantic retrieval registry (Feature 006; registry-generated verbs, zero management-path model calls, redacted/versioned output)",
+      commands: [
+        Spec.make("provider", {
+          description: "Manage semantic embedding/rerank provider profiles",
+          commands: [
+            Spec.make("list", {
+              description: "List redacted provider profiles",
+              params: { scope: scope(), json: json() },
+            }),
+            Spec.make("add", {
+              description: "Add a provider profile (SecretRef-only credential, CAS, audit)",
+              params: {
+                name: Argument.string("name").pipe(Argument.withDescription("provider profile name")),
+                baseUrl: Flag.string("base-url").pipe(Flag.withDescription("provider base URL")),
+                secretRef: semanticSecretRefFlag().pipe(Flag.optional),
+                residency: Flag.choice("residency", SEMANTIC_RESIDENCY).pipe(
+                  Flag.withDescription("data-residency posture"),
+                  Flag.optional,
+                ),
+                allowInsecureLocalProfile: Flag.boolean("allow-insecure-local").pipe(
+                  Flag.withDescription("allow a non-TLS local-loopback endpoint"),
+                  Flag.withDefault(false),
+                ),
+                scope: scope(),
+                json: json(),
+              },
+            }),
+            Spec.make("update", {
+              description: "Update a provider profile (version/CAS)",
+              params: {
+                id: semanticIdArg("provider profile"),
+                expectedVersion: semanticExpectedVersionFlag(),
+                name: Flag.string("name").pipe(Flag.withDescription("new provider profile name"), Flag.optional),
+                baseUrl: Flag.string("base-url").pipe(Flag.withDescription("new provider base URL"), Flag.optional),
+                json: json(),
+              },
+            }),
+            Spec.make("test", {
+              description: "Probe a provider profile's reachability (explicit operator action; not admission-time)",
+              params: { id: semanticIdArg("provider profile"), json: json() },
+            }),
+            Spec.make("disable", {
+              description: "Disable a provider profile (version/CAS)",
+              params: { id: semanticIdArg("provider profile"), expectedVersion: semanticExpectedVersionFlag(), json: json() },
+            }),
+            Spec.make("delete", {
+              description: "Delete a provider profile (version/CAS, interactive confirmation)",
+              params: {
+                id: semanticIdArg("provider profile"),
+                expectedVersion: semanticExpectedVersionFlag(),
+                confirm: semanticConfirmFlag(),
+                json: json(),
+              },
+            }),
+            Spec.make("rotate-secret", {
+              description: "Rotate a provider profile's SecretRef (version/CAS, interactive confirmation)",
+              params: {
+                id: semanticIdArg("provider profile"),
+                expectedVersion: semanticExpectedVersionFlag(),
+                newSecretRef: semanticSecretRefFlag(),
+                confirm: semanticConfirmFlag(),
+                json: json(),
+              },
+            }),
+          ],
+        }),
+        Spec.make("model", {
+          description: "Manage semantic model descriptors",
+          commands: [
+            Spec.make("list", {
+              description: "List redacted model descriptors",
+              params: {
+                scope: scope(),
+                providerProfileId: Flag.string("provider-profile-id").pipe(
+                  Flag.withDescription("filter to one provider profile"),
+                  Flag.optional,
+                ),
+                json: json(),
+              },
+            }),
+            Spec.make("discover", {
+              description: "Discover models exposed by a provider profile (explicit operator action)",
+              params: { providerProfileId: semanticIdArg("provider profile"), json: json() },
+            }),
+            Spec.make("register", {
+              description: "Register a model descriptor with declared (untrusted-until-validated) capabilities",
+              params: {
+                providerProfileId: semanticIdArg("provider profile"),
+                modelRef: Flag.string("model-ref").pipe(Flag.withDescription("provider-side model reference")),
+                displayName: Flag.string("display-name").pipe(Flag.withDescription("human display name")),
+                endpointMode: Flag.choice("endpoint-mode", SEMANTIC_ENDPOINT_MODES).pipe(
+                  Flag.withDescription("invoked endpoint shape"),
+                  Flag.withDefault("embeddings"),
+                ),
+                capability: Flag.choice("capability", SEMANTIC_CAPABILITY_KINDS).pipe(
+                  Flag.withDescription("declared capability kind (repeatable)"),
+                  Flag.atLeast(1),
+                ),
+                json: json(),
+              },
+            }),
+            Spec.make("validate", {
+              description: "Validate a model descriptor's declared capabilities against a live probe",
+              params: { id: semanticIdArg("model descriptor"), json: json() },
+            }),
+            Spec.make("disable", {
+              description: "Disable a model descriptor (version/CAS)",
+              params: { id: semanticIdArg("model descriptor"), expectedVersion: semanticExpectedVersionFlag(), json: json() },
+            }),
+          ],
+        }),
+        Spec.make("embedding", {
+          description: "Manage the operator-pinned embedding model binding",
+          commands: [
+            Spec.make("show", {
+              description: "Show the current embedding binding",
+              params: { scope: scope(), json: json() },
+            }),
+            Spec.make("select", {
+              description: "Select a validated model descriptor into a draft embedding binding",
+              params: { modelDescriptorId: semanticIdArg("model descriptor"), json: json() },
+            }),
+            Spec.make("validate", {
+              description: "Validate a draft embedding binding against a live probe",
+              params: { id: semanticIdArg("binding"), json: json() },
+            }),
+            Spec.make("reindex", {
+              description: "Build a blue/green index generation for a staged embedding binding",
+              params: { id: semanticIdArg("binding"), json: json() },
+            }),
+            Spec.make("cutover", {
+              description: "Cut over the embedding binding and index generation (CAS, interactive confirmation)",
+              params: {
+                id: semanticIdArg("binding"),
+                generationId: Flag.string("generation-id").pipe(Flag.withDescription("validated index generation id")),
+                casToken: semanticCasTokenFlag(),
+                confirm: semanticConfirmFlag(),
+                json: json(),
+              },
+            }),
+            Spec.make("rollback", {
+              description: "Roll back the embedding binding to a prior version (CAS, interactive confirmation)",
+              params: {
+                targetBindingVersion: semanticTargetBindingVersionFlag(),
+                casToken: semanticCasTokenFlag(),
+                confirm: semanticConfirmFlag(),
+                json: json(),
+              },
+            }),
+          ],
+        }),
+        Spec.make("reranker", {
+          description: "Manage the operator-pinned reranker model binding",
+          commands: [
+            Spec.make("show", {
+              description: "Show the current reranker binding",
+              params: { scope: scope(), json: json() },
+            }),
+            Spec.make("select", {
+              description: "Select a validated model descriptor into a draft reranker binding",
+              params: {
+                modelDescriptorId: semanticIdArg("model descriptor"),
+                compatibilityMode: Flag.choice("compatibility-mode", SEMANTIC_RERANK_PROFILES).pipe(
+                  Flag.withDescription("rerank compatibility profile (profile C is never reranker-eligible)"),
+                  Flag.withDefault("native-rerank"),
+                ),
+                json: json(),
+              },
+            }),
+            Spec.make("validate", {
+              description: "Validate a draft reranker binding against a live probe",
+              params: { id: semanticIdArg("binding"), json: json() },
+            }),
+            Spec.make("cutover", {
+              description: "Cut over the reranker binding (CAS, interactive confirmation)",
+              params: {
+                id: semanticIdArg("binding"),
+                casToken: semanticCasTokenFlag(),
+                confirm: semanticConfirmFlag(),
+                json: json(),
+              },
+            }),
+            Spec.make("rollback", {
+              description: "Roll back the reranker binding to a prior version (CAS, interactive confirmation)",
+              params: {
+                targetBindingVersion: semanticTargetBindingVersionFlag(),
+                casToken: semanticCasTokenFlag(),
+                confirm: semanticConfirmFlag(),
+                json: json(),
+              },
+            }),
+          ],
+        }),
+        Spec.make("binding", {
+          description: "Inspect embedding/reranker binding status and history (read-only; select via embedding/reranker)",
+          commands: [
+            Spec.make("status", {
+              description: "Show the effective embedding + reranker binding and degradation rung",
+              params: { scope: scope(), json: json() },
+            }),
+            Spec.make("history", {
+              description: "Show bounded binding version history for one slot",
+              params: {
+                slot: Flag.choice("slot", SEMANTIC_SLOTS).pipe(Flag.withDescription("binding slot"), Flag.withDefault("embedding")),
+                scope: scope(),
+                limit: Flag.integer("limit").pipe(Flag.withDescription("maximum versions to return"), Flag.withDefault(20)),
+                json: json(),
+              },
+            }),
+          ],
+        }),
+        Spec.make("index", {
+          description: "Inspect and manage the Milvus-backed collection index",
+          commands: [
+            Spec.make("status", {
+              description: "Show one collection's index generation, document count, and freshness bucket",
+              params: { collection: semanticCollectionFlag(), scope: scope(), json: json() },
+            }),
+            Spec.make("test", {
+              description: "Probe Milvus reachability (explicit operator action)",
+              params: { json: json() },
+            }),
+            Spec.make("reindex", {
+              description: "Trigger a full reindex of one collection (Feature 005 job log ref)",
+              params: { collection: semanticCollectionFlag(), json: json() },
+            }),
+            Spec.make("reconcile", {
+              description: "Reconcile one collection's content-hash drift against live core",
+              params: {
+                collection: semanticCollectionFlag(),
+                scheduledOccurrenceId: Flag.string("scheduled-occurrence-id").pipe(
+                  Flag.withDescription("Feature 003 occurrence id, when triggered by schedule"),
+                  Flag.optional,
+                ),
+                json: json(),
+              },
+            }),
+            Spec.make("show-collections", {
+              description: "Show every collection's alias state",
+              params: { scope: scope(), json: json() },
+            }),
+          ],
+        }),
+      ],
+    }),
   ],
 })
 
@@ -595,4 +851,40 @@ function outputMaxBytesFlag() {
 
 function outputMaxQueueDepthBytesFlag() {
   return Flag.integer("max-queue-depth-bytes").pipe(Flag.withDescription("bounded-queue depth cap in bytes"))
+}
+
+// -- semantic (Feature 006) command params ------------------------------------
+
+function semanticIdArg(label: string) {
+  return Argument.string("id").pipe(Argument.withDescription(`${label} id`))
+}
+
+function semanticExpectedVersionFlag() {
+  return Flag.integer("expected-version").pipe(Flag.withDescription("expected version (CAS)"))
+}
+
+function semanticConfirmFlag() {
+  return Flag.boolean("confirm").pipe(
+    Flag.withDescription("interactive confirmation required for this mutating verb"),
+    Flag.withDefault(false),
+  )
+}
+
+function semanticSecretRefFlag() {
+  return Flag.string("secret-ref").pipe(Flag.withDescription("opaque Feature 007 SecretRef; never a raw secret"))
+}
+
+function semanticCasTokenFlag() {
+  return Flag.string("cas-token").pipe(Flag.withDescription("compare-and-swap token from the current binding/generation"))
+}
+
+function semanticTargetBindingVersionFlag() {
+  return Flag.integer("target-version").pipe(Flag.withDescription("prior binding version to restore"))
+}
+
+function semanticCollectionFlag() {
+  return Flag.choice("collection", SEMANTIC_COLLECTIONS).pipe(
+    Flag.withDescription("Milvus collection"),
+    Flag.withDefault("agents"),
+  )
 }

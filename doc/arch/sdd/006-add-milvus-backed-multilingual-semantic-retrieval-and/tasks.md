@@ -442,7 +442,7 @@ vocabulary is enforced (see the Traceability reconciliation note).
 
 ### CLI and TUI surfaces (Phase 4)
 
-- [ ] T038 [S24] Author `packages/cli/src/**/semantic/**` for `opencode op semantic
+- [x] T038 [S24] Author `packages/cli/src/**/semantic/**` for `opencode op semantic
   provider|model|embedding|reranker|binding|index <op>`, each dispatching through the Feature
   007 registry to the `ProviderPort`/`ModelPort`/`BindingPort`/`IndexPort` with
   registry-generated names (no divergent hardcoded verbs), emitting redacted/versioned human and
