@@ -324,7 +324,7 @@ vocabulary is enforced (see the Traceability reconciliation note).
   packages/opencode` asserts the probe emits a typed `grpc_bun_supported` or
   `grpc_bun_unsupported` finding with the driver-selection consequence recorded, and no code
   path hard-fails routing on an unreachable backend.
-- [ ] T026 [S15] Author `packages/opencode/src/semantic/milvus-adapter.ts` implementing the
+- [x] T026 [S15] Author `packages/opencode/src/semantic/milvus-adapter.ts` implementing the
   single Milvus port over standalone (default) / Lite-for-dev / Zilliz Cloud behind one
   adapter (driver chosen per T025's recorded finding), with an HNSW dense index on the stored
   cosine/inner-product metric, Milvus-native sparse/BM25 hybrid recall fused deterministically,
@@ -335,7 +335,7 @@ vocabulary is enforced (see the Traceability reconciliation note).
   C1/C6/C7 (FR7, FR9, C1, C6, C7). Acceptance: `bun test packages/opencode` asserts the fake
   adapter serves hybrid recall under mandatory filters, an unreachable backend yields
   `milvus_unavailable` not a crash, and the scalar project key isolates projects.
-- [ ] T027 [S16] Author `packages/opencode/src/semantic/embedding-client.ts` implementing the
+- [x] T027 [S16] Author `packages/opencode/src/semantic/embedding-client.ts` implementing the
   `/v1/embeddings` deterministic probe (capturing dimension/normalization/limits with a
   harmless sample) and query/doc embedding over the reused `@ai-sdk/openai-compatible` core
   transport (base URL + secret ref, no new HTTP stack), with server-capped batch/vector counts
@@ -343,7 +343,7 @@ vocabulary is enforced (see the Traceability reconciliation note).
   incompatible dimension, mirroring C5 (FR30, FR37, C5, C8). Acceptance: `bun test
   packages/opencode` against a fake endpoint asserts the probe captures dimension/normalization,
   batch caps are enforced, and a dimension-mismatch model is excluded.
-- [ ] T028 [S17] Author `packages/opencode/src/semantic/rerank-client.ts` implementing the
+- [x] T028 [S17] Author `packages/opencode/src/semantic/rerank-client.ts` implementing the
   three explicit rerank profiles — A native `/v1/rerank` request/response adapter, B structured
   chat/completions with deterministic schema/fixed-temperature/tool-free behavior and explicit
   token/cost budget, C embedding-similarity as a **distinct** capability never badged
@@ -352,7 +352,7 @@ vocabulary is enforced (see the Traceability reconciliation note).
   native probe passes, mirroring C16 (FR30, FR4, C16). Acceptance: `bun test packages/opencode`
   asserts profile A/B round-trips against fakes, profile C is rejected for the reranker slot,
   and a rerank-suggestive model name without a passing probe is ineligible.
-- [ ] T029 [S18] Author `packages/opencode/src/semantic/url-guard.ts` implementing SSRF-safe
+- [x] T029 [S18] Author `packages/opencode/src/semantic/url-guard.ts` implementing SSRF-safe
   URL parsing, scheme/host/port policy, and **post-resolution + post-redirect DNS
   revalidation** so metadata/link-local/private ranges are blocked unless an explicit
   local-profile allowance is set, remote endpoints require TLS by default, insecure HTTP is
