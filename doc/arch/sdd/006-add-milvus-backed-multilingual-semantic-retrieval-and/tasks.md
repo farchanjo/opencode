@@ -35,7 +35,7 @@ vocabulary is enforced (see the Traceability reconciliation note).
 
 ### Schema and protocol foundation (Phase 1)
 
-- [ ] T001 [S0] Author `packages/schema/src/semantic/ids.ts` and
+- [x] T001 [S0] Author `packages/schema/src/semantic/ids.ts` and
   `packages/schema/src/semantic/refs.ts` with the branded identifiers and opaque handles
   from `data-model.md`: `ProviderProfileId`, `ModelDescriptorId`, `BindingId`, `AgentDocId`,
   `SkillDocId`, `SkillChunkId`, `GenerationId`, `CollectionAliasId`, `ProjectId`, `EventId`
@@ -49,7 +49,7 @@ vocabulary is enforced (see the Traceability reconciliation note).
   material and `OutputRef` never a path (FR28, FR34, FR35, FR40, C11, C19). Acceptance:
   `tsgo --noEmit` on `packages/schema` and the schema contract-hygiene test assert the root
   identifier is retained (annotate-before-check) on every brand.
-- [ ] T002 [S0] Author `packages/schema/src/semantic/values.ts` with the integer counter/
+- [x] T002 [S0] Author `packages/schema/src/semantic/values.ts` with the integer counter/
   dimension/budget ValueObjects (`BindingVersion`, `SchemaVersion`, `ConfigVersion`,
   `Dimension`, `Sequence`, `ByteOffset`, `ByteLimit`, `ChunkIndex`, `ChunkOverlap`, `TopK`,
   `ChunkBudget`, `TokenBudget`, `BatchSize`, `VectorCount`, `LatencyBudgetMs`) folding
@@ -60,7 +60,7 @@ vocabulary is enforced (see the Traceability reconciliation note).
   free-form (FR12, FR19, FR22, FR38, C7, C8). Acceptance: `tsgo --noEmit` green and the
   schema test asserts counters/dimensions are integer-checked while the five score
   components are continuous and `Confidence` is bounded to `[0,1]`.
-- [ ] T003 [S1] Author `packages/schema/src/semantic/text-values.ts` and
+- [x] T003 [S1] Author `packages/schema/src/semantic/text-values.ts` and
   `packages/schema/src/semantic/collections.ts` with the bounded content-classified text/
   hash/flag ValueObjects (`Name`, `DisplayName`, `Description`, `BaseUrl`, `LanguageTag` on
   the canonical BCP 47 pattern, `Tag`, `ModeTag`, `DegradedReason`, `Reason`, `ContentHash`,
@@ -72,7 +72,7 @@ vocabulary is enforced (see the Traceability reconciliation note).
   language for embedding without a mandatory translation LLM call (FR14, FR15, FR17, FR25,
   C4, C10). Acceptance: `tsgo --noEmit` green and the redaction test confirms no free-form
   content/secret/path field is exported and every ref set wraps a branded element.
-- [ ] T004 [S1] Author `packages/schema/src/semantic/enums.ts`, `enums-state.ts`,
+- [x] T004 [S1] Author `packages/schema/src/semantic/enums.ts`, `enums-state.ts`,
   `enums-event.ts`, and `event-types.ts` with the closed enums as `Schema.Literals([...])`:
   `Slot`, `TransportProfile`, the three-member `RerankProfile`
   (`native-rerank|structured-chat|embedding-similarity`, C never reranker-eligible),
@@ -93,7 +93,7 @@ vocabulary is enforced (see the Traceability reconciliation note).
   `generation_retired`) distinct from the three live members (`retrieval_degraded`/
   `provider_probed`/`binding_state_changed`), and that `embedding-similarity` is a distinct
   `CapabilityKind`/`RerankProfile` never equal to `reranker`.
-- [ ] T005 [S0] Author `packages/schema/src/semantic/provider-profile.ts` composing the
+- [x] T005 [S0] Author `packages/schema/src/semantic/provider-profile.ts` composing the
   bounded sub-structs `ProviderIdentity` (`name`, `base_url`, `transport`), `ProviderTransport`
   (`tls_policy`, `residency`, `insecure_allowed`), `ProviderCredentials` (nullable
   `secret_ref`, `headers`), and `ProviderAudit` (`enabled`, `created_at`, `updated_at`,
@@ -104,7 +104,7 @@ vocabulary is enforced (see the Traceability reconciliation note).
   FR37, C5, C17, C19). Acceptance: `tsgo --noEmit` green and the schema test constructs a
   key-free local profile and a keyed remote profile and asserts no raw secret field exists
   and `secret_ref` is a nullable `SecretRef`.
-- [ ] T006 [S0] Author `packages/schema/src/semantic/model-descriptor.ts` composing
+- [x] T006 [S0] Author `packages/schema/src/semantic/model-descriptor.ts` composing
   `ModelIdentity` (`display_name`, `source`, `endpoint_mode`, nullable `rerank_profile`),
   `CapabilityKindSet`, `ModelLimits` (nullable `batch_size`/`vector_count`/`token_limit`),
   `ModelCapability` (`kinds`, nullable `dimension`/`metric`/`normalized`, `limits`), and
@@ -115,7 +115,7 @@ vocabulary is enforced (see the Traceability reconciliation note).
   and `model-parts.cue` (FR28, FR30, C3, C5, C16). Acceptance: `tsgo --noEmit` green and the
   schema test asserts an embedding descriptor carries a null `rerank_profile`, a manual
   descriptor is `declared`, and dimension/normalization/metric are captured only from a probe.
-- [ ] T007 [S0] Author `packages/schema/src/semantic/binding.ts` composing `BindingRefs`
+- [x] T007 [S0] Author `packages/schema/src/semantic/binding.ts` composing `BindingRefs`
   (`provider_ref`, `model_ref`, nullable `rerank_profile`), `CapabilityContract` (`kind`,
   nullable `dimension`/`metric`/`normalized`), `BindingSelection` (`selected_by`,
   `selected_at`, `config_version`, `config_hash`), and `BindingGeneration` (`generation_id`,
@@ -127,7 +127,7 @@ vocabulary is enforced (see the Traceability reconciliation note).
   FR32, C12, C20). Acceptance: `tsgo --noEmit` green and the schema test constructs an
   embedding and a reranker binding and asserts the version is an immutable positive counter
   and `BindingStatus` carries a typed `degraded_reason`.
-- [ ] T008 [S2] Author `packages/schema/src/semantic/documents.ts` composing `DocIdentity`
+- [x] T008 [S2] Author `packages/schema/src/semantic/documents.ts` composing `DocIdentity`
   (`version`, `content_hash`, `source`), `DocScope` (`project_id`, `scope`, `visibility`,
   `permission_ref`), `DocAvailability` (`enabled`, `available`), the agent parts
   (`AgentClassification`, `AgentTaxonomy`) and `AgentDoc` entity, the skill parts
@@ -142,7 +142,7 @@ vocabulary is enforced (see the Traceability reconciliation note).
   C4, C6, C9, C11). Acceptance: `tsgo --noEmit` green and the schema test constructs each
   document, asserts the scalar `project_id` and `permission_ref` are present, and that
   `SkillChunkDoc` carries a `ChunkBodyRef` and no inline body or path.
-- [ ] T009 [S3] Author `packages/schema/src/semantic/profile.ts` and
+- [x] T009 [S3] Author `packages/schema/src/semantic/profile.ts` and
   `packages/schema/src/semantic/retrieval.ts` composing `QueryFingerprint` (`fingerprint`,
   `binding_version`, `config_hash`) and `TaskProfile` (`fingerprint`, `role_hint`, `domains`,
   `languages`, `project_id`); and `RetrievalRequest` (`profile`, `collection`,
@@ -159,7 +159,7 @@ vocabulary is enforced (see the Traceability reconciliation note).
   C11, C20). Acceptance: `tsgo --noEmit` green and the schema test asserts `rerank` is
   nullable, `confidence` is a bounded number, and a `Candidate` holds a ranking ref not an
   entity.
-- [ ] T010 [S4] Author `packages/schema/src/semantic/index-generation.ts` composing the
+- [x] T010 [S4] Author `packages/schema/src/semantic/index-generation.ts` composing the
   `IndexGeneration` aggregate root (identity `id`, `binding_version`, `state`, `metric`,
   `dimension`, `aliases`, `created_at`) storing the embedding dimension/normalization/metric
   WITH the generation so incompatible vectors are never mixed, and the `CollectionAlias`
@@ -169,7 +169,7 @@ vocabulary is enforced (see the Traceability reconciliation note).
   `index-generation.cue` and `collection-alias.cue` (FR12, C12, C21). Acceptance:
   `tsgo --noEmit` green and the schema test asserts the generation stores `metric`+`dimension`
   and the alias set includes the Feature 009 `tools` extension point.
-- [ ] T011 [S4] Author `packages/schema/src/semantic/events.ts` composing the content-free
+- [x] T011 [S4] Author `packages/schema/src/semantic/events.ts` composing the content-free
   common carrier `SemanticEnvelope` (`event_id`, `EventKind` = `event_type`/`schema_version`/
   `event_class`/`source`/`actor_kind`/`visibility`, `EventSubject` = nullable `binding_id`/
   `generation_id`/`collection` plus `project_id`, `Ordering` = per-aggregate `sequence`/
@@ -186,11 +186,11 @@ vocabulary is enforced (see the Traceability reconciliation note).
   the schema test asserts every vocabulary member has a distinct Struct, the union is
   exhaustive, `redacted_metadata` carries no query/vector/prompt/path/secret, and only the
   nine durable members carry the durable annotation.
-- [ ] T012 [S0–S4] Author the barrel `packages/schema/src/semantic/index.ts` re-exporting
+- [x] T012 [S0–S4] Author the barrel `packages/schema/src/semantic/index.ts` re-exporting
   every semantic schema module and register the barrel in `packages/schema/src/index.ts`.
   Acceptance: `tsgo --noEmit` on `packages/schema` green and `bun test packages/schema`
   imports the barrel without a duplicate-export error.
-- [ ] T013 [S4] Extend `packages/schema/src/durable-event-manifest.ts` to join the nine
+- [x] T013 [S4] Extend `packages/schema/src/durable-event-manifest.ts` to join the nine
   durable `semantic.*` definitions from `events.ts` into the canonical `Durable` inventory
   through `Event.durable([...])`, leaving the three live `retrieval_degraded`/`provider_probed`/
   `binding_state_changed` members out of the durable set, so no second event authority is
