@@ -64,6 +64,24 @@ import { Ids as LangLockIds } from "../src/langlock/ids"
 import { Policy as LangLockPolicy } from "../src/langlock/policy"
 import { TextValues as LangLockTextValues } from "../src/langlock/text-values"
 import { Values as LangLockValues } from "../src/langlock/values"
+import { Admin as OutputSpoolAdmin } from "../src/outputspool/admin"
+import { Channel as OutputSpoolChannel } from "../src/outputspool/channel"
+import { Correlation as OutputSpoolCorrelation } from "../src/outputspool/correlation"
+import { Cursor as OutputSpoolCursor } from "../src/outputspool/cursor"
+import { Enums as OutputSpoolEnums } from "../src/outputspool/enums"
+import { EnumsEvent as OutputSpoolEnumsEvent } from "../src/outputspool/enums-event"
+import { Envelope as OutputSpoolEnvelope } from "../src/outputspool/envelope"
+import { Events as OutputSpoolEvents } from "../src/outputspool/events"
+import { EventTypes as OutputSpoolEventTypes } from "../src/outputspool/event-types"
+import { Group as OutputSpoolGroup } from "../src/outputspool/group"
+import { Ids as OutputSpoolIds } from "../src/outputspool/ids"
+import { Page as OutputSpoolPage } from "../src/outputspool/page"
+import { Preview as OutputSpoolPreview } from "../src/outputspool/preview"
+import { Quota as OutputSpoolQuota } from "../src/outputspool/quota"
+import { Retention as OutputSpoolRetention } from "../src/outputspool/retention"
+import { Stat as OutputSpoolStat } from "../src/outputspool/stat"
+import { TextValues as OutputSpoolTextValues } from "../src/outputspool/text-values"
+import { Values as OutputSpoolValues } from "../src/outputspool/values"
 import { optional } from "../src/schema"
 
 describe("contract hygiene", () => {
@@ -545,6 +563,112 @@ describe("contract hygiene", () => {
       LangLockEvents.LangLockResolutionRetainedEvent,
       LangLockEvents.LangLockUnknownEvent,
       LangLockEvents.LangLockEvent,
+      OutputSpoolIds.GroupId,
+      OutputSpoolIds.OutputRef,
+      OutputSpoolIds.ChannelId,
+      OutputSpoolIds.ProcessId,
+      OutputSpoolIds.RootSessionId,
+      OutputSpoolIds.SessionId,
+      OutputSpoolIds.ProjectId,
+      OutputSpoolIds.EventId,
+      OutputSpoolIds.LeaseId,
+      OutputSpoolIds.HolderRef,
+      OutputSpoolCorrelation.CorrelationId,
+      OutputSpoolCorrelation.CausationId,
+      OutputSpoolCorrelation.Principal,
+      OutputSpoolCorrelation.SecretRef,
+      OutputSpoolCorrelation.TranscriptRef,
+      OutputSpoolCorrelation.TodoRef,
+      OutputSpoolCorrelation.HandoffRef,
+      OutputSpoolCorrelation.NotificationRef,
+      OutputSpoolCorrelation.RowTelemetryRef,
+      OutputSpoolValues.ByteOffset,
+      OutputSpoolValues.ByteLength,
+      OutputSpoolValues.CommittedBytes,
+      OutputSpoolValues.NextOffset,
+      OutputSpoolValues.PageLimit,
+      OutputSpoolValues.QueueDepthBytes,
+      OutputSpoolValues.Sequence,
+      OutputSpoolValues.SchemaVersion,
+      OutputSpoolValues.Generation,
+      OutputSpoolValues.Attempt,
+      OutputSpoolTextValues.ContentType,
+      OutputSpoolTextValues.IntegrityTag,
+      OutputSpoolTextValues.LanguageTag,
+      OutputSpoolTextValues.Reason,
+      OutputSpoolTextValues.TraceId,
+      OutputSpoolTextValues.SpanId,
+      OutputSpoolTextValues.CaughtUp,
+      OutputSpoolTextValues.Eof,
+      OutputSpoolTextValues.Disposable,
+      OutputSpoolEnums.Channel,
+      OutputSpoolEnums.GroupState,
+      OutputSpoolEnums.ActionScope,
+      OutputSpoolEnums.QuotaScope,
+      OutputSpoolEnums.DurabilityTier,
+      OutputSpoolEnums.AdmissionFault,
+      OutputSpoolEnums.ErrorCode,
+      OutputSpoolEnums.CursorState,
+      OutputSpoolEnums.RetentionEdgeKind,
+      OutputSpoolEnums.LegalHoldState,
+      OutputSpoolEnumsEvent.EventClass,
+      OutputSpoolEnumsEvent.EventSource,
+      OutputSpoolEnumsEvent.ActorKind,
+      OutputSpoolEnumsEvent.Visibility,
+      OutputSpoolEnumsEvent.SettlementOutcome,
+      OutputSpoolEnumsEvent.LanguageProvenance,
+      OutputSpoolEnumsEvent.ExportEncoding,
+      OutputSpoolEventTypes.OutputEventType,
+      OutputSpoolCursor.OutputCursor,
+      OutputSpoolCursor.CursorStatus,
+      OutputSpoolPage.PageRange,
+      OutputSpoolPage.ReadRequest,
+      OutputSpoolPage.ReadPage,
+      OutputSpoolStat.StatProvenance,
+      OutputSpoolStat.OutputStat,
+      OutputSpoolPreview.PreviewText,
+      OutputSpoolPreview.BoundedPreview,
+      OutputSpoolQuota.QuotaDescriptor,
+      OutputSpoolRetention.TtlMs,
+      OutputSpoolRetention.RetentionLease,
+      OutputSpoolRetention.ReferenceEdge,
+      OutputSpoolRetention.RetentionDescriptor,
+      OutputSpoolGroup.OutputGroupRef,
+      OutputSpoolGroup.GroupLineage,
+      OutputSpoolGroup.GroupDurability,
+      OutputSpoolGroup.GroupSettlement,
+      OutputSpoolGroup.OutputGroup,
+      OutputSpoolChannel.ChannelContent,
+      OutputSpoolChannel.ChannelState,
+      OutputSpoolChannel.ChannelProvenance,
+      OutputSpoolChannel.OutputChannel,
+      OutputSpoolEnvelope.EventKind,
+      OutputSpoolEnvelope.EventSubject,
+      OutputSpoolEnvelope.Ordering,
+      OutputSpoolEnvelope.Delivery,
+      OutputSpoolEnvelope.OutputEnvelope,
+      OutputSpoolEvents.SealDetail,
+      OutputSpoolEvents.AbortDetail,
+      OutputSpoolEvents.SettlementDetail,
+      OutputSpoolEvents.ReconcileDetail,
+      OutputSpoolEvents.FenceDetail,
+      OutputSpoolEvents.RetentionEventDetail,
+      OutputSpoolEvents.AdmissionEventDetail,
+      OutputSpoolEvents.OutputChannelSealedEvent,
+      OutputSpoolEvents.OutputChannelAbortedEvent,
+      OutputSpoolEvents.OutputSettlementRecordedEvent,
+      OutputSpoolEvents.OutputReconciledEvent,
+      OutputSpoolEvents.OutputGenerationFencedEvent,
+      OutputSpoolEvents.OutputGroupReleasedEvent,
+      OutputSpoolEvents.OutputGroupReclaimedEvent,
+      OutputSpoolEvents.OutputChunkAppendedEvent,
+      OutputSpoolEvents.OutputBackpressureSignalledEvent,
+      OutputSpoolEvents.OutputAdmissionDegradedEvent,
+      OutputSpoolEvents.OutputUnknownEvent,
+      OutputSpoolEvents.OutputEvent,
+      OutputSpoolAdmin.MigrationState,
+      OutputSpoolAdmin.ExportRequest,
+      OutputSpoolAdmin.ShareRequest,
     ].map((schema) => schema.ast.annotations?.identifier)
 
     expect(identifiers.every((identifier) => typeof identifier === "string")).toBe(true)

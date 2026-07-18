@@ -32,7 +32,7 @@ sourcing its enum members from the schema modules so a single vocabulary is enfo
 
 ### Schema and protocol foundation (Phase 1)
 
-- [ ] T001 [S0] Author `packages/schema/src/outputspool/ids.ts` and
+- [x] T001 [S0] Author `packages/schema/src/outputspool/ids.ts` and
   `packages/schema/src/outputspool/correlation.ts` with the branded identifiers from
   `data-model.md`: `GroupId`, `OutputRef`, `ChannelId`, `ProcessId`, `RootSessionId`,
   `SessionId`, `ProjectId`, `EventId` (the EventV2 `evt_` id), `LeaseId`, `HolderRef`,
@@ -46,7 +46,7 @@ sourcing its enum members from the schema modules so a single vocabulary is enfo
   FR48, Security 5, C5, C18, C22). Acceptance: `tsgo --noEmit` on `packages/schema` and
   the schema contract-hygiene test assert annotate-before-check identity is retained on
   every brand.
-- [ ] T002 [S0] Author `packages/schema/src/outputspool/values.ts` and
+- [x] T002 [S0] Author `packages/schema/src/outputspool/values.ts` and
   `packages/schema/src/outputspool/text-values.ts` with the byte-offset/length/counter
   ValueObjects (`ByteOffset`, `ByteLength`, `CommittedBytes`, `NextOffset`, `PageLimit`,
   `QueueDepthBytes`, `Sequence`, `SchemaVersion`, `Generation`, `Attempt`) folding
@@ -58,7 +58,7 @@ sourcing its enum members from the schema modules so a single vocabulary is enfo
   `values.cue` and `text-values.cue` (FR5, FR12, FR20, FR33, FR40, Security 5, C8, C15,
   C22). Acceptance: `tsgo --noEmit` green and the redaction test confirms no free-form
   content field is exported and every offset/length counter is integer-checked.
-- [ ] T003 [S0] Author `packages/schema/src/outputspool/enums.ts`,
+- [x] T003 [S0] Author `packages/schema/src/outputspool/enums.ts`,
   `enums-event.ts`, and `event-types.ts` with the closed enums as `Schema.Literals([...])`:
   the 7-member `Channel`
   (`assistant-text|reasoning|stdout|stderr|tool-result|error|artifact`), the 7-member
@@ -75,14 +75,14 @@ sourcing its enum members from the schema modules so a single vocabulary is enfo
   `generation_fenced`/`group_released`/`group_reclaimed` durable members are distinct
   from the `chunk_appended`/`backpressure_signalled`/`admission_degraded`/`unknown`
   live members.
-- [ ] T004 [S0] Author `packages/schema/src/outputspool/cursor.ts` composing
+- [x] T004 [S0] Author `packages/schema/src/outputspool/cursor.ts` composing
   `OutputCursor` (`group_id`, `generation`, `channel`, byte `offset`, `integrity_tag`)
   and `CursorStatus` (`state`, nullable `error_code`), the opaque follow token bound to a
   group generation and byte offset with an integrity tag and exposing no client-visible
   internals beyond the opaque contract, mirroring `cursor.cue` (FR17, FR22, C14, C18).
   Acceptance: `tsgo --noEmit` green and the schema test asserts the cursor carries a
   generation and an integrity tag and no path field.
-- [ ] T005 [S1] Author `packages/schema/src/outputspool/page.ts` and
+- [x] T005 [S1] Author `packages/schema/src/outputspool/page.ts` and
   `packages/schema/src/outputspool/stat.ts` composing `PageRange`, `ReadRequest`
   (`output_ref`, `offset`, mandatory server-capped `limit`; no path is ever accepted),
   and `ReadPage` (`range`, `next_offset`, `committed_bytes`, `caught_up`, `eof`), plus
@@ -92,7 +92,7 @@ sourcing its enum members from the schema modules so a single vocabulary is enfo
   FR20, FR21, FR40, FR41, C8, C15, C18). Acceptance: `tsgo --noEmit` green and the schema
   test asserts `limit` is required, `eof` and `caught_up` are distinct boolean fields, and
   no path field exists.
-- [ ] T006 [S1] Author `packages/schema/src/outputspool/preview.ts` composing
+- [x] T006 [S1] Author `packages/schema/src/outputspool/preview.ts` composing
   `PreviewText`, the first-class `SecretRefList` collection, and `BoundedPreview`
   (`content_type`, `byte_cap`, `line_cap`, `head`, `secrets`) — the byte-and-line-capped
   redacted head slice attached to EventV2 payloads, UI cards, and NotificationEnvelope
@@ -101,7 +101,7 @@ sourcing its enum members from the schema modules so a single vocabulary is enfo
   mirroring `preview.cue` (FR4, FR5, FR33, C8, C22). Acceptance: `tsgo --noEmit` green and
   the redaction test asserts the preview carries a `SecretRef` list and no raw secret,
   path, or full-content field.
-- [ ] T007 [S2] Author `packages/schema/src/outputspool/quota.ts` and
+- [x] T007 [S2] Author `packages/schema/src/outputspool/quota.ts` and
   `packages/schema/src/outputspool/retention.ts` composing `QuotaDescriptor`
   (`scope`, `byte_cap`, `queue_depth_cap`, `page_cap`) and the `QuotaSet` collection, plus
   `TtlMs`, `RetentionLease`, `ReferenceEdge`, the `ReferenceEdgeSet` collection, and
@@ -111,7 +111,7 @@ sourcing its enum members from the schema modules so a single vocabulary is enfo
   FR28, FR29, FR30, C3, C5). Acceptance: `tsgo --noEmit` green and the schema test asserts
   the five quota scopes and the six retention edge kinds are present and numeric caps are
   integer-checked.
-- [ ] T008 [S1] Author `packages/schema/src/outputspool/group.ts` and
+- [x] T008 [S1] Author `packages/schema/src/outputspool/group.ts` and
   `packages/schema/src/outputspool/channel.ts` composing `OutputGroupRef`
   (`project_id`/`root_session_id`/`process_id`/`attempt`/`generation` fencing key),
   `GroupLineage`, `GroupDurability`, `GroupSettlement`, the `ChannelRefSet` collection, and
@@ -123,7 +123,7 @@ sourcing its enum members from the schema modules so a single vocabulary is enfo
   FR40, C1, C8, C9, C12, C18, C21). Acceptance: `tsgo --noEmit` green and the schema test
   constructs an OutputGroup and an OutputChannel value and asserts the fencing key carries
   attempt and generation.
-- [ ] T009 [S1] Author `packages/schema/src/outputspool/envelope.ts` composing the
+- [x] T009 [S1] Author `packages/schema/src/outputspool/envelope.ts` composing the
   bounded sub-structs `EventKind` (`event_type`, `schema_version`, `event_class`,
   `source`, `actor_kind`, `visibility`), `EventSubject` (`group_id`, nullable
   `output_ref`, nullable `channel`, `generation`), `Ordering` (per-aggregate `sequence`
@@ -133,7 +133,7 @@ sourcing its enum members from the schema modules so a single vocabulary is enfo
   Observability, C20, C22). Acceptance: `tsgo --noEmit` green and the schema test asserts
   `redacted_metadata` carries no prompt, path, or payload key and `actor_kind` admits only
   `runtime`/`operator`.
-- [ ] T010 [S3] Author `packages/schema/src/outputspool/events.ts`,
+- [x] T010 [S3] Author `packages/schema/src/outputspool/events.ts`,
   `events-settlement.ts`, `events-live.ts`, and `event-definitions.ts` with the detail
   sub-objects (`SealDetail`, `AbortDetail`, `SettlementDetail`, `ReconcileDetail`,
   `FenceDetail`, `RetentionEventDetail`, `AdmissionEventDetail`) and one `Schema.Struct`
@@ -148,18 +148,18 @@ sourcing its enum members from the schema modules so a single vocabulary is enfo
   Acceptance: `tsgo --noEmit` green and the schema test asserts every vocabulary member has
   a distinct Struct, the union is exhaustive, and only the seven durable members carry the
   durable annotation.
-- [ ] T011 [S3] Author `packages/schema/src/outputspool/admin.ts` composing
+- [x] T011 [S3] Author `packages/schema/src/outputspool/admin.ts` composing
   `MigrationState` (`enabled`, `dual_read`) for the C16 dual-read window, `ExportRequest`
   (`output_ref`, `scope`, `encoding`, `principal`), and `ShareRequest` (`output_ref`,
   `scope`, `principal`), so export/share are deny-by-default across projects and a
   cross-project transfer is a bounded encoding and never a raw path, mirroring `admin.cue`
   (FR31, FR44, C16, C17). Acceptance: `tsgo --noEmit` green and the schema test asserts the
   export encoding is a bounded enum and no request carries a filesystem path.
-- [ ] T012 [S0–S3] Author the barrel `packages/schema/src/outputspool/index.ts`
+- [x] T012 [S0–S3] Author the barrel `packages/schema/src/outputspool/index.ts`
   re-exporting every outputspool schema module and register the barrel in
   `packages/schema/src/index.ts`. Acceptance: `tsgo --noEmit` on `packages/schema` green
   and `bun test packages/schema` imports the barrel without a duplicate-export error.
-- [ ] T013 [S3] Extend `packages/schema/src/durable-event-manifest.ts` to join the seven
+- [x] T013 [S3] Extend `packages/schema/src/durable-event-manifest.ts` to join the seven
   durable `output.*` settlement definitions from `event-definitions.ts` into the canonical
   `Durable` inventory through `Event.durable([...])`, leaving the four live
   append/backpressure/admission/unknown members out of the durable set, so no second event
