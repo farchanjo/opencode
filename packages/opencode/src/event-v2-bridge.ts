@@ -16,6 +16,8 @@ import { Events as JobEvents } from "@opencode-ai/schema/jobs/events"
 import { EventDefinitions as JobEventDefinitions } from "@opencode-ai/schema/jobs/event-definitions"
 import { Events as LangLockEvents } from "@opencode-ai/schema/langlock/events"
 import { EventDefinitions as LangLockEventDefinitions } from "@opencode-ai/schema/langlock/event-definitions"
+import { Events as OutputSpoolEvents } from "@opencode-ai/schema/outputspool/events"
+import { EventDefinitions as OutputSpoolEventDefinitions } from "@opencode-ai/schema/outputspool/event-definitions"
 
 // =============================================================================
 // Feature 001 / T031 — routing, hierarchy and capability EventV2 definitions
@@ -212,6 +214,31 @@ export interface Interface extends EventV2.Interface {
    */
   readonly publishLangLockEvent: (
     event: LangLockEvents.LangLockEvent,
+    options?: EventV2.PublishOptions,
+  ) => Effect.Effect<EventV2.Payload>
+
+  /**
+   * Feature 005 / T031 — bridge one `OutputSpoolEvents.OutputEvent` member (the
+   * closed 11-member content-plane `output.*` vocabulary,
+   * `packages/schema/src/outputspool/events.ts`, C20) onto the EventV2 bus
+   * through the location-aware `publish` above, mirroring `publishLangLockEvent`.
+   * Each member publishes through its own wire `Definition` from
+   * `@opencode-ai/schema/outputspool/event-definitions` (the single canonical
+   * copy the durable manifest also joins, T013); no raw tagged union is ever
+   * wired to the bus (C20). The seven durable settlement members additionally
+   * carry a top-level `correlation_id`, projected from
+   * `envelope.ordering.correlation_id`, because `EventV2`'s durable-commit path
+   * reads the aggregate id from a TOP-LEVEL data key (`durable.aggregate =
+   * "correlation_id"`); the four live append/backpressure/admission/unknown
+   * members omit it and commit no sequence and MAY be dropped under `allBounded`
+   * load without affecting durable seal/read. Every payload is content-free —
+   * OutputRef and bounded metadata only, never a content chunk or a path (FR4,
+   * FR5, C20, C22). The `output.*` EventV2 content-plane prefix is distinct from
+   * the Feature 007 `output.*` operator command domain and this bridge never
+   * touches it (C19, C20).
+   */
+  readonly publishOutputEvent: (
+    event: OutputSpoolEvents.OutputEvent,
     options?: EventV2.PublishOptions,
   ) => Effect.Effect<EventV2.Payload>
 }
@@ -634,6 +661,63 @@ const layer = Layer.effect(
       }
     }
 
+    // Feature 005 / T031 — one arm per output.* content-plane vocabulary member
+    // (C20). The seven durable settlement members carry a top-level
+    // `correlation_id` projected from `envelope.ordering.correlation_id` (the
+    // durable aggregate key, see `@opencode-ai/schema/outputspool/event-definitions`);
+    // the four live members omit it. Content-free: OutputRef + bounded metadata
+    // only, never a chunk or a path (FR5, C20, C22).
+    const D = OutputSpoolEventDefinitions
+    const publishOutputEvent: Interface["publishOutputEvent"] = (event, options) => {
+      const correlation_id = event.envelope.ordering.correlation_id
+      switch (event.type) {
+        case "output.channel_sealed": {
+          const { type: _drop, ...rest } = event
+          return publish(D.ChannelSealedDefinition, { ...rest, correlation_id }, options)
+        }
+        case "output.channel_aborted": {
+          const { type: _drop, ...rest } = event
+          return publish(D.ChannelAbortedDefinition, { ...rest, correlation_id }, options)
+        }
+        case "output.settlement_recorded": {
+          const { type: _drop, ...rest } = event
+          return publish(D.SettlementRecordedDefinition, { ...rest, correlation_id }, options)
+        }
+        case "output.reconciled": {
+          const { type: _drop, ...rest } = event
+          return publish(D.ReconciledDefinition, { ...rest, correlation_id }, options)
+        }
+        case "output.generation_fenced": {
+          const { type: _drop, ...rest } = event
+          return publish(D.GenerationFencedDefinition, { ...rest, correlation_id }, options)
+        }
+        case "output.group_released": {
+          const { type: _drop, ...rest } = event
+          return publish(D.GroupReleasedDefinition, { ...rest, correlation_id }, options)
+        }
+        case "output.group_reclaimed": {
+          const { type: _drop, ...rest } = event
+          return publish(D.GroupReclaimedDefinition, { ...rest, correlation_id }, options)
+        }
+        case "output.chunk_appended": {
+          const { type: _drop, ...data } = event
+          return publish(D.ChunkAppendedDefinition, data, options)
+        }
+        case "output.backpressure_signalled": {
+          const { type: _drop, ...data } = event
+          return publish(D.BackpressureSignalledDefinition, data, options)
+        }
+        case "output.admission_degraded": {
+          const { type: _drop, ...data } = event
+          return publish(D.AdmissionDegradedDefinition, data, options)
+        }
+        case "output.unknown": {
+          const { type: _drop, ...data } = event
+          return publish(D.UnknownDefinition, data, options)
+        }
+      }
+    }
+
     const unsubscribe = yield* events.listen((event) =>
       Effect.gen(function* () {
         const ctx = yield* InstanceRef
@@ -664,7 +748,7 @@ const layer = Layer.effect(
     )
     yield* Effect.addFinalizer(() => unsubscribe)
 
-    return Service.of({ ...events, publish, publishRoutingEvent, publishLifecycleEvent, publishTodoEvent, publishJobEvent, publishLangLockEvent })
+    return Service.of({ ...events, publish, publishRoutingEvent, publishLifecycleEvent, publishTodoEvent, publishJobEvent, publishLangLockEvent, publishOutputEvent })
   }),
 )
 
