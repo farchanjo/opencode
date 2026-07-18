@@ -276,21 +276,21 @@ and the `jobs.*` operator command domain are distinct reserved namespaces (C13).
 
 ### Tests and validation (Phase 5)
 
-- [ ] T031 [S18] Add pure deterministic unit tests under
+- [x] T031 [S18] Add pure deterministic unit tests under
   `packages/core/test/jobs/**` for cron parse/next-occurrence (UTC/DST/leap/
   duplicate-time), the occurrence state machine and duplicate idempotency
   resolution, misfire (no infinite catch-up), overlap (default forbid,
   capability gate, mutation-safe replace, long-handler misfire), scheduler
   reconciliation with `auto_retry` false, and the idempotency tuple, with a fake
   clock and no I/O (AC3, AC4, AC5, AC6, AC19, AC22, AC24).
-- [ ] T032 [S18] Add schema and protocol tests under
+- [x] T032 [S18] Add schema and protocol tests under
   `packages/schema/test/jobs/**` and `packages/protocol/test/jobs/**` asserting
   contract hygiene (annotate-before-check identifiers), the closed 30-member
   `job.*` vocabulary and the durable-versus-live split, envelope redaction
   (no prompts/results/payloads/paths/secrets), the notification bounded-summary +
   opaque-OutputRef boundary, and `protocol/jobs` shape parity against
   `contracts/ports.ts` (FR11, FR12, FR22, FR32, C8, C15, AC29).
-- [ ] T033 [S18] Add integration tests under `packages/opencode/test/jobs/**`
+- [x] T033 [S18] Add integration tests under `packages/opencode/test/jobs/**`
   through the Feature 007 sandbox stores under `.dev/` for Config.Service
   definition persistence + CAS, startup rehydration/reconciliation through
   `unknown`/`reconciled`, `job.*` projection over the EventV2 durable aggregate,
@@ -298,7 +298,7 @@ and the `jobs.*` operator command domain are distinct reserved namespaces (C13).
   OutputGroup, notification delivery/ack/expiry under saturation, and
   authorization + redaction with cross-scope-leak rejection (AC2, AC7, AC8, AC9,
   AC11, AC13, AC18, AC23, AC26, AC28).
-- [ ] T034 [S18] Add end-to-end and C20 fault-matrix tests through the Feature
+- [x] T034 [S18] Add end-to-end and C20 fault-matrix tests through the Feature
   007 sandbox wrapper covering the CLI human + JSON `op jobs` output, the TUI
   jobs panel, `run-now` as a normal occurrence with zero admin-time model calls,
   disable/delete without a false kill, the disable/update/delete-vs-trigger race,
