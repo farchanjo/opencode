@@ -2,7 +2,7 @@
 id: 019f697e-c09a-7b40-a82f-30df4badfc7b
 number: 002
 slug: build-an-event-driven-asynchronous-task-lifecycle-engine
-status: specified
+status: clarified
 created_at: 2026-07-16T05:55:42.362102Z
 ---
 
@@ -931,3 +931,263 @@ observation, projection, UI navigation, and Todo lifecycle authority.
 | Mandatory session-owned Todo         | FR58c–FR58m                      | 38–47, 23e           | 1–2   |
 | Root-tree Ctrl+C cancellation        | FR59–FR65                        | 29–33, 35, 23f       | 1–2   |
 | Security and privacy                 | NFRs, security                   | 3–5, 11–18, 23–47    | 1–2   |
+
+## Clarifications
+
+### Session 2026-07-18
+
+Declarative resolutions for the Feature 002 clarify phase. Each decision closes one
+or more Clarification Questions (CQ) or inline open markers in the body above without
+reopening confirmed Feature 001 hierarchy, direct-child Session UI, or mandatory
+session-owned Todo decisions. Numeric defaults and algorithm internals that this
+feature intentionally defers are resolved here as explicit deferrals to `plan` and to
+the future ADR **Task Process Lifecycle and Operational Observation**, each with a
+provisional stance and a named acceptance-test hook — never as open placeholders.
+
+**C1 — Scope boundary versus Feature 001 routing events (CQ29, CQ30).** Feature 002
+owns lifecycle observation, Process Table projection, admission visibility, live panel
+and direct-child Session UI, session-owned Todo lifecycle authority/observation, and
+root-tree cancellation. It does NOT own the eight Feature 001 EventV2 definitions
+already wired in `packages/opencode/src/event-v2-bridge.ts` (`routing.decision`,
+`routing.fallback`, `hierarchy.dispatch`, `hierarchy.validation`,
+`hierarchy.escalation`, `capability.mismatch`, `todo.initialized`,
+`todo.completion_blocked`). Feature 002 consumes those events read-only through the
+same bridge and projects their fields into Process Table rows; it MUST NOT redefine,
+re-emit, or re-own them.
+
+**C2 — Scope boundary versus Feature 007 and the single EventV2 authority (CQ14).**
+EventV2 remains the single event authority. Per ADR-0003, Feature 007 reuses EventV2
+and does not own a separate operator bus. The Task Lifecycle Event Bus is an
+in-process, bounded projection/adaptation layer over EventV2, not a second event
+system: every lifecycle event in FR20 is registered through `EventV2.define`
+(mechanism in `packages/schema/src/event.ts`) in a Feature-002-owned
+`packages/schema/src/lifecycle/*` module, and the `EventV2Bridge` is the single
+publish boundary, mirroring the routing-events pattern (one `Definition` per member,
+no raw tagged union wired to the bus). The Process Table subscribes through
+`EventV2.Service.listen`; it publishes nothing back (FR18).
+
+**C3 — EventV2 seam and adapter ownership (CQ14, P1 gate).** The lifecycle-to-EventV2
+adapter is owned by the Feature 002 future ADR and lives beside the existing bridge.
+The adapter translates each lifecycle event to its EventV2 `Definition`; the local
+bounded Process Table layer is the only permitted local projection. No second event
+authority, executor, runtime, or SessionRunner is introduced (FR6, AC22). Canonical
+execution owners are confirmed present in code and reused unchanged:
+`SessionRunCoordinator` (`packages/core/src/session/run-coordinator.ts`),
+`SessionRunner`, `SessionExecution` (`packages/core/src/session.ts`), `BackgroundJob`
+(`packages/core/src/background-job.ts`), and `TaskTool`.
+
+**C4 — Durable versus live event classes (CQ2, compatibility baseline).** The durable
+class uses the EventV2 `durable {version, aggregate}` annotation (carrying
+`aggregateID`/`seq`/`version` and replayable through the sync stream); the live class
+omits `durable` (no sequence, no replay). Semantic checkpoints and terminal
+transitions are durable: `admitted`, `parent_attached`, `process_created`, `started`,
+`handoff`, `completed`, `failed`, `cancelled`, `zombie_detected`, `reconciled`, and
+`owner_lost`. Deltas, progress, and control-intent transitions are live: `queued`,
+`waiting`, `promoted`, `extended`, `steer_requested`, `steer_accepted`,
+`steer_rejected`, `turn_started`, `turn_ended`, `turn_failed`, `tool_called`,
+`tool_settled`, `cancel_requested`, `cancelling`, and `unknown`. Event schema versions
+follow the EventV2 `durable.version` counter.
+
+**C5 — Terminal preservation authority (CQ15, P1 gate).** Terminal events are durable
+and preserved across bounded-queue overflow and runtime restart by the EventV2 durable
+aggregate, not by the Process Table (which is a rebuildable projection, FR4). Terminal
+events are never coalesced or silently dropped (FR36); live progress/heartbeat events
+are the only sampling/coalescing targets. Preservation is proven without promising
+global order or exactly-once delivery (AC8, AC20).
+
+**C6 — Process Table persistence, topology, and rehydration (CQ5, CQ7, CQ13, CQ17).**
+The Process Table is an in-memory projection rebuilt on restart by replaying the
+EventV2 durable aggregate and reconciling against durable Sessions; it is not a store
+of record and is never the source from which events are reconstructed (FR4). Topology
+is a per-root/session projection composed under a runtime-wide index of authorized
+roots, with visibility filters applied before delivery and bounded retention per row
+class. Process-local `BackgroundJob` and active-execution state stay process-local;
+after restart, rows without a live owner project as `unknown`/`unreconciled` with no
+automatic effect retry (FR39, FR40, AC13).
+
+**C7 — Lifecycle state machine (CQ5).** Process Table states are exactly `created`,
+`queued`, `waiting`, `running`, `cancelling`, `completed`, `failed`, `cancelled`,
+`zombie`, and `unknown` (FR25); `handoff` is an event, never a state. Permitted
+transitions: `created` → `queued` → {`waiting`, `running`}; `running` ↔ `waiting`;
+{`queued`, `waiting`, `running`} → `cancelling` → {`cancelled`, `failed`, `unknown`};
+`running` → {`completed`, `failed`}; any non-terminal state → {`zombie`, `unknown`} on
+owner loss or reconciliation. `completed`, `failed`, and `cancelled` are absorbing
+except for bounded retention cleanup.
+
+**C8 — Process identity and order authority (CQ19, P2).** One `task_id` maps to N
+`process_id` values distinguished by attempt and generation; `process_id` is never an
+OS PID and implies no kill semantics (FR7, AC19). EventV2 assigns the event id
+(`evt_` monotonic) and, for durable events, the per-aggregate `aggregateID`/`seq`
+order. Sequence, attempt, and generation authority belongs to the canonical executor
+that owns the process (`SessionRunCoordinator`/`SessionRunner`), not to the Process
+Table. Ordering is guaranteed per aggregate/session/process only; no global order is
+implied (FR10, AC2).
+
+**C9 — Delivery, idempotency, and duplicate handling (CQ12, P2).** Delivery semantics
+are at-least-once for durable events and best-effort for live events; the system
+promises neither exactly-once delivery nor global ordering (FR24). Projections are
+idempotent keyed on event id plus `(aggregateID, seq)`; duplicate and out-of-order
+events are detected and surfaced as observable anomalies, and terminal state is never
+invented (FR23, FR29, AC14).
+
+**C10 — Backpressure and subscriber bounds (CQ3, CQ21, P2 quantitative).** Subscriber,
+event-bus, OTEL, and Process Table queues are bounded with explicit overflow policy,
+reusing the Feature 001 posture: `backpressure` evicts the oldest buffered live signal
+to admit the newest, and `drop` rejects the incoming live signal; terminal,
+cancellation, and tool-boundary events are priority and are never dropped (FR35–FR37).
+A slow subscriber never blocks a Task, SessionRunner, or producer (AC7). Numeric
+capacities, retention windows, and the quantitative test matrix (event rate, queue
+bounds, admission ceilings, fairness, subscriber lag, cancel/event storms, restart,
+OTEL outage, fault injection) are provisional plan constants with hooks AC1, AC7, AC8,
+AC15, AC20, and AC21; every provisional threshold is marked as such until acceptance
+testing fixes it.
+
+**C11 — Admission, capacity, and ownership boundaries (CQ4, CQ16, P1 gate).** Separate
+canonical owners: capacity observation belongs to the capacity/admission service;
+admission decisions belong to the admission controller; execution belongs to
+`SessionRunCoordinator`/`SessionRunner`/`BackgroundJob`/`TaskTool`; projection belongs
+to the Process Table. The contract forbids the projection or any observer from calling
+admission or execution APIs, mutating rows outside event application, or acting as a
+scheduler (FR4, FR17, FR18). The admission algorithm resolves to a per-scope
+token-bucket over global/root/session/child/provider/agent/tool/event-queue/OTEL/
+SQLite/token/cost budgets with configurable limits and hard ceilings and no unbounded
+queue; requested-versus-granted fanout is projected (FR31). No `maxAgents` policy
+exists without declared ownership, fairness, scope, capacity source, and observable
+rejection (FR34). Numeric ceilings and fairness weights defer to plan with hooks AC1
+and AC21.
+
+**C12 — Watchdog, lease, and zombie criteria (CQ6).** Watchdog activity uses a single
+shared bucketed sweeper, never one timer per Task; heartbeat and lease state stay in
+memory and never write per-heartbeat to SQLite (FR38). Zombie criteria: lease expiry
+combined with an absent owner heartbeat publishes `zombie_detected`, `owner_lost`, or
+`unknown` without claiming a provider or external tool stopped (FR39, AC11). Bucket
+cadence and lease thresholds are provisional plan constants; distributed fencing is
+out of scope for V1.
+
+**C13 — Reconciliation and recovery safety (CQ7).** Reconciliation with durable
+Sessions is explicit and versioned. On restart, lost process-local registry state is
+represented as `unknown`/`unreconciled`; no zombie or crash triggers automatic retry
+or re-execution of effects (FR40, FR42, AC13). Distributed recovery, fencing, and
+placement remain out of scope until a future distributed ADR (CQ13).
+
+**C14 — Observation API and authorization authority (CQ10, CQ20, P2).** The typed
+observation API is `observeSession`, `observeProcess`, `observeTree`, and privileged
+`observeGlobal(filter)` over Effect Stream/PubSub with scoped finalizers; subscribe and
+unsubscribe are leak-free (FR14, FR15, AC5). The canonical Permission/Policy authority
+applies authorization, filtering, and redaction before subscription delivery and before
+projection; global observation requires privileged operational scope plus redaction
+(FR11, FR17). Sibling and cross-project leakage is a failure verified by AC3 and AC4.
+Filter/visibility syntax defers to plan.
+
+**C15 — Correlation with routing decisions (task topic, CQ11).** Lifecycle envelopes
+carry `session_id`, root/parent-session identity, `task_id`/`process_id`/
+parent-process/root-process identity, and correlation/causation ids. When Smart
+hierarchical routing is active, envelopes additionally carry `decision_id`, `turn_id`,
+`hierarchy_role`, delegation depth/path, fanout requested/granted, and validation
+outcome, reused verbatim from the Feature 001 `routing.decision` and `hierarchy.*`
+event schemas (which already carry `session_id`, `turn_id`, and `decision_id`) rather
+than recomputed. Architect/Manager orchestration observations remain distinct from
+Worker start/completed events (FR48, AC23a). Hierarchy fields project with bounded
+labels; high-cardinality ids stay in traces/logs only (FR26, AC17).
+
+**C16 — Handoff aggregate owner (CQ18, P2).** The canonical run/session coordinator
+performing the handoff is the sole owner that records and publishes one durable
+`handoff` event carrying source and target session/process, reason, generation,
+correlation, and causation. Both permitted projections read that single event and show
+identical fields (FR22, AC6).
+
+**C17 — Cancellation semantics and root-tree Ctrl+C (CQ8, CQ23, CQ24, CQ25).** Cancel
+outcomes are `requested`, `accepted`, `rejected`, `unknown`, and `unconfirmed`; local
+abort is distinct from effective remote cancellation, and no remote kill, reversal, or
+mutation rollback is ever promised (FR41, FR62, AC10, AC32). Root-cancellation
+propagation and acknowledgement are owned by the canonical native lifecycle API
+(`SessionRunCoordinator` root scope) over the Event Bus and Process Table, never an
+LLM, tool, prompt, or MCP call (FR61). After a root cancel request, admission fences
+and quarantines new descendants of that root (FR61, AC30). First Ctrl+C requests
+cancellation of the current active root tree, including descendants not visible in the
+direct-child UI; a second Ctrl+C within the escalation window forces local abort of the
+root scope without a remote-kill promise; Esc never cancels a root tree (FR59, FR60,
+AC29, AC31). Ctrl+C acts only when execution is active in the current root; in idle
+input, modal/dialog, PTY, and copy-selection contexts it follows existing terminal
+semantics and does not cancel. The escalation timeout is a provisional plan constant.
+
+**C18 — OTEL and Smart Routing evidence reuse (task topic, CQ11).** Feature 002 adds
+no new exporter, SDK, or pipeline. It reuses the Feature 001 / ADR-0001 OTLP telemetry
+foundation: bounded asynchronous sink, drop-oldest/drop backpressure, cardinality
+budget, and redaction. Lifecycle spans correlate with the existing `task.execute`,
+`session.execution`, `llm.request`, `tool.execute`, and `fallback` spans (FR43). Metric
+labels use bounded enums/buckets; `task_id`/`session_id`/`process_id` appear only in
+traces/logs (FR45, AC17). Smart Routing consumes local validated evidence with window,
+confidence, and TTL from the local metrics store and never queries a remote backend per
+Task (FR47, AC16). Evidence window, TTL, and cardinality budget numerics defer to plan.
+
+**C19 — Operator surface, principals, and command IDs (CQ9, CQ22).** Process and task
+operator command IDs are registered and owned by Feature 007 per ADR-0003: canonical
+dotted `process.*` and `task.*` operations (status, tree, watch, cancel, steer,
+handoff) under session scope for process/task operations and root-tree scope for
+workspace operations. Feature 002 supplies only the typed domain query/command
+implementations and audit events, never a parallel registry, and reserved operator ids
+are never registered by plugin/MCP/custom registries (FR49–FR51, AC18). The principals
+permitted to view cards, expand OutputRef cursors, or request root cancellation are the
+Feature 007 `operator` and read-only `manager-view` principals; deeper per-node
+authorization remains an explicit Feature 001/ADR gap. Final display aliases are
+registry-generated.
+
+**C20 — Terminal-versus-settlement ordering with Feature 005 (CQ26).** Feature 002 owns
+lifecycle terminal status; Feature 005 owns seal/abort, `OutputRef`/cursor,
+committed-byte, and settlement contracts. A Task is never marked terminal-as-
+successfully-settled until Feature 005 reports settlement; the intermediate conditions
+`settling`, `unknown`, and `corrupt` are explicit lifecycle sub-states surfaced on the
+card (FR64). Filesystem-versus-control reconciliation and generation fencing are
+detailed in the shared plan; the ownership split is not reopened.
+
+**C21 — Live usage schema and provenance (CQ27).** Live usage fields carry provenance
+(`estimated` or `reported`) and source (`provider`, `runtime`, or `local-estimate`).
+Missing live usage renders as an explicit unavailable state, never zero and never
+fabricated; estimates are labeled; provider-reported usage reconciles and replaces the
+estimate at settlement; unknown token fields are never summed; tokens/s is valid only
+from monotonic elapsed time and known token counts (FR55, AC25, AC26). The exact field
+schema follows the plan phase.
+
+**C22 — Panel and navigation quantitative limits (CQ28, CQ31).** Panel update
+coalescing/throttle, terminal retention, narrow-terminal responsive layout, keyboard
+navigation, and screen-reader semantics are bounded and observable; terminal,
+cancellation, and tool boundaries always survive coalescing (FR57, FR58, AC24, AC34,
+AC35). Back/breadcrumb navigation preserves Session view state and selection across
+Architect → Manager → Worker (AC23d). Exact coalescing intervals, retention counts, and
+breadcrumb truncation are provisional plan-phase UX constants with the named acceptance
+hooks.
+
+**C23 — Todo schema, status set, and CAS (CQ32, CQ46).** The Todo aggregate uses the
+Feature 001 resolved model: stable item id, objective, typed status/priority, owner
+Session/role, version/CAS, result/evidence `OutputRefs`, aggregate outcome, and
+timestamps. The item status set is the closed Feature 001 SSOT `pending | in_progress |
+completed | cancelled`; `todo.failed` is an aggregate-outcome event, not a new item
+status. Concurrent updates use compare-and-set on the opaque monotonic `TodoVersion`
+token, and a version mismatch fails the update for the caller to retry (FR58e, FR58m).
+Archive, retention, and reopen policy defer to plan.
+
+**C24 — Todo gate exemptions and boundary (CQ33).** Pure social or no-goal chat
+Sessions and hidden lifecycle agents (title, summary, compaction) are exempt from the
+non-empty Todo gate; goal-bearing execution or dispatch is the boundary that requires a
+non-empty durable snapshot (FR58c, FR58d). Exempt agents are never represented as
+already using Todo tools.
+
+**C25 — Todo override, parent visibility, escalation, and migration (CQ34–CQ37).** An
+operator completion-gate override exists only through a Feature 007 operator principal
+with CAS, audit, and explicit recovery, never a model or prompt path (FR58h). A parent
+Architect/Manager observes only child Todo ref/version/counts plus a bounded authorized
+summary and never child item content or edits (FR58i, AC43). Permission and question
+escalation from deeper descendants to the root surfaces as control-plane exceptions on
+the authorized root without flattening descendant cards (FR58b). The legacy subagent
+`todowrite` denial is a migration gap; the target native policy grants session-owned
+Todo availability to every goal-bearing primary, agent, and subagent, asserted by
+acceptance test AC39 despite the legacy deny (FR58j).
+
+**C26 — Security section completeness.** The Security Requirements section above is
+complete for the clarify phase (visibility authorization, data minimization, input
+validation, control authorization, isolation, audit, recovery safety, transport and
+storage, panel authorization, cancellation authorization, content minimization, and
+Todo isolation/privacy). The one open item in Security #9 — the operator/manager
+principal policy — resolves to the Feature 007 `operator` and `manager-view` principals
+per C19; no new security requirement is added.
