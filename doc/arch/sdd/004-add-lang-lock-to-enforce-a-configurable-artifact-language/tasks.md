@@ -138,7 +138,7 @@ schema modules so a single vocabulary is enforced (see the Traceability note).
   the durable set, so no second event authority is introduced (C8). Acceptance:
   `bun test packages/schema` durable-manifest test green with the six langlock audit
   members present and the live members absent.
-- [ ] T015 [S4] Author `packages/protocol/src/langlock/ports.ts`,
+- [x] T015 [S4] Author `packages/protocol/src/langlock/ports.ts`,
   `packages/protocol/src/langlock/commands.ts`, and
   `packages/protocol/src/langlock/index.ts` mirroring `contracts/ports.ts`: the
   `LangLockPolicyPort` (`resolve`/`set`/`reset`), `DetectionPort` (`classify`),
@@ -362,9 +362,13 @@ schema modules so a single vocabulary is enforced (see the Traceability note).
 
 Requirements-to-task and acceptance-to-task coverage. The closed 15-member
 `langlock.*` event vocabulary, the 7-member `PathKind`, and the 4-member `Origin` are
-the CUE/`data-model.md` authority; `contracts/ports.ts` presents a divergent
-provisional surface (18 event names, 3-member `PathKind`, 3-member `Origin`) that T015
-and T038 reconcile by sourcing the protocol enums from the schema modules.
+the CUE/`data-model.md` authority; `contracts/ports.ts` originally presented a divergent
+provisional surface (18 event names, 3-member `PathKind`, 3-member `Origin`). T015
+reconciled it to the CUE authority (15 event names, 7-member `PathKind`, 4-member
+`Origin`, plus the `DetectorProvenance`/`RemediationStatus`/`ExceptionCategory`
+member sets) and sourced the `protocol/langlock` enums directly from the
+`packages/schema/src/langlock/*` modules so the transport contract cannot drift;
+T038 pins that parity across the draft, the protocol mirror, and the schema modules.
 
 | Requirement | Tasks |
 | ----------- | ----- |

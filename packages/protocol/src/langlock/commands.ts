@@ -1,33 +1,38 @@
 /**
- * Feature 004 — Application Ports (Lang Lock: Configurable Artifact-Language
- * Enforcement)
+ * Feature 004 — Lang Lock protocol payloads (T015).
  *
- * These interfaces define the inbound ports owned by Feature 004. They are
- * implemented by the domain policy/detection engine
- * (`packages/core/src/langlock/**`) and application adapters
- * (`packages/opencode/src/langlock/**`, `packages/opencode/src/operator/
- * langlock/**`), and are consumed by Feature 007 operator control-plane
- * adapters (Settings/CLI/TUI/palette/native-slash) per ADR-0003 and ADR-0005.
- * Feature 004 never registers a parallel command registry, event bus, config
- * store, or translation authority (C2, C3, C8; plan.md "Non-goals").
+ * TypeScript mirror of the shared identifiers, closed enums, the 15-member
+ * `langlock.*` event vocabulary (durable/live split), the request/response
+ * payloads, and the typed `LangLockPolicyError`/`DetectionError`/`AdvisoryError`
+ * unions from
+ * doc/arch/sdd/004-add-lang-lock-to-enforce-a-configurable-artifact-language/contracts/ports.ts
+ * (FR7, FR21, FR34, FR35, C2, C3, C6, C8). The `LangLockPolicyPort`/
+ * `DetectionPort`/`AdvisoryPort` interfaces live in ./ports — this file defines
+ * only the payload shapes they consume.
  *
- * Domain: canonical BCP 47 tag validation and allowlisting (FR4, C13), global
- * base / permission-gated project override resolution with a non-relaxable
- * hard-policy floor (FR5, C2), advisory-only post-write language detection
- * confined to confidently classified prose (FR16, FR20, FR21, C5, C6), and
- * the `langlock.status|show|set|reset` reserved operator command surface
- * (FR31-FR35, C3). Every mutation (set/reset) requires an operator
- * principal, explicit scope, version/CAS, and audit; detection/advisory
- * observation never gates a write or blocks a hot path (FR21, C6).
- *
- * Wire-shape source of truth: `doc/arch/schemas/langlock/*.cue` (ids.cue,
- * enums.cue, allowlist.cue, policy.cue, effective.cue, detection.cue,
- * exception.cue, events.cue — plan.md "New module tree target"). This file
- * is the TypeScript mirror; it does not redefine event payload schemas owned
- * by `packages/schema/src/langlock/*`.
+ * Single-vocabulary discipline (T015): the closed enums whose authority is the
+ * CUE corpus (doc/arch/schemas/langlock/*.cue) — `Scope`, `Origin`,
+ * `EnforcementMode`, `Axis`, `PathKind`, `ConfidenceBucket`, `DetectorProvenance`,
+ * `RemediationStatus`, `ExceptionCategory` and the 15-member `LangLockEventType`
+ * — are SOURCED from `@opencode-ai/schema/langlock/*` rather than re-declared, so
+ * the transport contract can never diverge from the wire shape. This mirror never
+ * redefines the `packages/schema/src/langlock/*` event payload schemas (C8). The
+ * camelCase protocol shapes here are the operator-surface projection consumed by
+ * Feature 007 adapters, distinct from the persisted snake_case domain records.
  */
 
-import type { Effect } from "effect"
+import type {
+  Axis as SchemaAxis,
+  ConfidenceBucket as SchemaConfidenceBucket,
+  DetectorProvenance as SchemaDetectorProvenance,
+  EnforcementMode as SchemaEnforcementMode,
+  ExceptionCategory as SchemaExceptionCategory,
+  Origin as SchemaOrigin,
+  PathKind as SchemaPathKind,
+  RemediationStatus as SchemaRemediationStatus,
+  Scope as SchemaScope,
+} from "@opencode-ai/schema/langlock/enums"
+import type { LangLockEventType as SchemaLangLockEventType } from "@opencode-ai/schema/langlock/event-types"
 
 // =============================================================================
 // Shared identifiers (wire shape: doc/arch/schemas/langlock/ids.cue)
@@ -50,73 +55,42 @@ export type AdvisoryId = string
 export type ExceptionId = string
 
 // =============================================================================
-// Closed enums (wire shape: doc/arch/schemas/langlock/enums.cue)
+// Closed enums — SOURCED from @opencode-ai/schema/langlock/* (T015, single vocabulary)
 // =============================================================================
 
-/**
- * The four scopes over which a Lang Lock policy resolves (FR5, C2). Default
- * scope for `langlock.*` keys is `project`; `global` is the copy-on-write
- * base authority; `root`/`session` identify the execution envelope the
- * resolved policy is stamped into, never a separate config authority.
- */
-export type Scope = "global" | "project" | "root" | "session"
+/** The four scopes over which a Lang Lock policy resolves; default `project` (FR5, C2). */
+export type Scope = SchemaScope
 
-/**
- * Where an effective value was sourced from; never implies a second store (FR7,
- * C2). The 4-member CUE authority (doc/arch/schemas/langlock/enums.cue) —
- * `managed` names an operator/managed override source.
- */
-export type Origin = "default" | "global" | "project" | "managed"
+/** Where an effective value was sourced from; the 4-member CUE authority (FR7, C2). */
+export type Origin = SchemaOrigin
 
-/**
- * V1 ships `advisory` only; `strict_deferred` names the future mode without
- * shipping it — strict blocking requires a separately approved policy and ADR
- * revision (FR16, FR22, C5, C14).
- */
-export type EnforcementMode = "advisory" | "strict_deferred"
-
-/**
- * Path-kind classification gating advisory eligibility; generic code is never a
- * detection target (FR20, C5). The 7-member CUE authority
- * (doc/arch/schemas/langlock/enums.cue): the four advisory-eligible prose kinds
- * plus `generic_code`, `exempt`, and `unknown`.
- */
-export type PathKind =
-  | "prose_markdown"
-  | "docs"
-  | "instruction_file"
-  | "commit_text"
-  | "generic_code"
-  | "exempt"
-  | "unknown"
-
-/** Bounded confidence bucket recorded content-free alongside a detection outcome (FR21). */
-export type ConfidenceBucket = "low" | "medium" | "high" | "unknown"
-
-/** Advisory detector provenance; content-free; the CUE authority (FR21, C5). */
-export type DetectorProvenance = "heuristic" | "statistical" | "declared" | "none"
-
-/** Advisory follow-up state; `none` is the default until an operator/authorized target acts (C5, C6). */
-export type RemediationStatus = "none" | "flagged" | "acknowledged" | "suppressed"
-
-/** Operator-owned exemption categories matched by the manifest before use (FR14, C16). */
-export type ExceptionCategory =
-  | "i18n_resource"
-  | "vendor_generated"
-  | "lockfile"
-  | "legal"
-  | "external_contract"
-  | "golden_fixture"
-  | "exact_string"
+/** V1 ships `advisory` only; `strict_deferred` names the deferred mode (FR16, FR22, C5, C14). */
+export type EnforcementMode = SchemaEnforcementMode
 
 /** The four independent language axes; changing `artifact` never alters the other three (FR2, C1). */
-export type Axis = "ui_locale" | "product_i18n" | "conversational" | "artifact"
+export type Axis = SchemaAxis
+
+/** Path-kind classification gating advisory eligibility; the 7-member CUE authority (FR20, C5). */
+export type PathKind = SchemaPathKind
+
+/** Bounded confidence bucket recorded content-free alongside a detection outcome (FR21). */
+export type ConfidenceBucket = SchemaConfidenceBucket
+
+/** Advisory detector provenance; content-free (FR21, C5). */
+export type DetectorProvenance = SchemaDetectorProvenance
+
+/** Advisory follow-up state; it never gates the write (FR21, C6, AC8). */
+export type RemediationStatus = SchemaRemediationStatus
+
+/** Operator-owned exemption categories matched by the manifest before use (FR14, C16). */
+export type ExceptionCategory = SchemaExceptionCategory
 
 /**
  * The advisory validation lifecycle (plan.md "State machines" → "Advisory
  * validation lifecycle", C5, C6). `exempt`, `not_eligible`, `compliant`, and
- * `unknown` are absorbing; `advisory_flagged` is followed by an operator-
- * driven `acknowledged` or `suppressed` outcome.
+ * `unknown` are absorbing; `advisory_flagged` is followed by an operator-driven
+ * `acknowledged` or `suppressed` outcome. Protocol-surface concept; not a CUE
+ * schema enum.
  */
 export type AdvisoryState =
   | "written"
@@ -131,9 +105,9 @@ export type AdvisoryState =
   | "suppressed"
 
 /**
- * Enforcement-envelope-stamping contexts (FR9, FR18, FR19, C4, C10). Every
- * value maps to a seam enumerated in plan.md "Packages and modules"; none is
- * a model-controlled tool argument.
+ * Enforcement-envelope-stamping contexts (FR9, FR18, FR19, C4, C10). Every value
+ * maps to a seam enumerated in plan.md "Packages and modules"; none is a
+ * model-controlled tool argument. Protocol-surface concept; not a CUE schema enum.
  */
 export type ArtifactContext =
   | "task_prompt"
@@ -146,16 +120,15 @@ export type ArtifactContext =
   | "commit_message"
 
 // =============================================================================
-// langlock.* event vocabulary (wire shape: doc/arch/schemas/langlock/events.cue)
+// langlock.* event vocabulary (wire shape: doc/arch/schemas/langlock/event-types.cue)
 // =============================================================================
 
 /**
  * Durable event classes: carry the EventV2 `durable {version, aggregate}`
- * annotation and replay through `EventV2.readAggregate` (C8). Policy-mutation
- * audit, override authorization outcomes, and exception-register/revoke audit;
- * queryable via `AdvisoryPort.list` and never coalesced or dropped. Reconciled
- * to the six CUE audit members (T015, doc/arch/schemas/langlock/events-audit.cue);
- * the advisory-lifecycle members are LIVE, not durable.
+ * annotation and replay through `EventV2.readAggregate` (C8). Policy-mutation,
+ * override authorization outcomes, and exception-use audit; never coalesced or
+ * dropped. Reconciled to the six CUE audit members (T015) — the advisory
+ * lifecycle members are LIVE, matching `@opencode-ai/schema/langlock/events-audit`.
  */
 export const DURABLE_LANGLOCK_EVENT_TYPES = [
   "langlock.policy_set",
@@ -169,7 +142,7 @@ export const DURABLE_LANGLOCK_EVENT_TYPES = [
 /**
  * Live event classes: omit `durable` (no sequence, no replay). Non-blocking
  * injection/reapply/stamping observations plus the advisory/detector/resolution
- * lifecycle deltas (C8, doc/arch/schemas/langlock/events-advisory.cue).
+ * lifecycle deltas (C8), matching `@opencode-ai/schema/langlock/events-advisory`.
  */
 export const LIVE_LANGLOCK_EVENT_TYPES = [
   "langlock.policy_injected",
@@ -186,8 +159,11 @@ export const LIVE_LANGLOCK_EVENT_TYPES = [
 export type DurableLangLockEventType = (typeof DURABLE_LANGLOCK_EVENT_TYPES)[number]
 export type LiveLangLockEventType = (typeof LIVE_LANGLOCK_EVENT_TYPES)[number]
 
-/** The 15-member closed `langlock.*` event vocabulary (C8). */
-export type LangLockEventType = DurableLangLockEventType | LiveLangLockEventType
+/**
+ * The 15-member closed `langlock.*` event vocabulary (C8), SOURCED from
+ * `@opencode-ai/schema/langlock/event-types` so protocol and schema never drift.
+ */
+export type LangLockEventType = SchemaLangLockEventType
 
 // =============================================================================
 // Policy and effective config (wire shape: doc/arch/schemas/langlock/policy.cue, effective.cue)
@@ -195,8 +171,8 @@ export type LangLockEventType = DurableLangLockEventType | LiveLangLockEventType
 
 /**
  * Redacted effective policy read model surfaced by `langlock.status`/
- * `langlock.show` and stamped into the execution envelope (FR7, FR35, C4,
- * C11). Never file text, prompt, or path content.
+ * `langlock.show` and stamped into the execution envelope (FR7, FR35, C4, C11).
+ * Never file text, prompt, or path content.
  */
 export interface LangLockPolicySummary {
   readonly enabled: boolean
@@ -260,29 +236,8 @@ export interface OperatorPrincipal {
 }
 
 // =============================================================================
-// LangLockPolicyPort — resolve / set / reset (C2, C3)
+// LangLockPolicyPort payloads — resolve / set / reset (C2, C3)
 // =============================================================================
-
-/**
- * Backs the reserved `langlock.status|show|set|reset` operator command
- * surface (C3, registered via Feature 007; Feature 004 supplies only these
- * typed domain implementations, ADR-0003). Global configuration is the base
- * authority; a project override applies only when `langlock.override` is
- * authorized and never relaxes the global hard-policy floor (FR5, FR34,
- * Security 1, AC5-AC6). Session, user, LLM, agent, plugin, MCP, and
- * custom-command mutation is prohibited (FR6) — this port has no unauthenticated
- * or LLM-reachable entry point.
- */
-export interface LangLockPolicyPort {
-  /** Backs `langlock.status` and `langlock.show` (show-effective alias, C3); redacted, content-free (FR7, FR35). */
-  readonly resolve: (input: PolicyResolveInput) => Effect.Effect<PolicyResolveOutput, LangLockPolicyError>
-
-  /** Backs `langlock.set`; scope/CAS/idempotency/audit; override-gated for `project` scope (FR34, C2, AC5-AC6). */
-  readonly set: (input: PolicySetInput) => Effect.Effect<PolicySetOutput, LangLockPolicyError>
-
-  /** Backs `langlock.reset`; reverts to the global/default policy; CAS/idempotency/audit (FR34). */
-  readonly reset: (input: PolicyResetInput) => Effect.Effect<PolicyResetOutput, LangLockPolicyError>
-}
 
 export interface PolicyResolveInput {
   readonly scope: Scope
@@ -328,21 +283,8 @@ export type LangLockPolicyError =
   | { readonly type: "not_implemented" }
 
 // =============================================================================
-// DetectionPort — classify (advisory-only, C5, C6)
+// DetectionPort payloads — classify (advisory-only, C5, C6)
 // =============================================================================
-
-/**
- * Post-write advisory detection confined to confidently classified prose path
- * kinds (Markdown, docs, instruction files, generated commit text); generic
- * source code is never a detection target in V1 and a detector failure/
- * unknown outcome never blocks the prompt, execution, or tool hot path
- * (FR16, FR20, FR21, C5, C6, NFR Availability). This port never gates,
- * blocks, or autotranslates a write (Out of Scope).
- */
-export interface DetectionPort {
-  /** Classify one model-authored artifact context for a content-free advisory signal. */
-  readonly classify: (input: DetectionClassifyInput) => Effect.Effect<DetectionClassifyOutput, DetectionError>
-}
 
 export interface DetectionClassifyInput {
   readonly pathKind: PathKind
@@ -364,26 +306,8 @@ export type DetectionError =
   | { readonly type: "not_implemented" }
 
 // =============================================================================
-// AdvisoryPort — record / list / ack (FR21, C5, C6)
+// AdvisoryPort payloads — record / list / ack (FR21, C5, C6)
 // =============================================================================
-
-/**
- * Content-free advisory persistence and remediation follow-up, backing the
- * `advisory_flagged -> acknowledged | suppressed` branch of the advisory
- * lifecycle (plan.md "State machines"). Never gates a write; TUI/App/CLI
- * surfacing and repeat-warning suppression are plan-owned with acceptance
- * hook AC8.
- */
-export interface AdvisoryPort {
-  /** Record a content-free outcome produced by `DetectionPort.classify` (FR21). */
-  readonly record: (input: AdvisoryRecordInput) => Effect.Effect<AdvisoryRecordOutput, AdvisoryError>
-
-  /** Bounded, cursor-paginated, redacted advisory history for an authorized scope. */
-  readonly list: (input: AdvisoryListInput) => Effect.Effect<AdvisoryListOutput, AdvisoryError>
-
-  /** Operator/authorized-target acknowledge or repeat-warning suppress on a flagged advisory (C5, C6). */
-  readonly ack: (input: AdvisoryAckInput) => Effect.Effect<AdvisoryAckOutput, AdvisoryError>
-}
 
 export interface AdvisoryRecordInput {
   readonly policyVersion: PolicyVersion
