@@ -1,3 +1,5 @@
+# opencode
+
 <p align="center">
   <a href="https://opencode.ai">
     <picture>
@@ -43,7 +45,23 @@
 
 ---
 
-### Installation
+## Index
+
+- [About](#about)
+- [Installation](#installation)
+- [Desktop App (BETA)](#desktop-app-beta)
+- [Agents](#agents)
+- [Architecture](#architecture)
+- [Documentation](#documentation)
+- [Contributing](#contributing)
+
+## About
+
+OpenCode 🤖 is the open source AI coding agent, built for the terminal and
+your desktop. It is spec-driven under the hood — see
+[Architecture](#architecture) for how the pieces fit together.
+
+## Installation
 
 ```bash
 # YOLO
@@ -64,7 +82,7 @@ nix run nixpkgs#opencode           # or github:anomalyco/opencode for latest dev
 > [!TIP]
 > Remove versions older than 0.1.x before installing.
 
-### Desktop App (BETA)
+## Desktop App (BETA)
 
 OpenCode is also available as a desktop application. Download directly from the [releases page](https://github.com/anomalyco/opencode/releases) or [opencode.ai/download](https://opencode.ai/download).
 
@@ -97,7 +115,7 @@ OPENCODE_INSTALL_DIR=/usr/local/bin curl -fsSL https://opencode.ai/install | bas
 XDG_BIN_DIR=$HOME/.local/bin curl -fsSL https://opencode.ai/install | bash
 ```
 
-### Agents
+## Agents
 
 OpenCode includes two built-in agents you can switch between with the `Tab` key.
 
@@ -112,11 +130,27 @@ This is used internally and can be invoked using `@general` in messages.
 
 Learn more about [agents](https://opencode.ai/docs/agents).
 
-### Documentation
+## Architecture
+
+OpenCode is spec-driven: the `doc/arch` corpus is the source of truth for
+decisions and active feature work, and the code follows it.
+
+```mermaid
+flowchart TD
+    CLI[CLI and TUI] --> Core[Core Agent Runtime]
+    Core --> Providers[Model Providers]
+    Core --> Tools[Tool Execution]
+    Core --> Telemetry[OpenTelemetry Export]
+```
+
+- [Architecture decision records](doc/arch/adr/)
+- [Spec-driven feature workspace](doc/arch/sdd/)
+
+## Documentation
 
 For more info on how to configure OpenCode, [**head over to our docs**](https://opencode.ai/docs).
 
-### Contributing
+## Contributing
 
 If you're interested in contributing to OpenCode, please read our [contributing docs](./CONTRIBUTING.md) before submitting a pull request.
 
