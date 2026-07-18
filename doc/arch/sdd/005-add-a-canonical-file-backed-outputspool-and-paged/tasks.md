@@ -413,7 +413,7 @@ sourcing its enum members from the schema modules so a single vocabulary is enfo
 
 ### Tests and validation (Phase 5)
 
-- [ ] T040 [S27] Add pure deterministic unit tests under `packages/core/test/outputspool/**`
+- [x] T040 [S27] Add pure deterministic unit tests under `packages/core/test/outputspool/**`
   for identity minting and stale-generation fencing (mint/reject/one-subtree), the cursor
   codec and integrity tag (round-trip/tamper/supersession/idle-TTL), the group state machine
   (legal/illegal transitions, abort preserves bytes), byte-offset paging (codepoint boundary,
@@ -422,7 +422,7 @@ sourcing its enum members from the schema modules so a single vocabulary is enfo
   blocks/legal-hold/bounded-batch), and reconciliation (sealed/corrupt/unknown/scan-limit),
   with deterministic ports and no I/O (AC2, AC3, AC4, AC5, AC6, AC7, AC8, AC11, AC16, AC17).
   Acceptance: `bun test packages/core` green.
-- [ ] T041 [S27] Add schema and protocol tests under `packages/schema/test/outputspool/**`
+- [x] T041 [S27] Add schema and protocol tests under `packages/schema/test/outputspool/**`
   and `packages/protocol/test/outputspool/**` asserting contract hygiene
   (annotate-before-check identifiers), the closed 11-member `output.*` vocabulary and the
   durable-versus-live split, envelope/preview/stat redaction (no prompt/result/payload/path/
@@ -430,14 +430,14 @@ sourcing its enum members from the schema modules so a single vocabulary is enfo
   `protocol/outputspool` parity against `contracts/ports.ts` reconciled to the schema
   modules (FR4, FR5, FR20, FR21, Security 5, C8, C20, C22, AC18). Acceptance: `bun test
   packages/schema` and `bun test packages/protocol` green.
-- [ ] T042 [S27] Add integration tests under `packages/opencode/test/outputspool/**` through
+- [x] T042 [S27] Add integration tests under `packages/opencode/test/outputspool/**` through
   the Feature 007 sandbox spool trees under `.dev/` for the FileSink batched writer plus
   tiered fsync, the positional page reader under concurrent append with bounded memory, the
   control-store committed-length ordering, the ref-aware retention sweeper, authorization
   re-evaluation, the C16 migration dual-read, and budgeted context-slice materialization with
   range recording (AC1, AC2, AC12, AC16, AC17, AC19, AC22). Acceptance: `bun test
   packages/opencode` green under the sandbox wrapper.
-- [ ] T043 [S27] Add fault-injection tests under `packages/opencode/test/outputspool/**`
+- [x] T043 [S27] Add fault-injection tests under `packages/opencode/test/outputspool/**`
   driving the crash matrix per C12 (crash before seal → committed bytes or corrupt/unknown;
   crash after seal before event → settling yields a sealed ref; reconciliation into
   sealed/open/aborted/corrupt/unknown) and the quota/ENOSPC matrix per C4 (ENOSPC on append,
@@ -445,7 +445,7 @@ sourcing its enum members from the schema modules so a single vocabulary is enfo
   reports lost bytes as success) through the injected filesystem port, mirroring the plan
   testing matrix (FR10, FR25, C4, C12, AC6, AC7, AC8, AC9, AC10). Acceptance: `bun test
   packages/opencode` green with every crash and fault point asserted.
-- [ ] T044 [S27] Add contract and end-to-end tests through the Feature 007 sandbox wrapper
+- [x] T044 [S27] Add contract and end-to-end tests through the Feature 007 sandbox wrapper
   covering the `output.*` IDs versus the existing reserved catalog (already at 1.3.0) with
   reserved-ID collision rejection, the CLI human plus JSON `op output` output with zero
   admin-time model calls, the TUI paged read/follow/tail panel with cursor reconnect and
