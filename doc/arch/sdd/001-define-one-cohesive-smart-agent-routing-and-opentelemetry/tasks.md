@@ -11,39 +11,39 @@ Feature 007 registry; none hold management authority of their own.
 
 ### Schema and protocol foundation
 
-- [ ] T001 Author `packages/schema/src/telemetry/config.ts` with the
+- [x] T001 Author `packages/schema/src/telemetry/config.ts` with the
   `TelemetryConfigSchema` from `data-model.md` (enabled, endpoint, transport,
   headers as SecretRef, tls, signals, queue, redact, resource_attributes,
   sampling clamped 0–1) and export `TelemetryConfig` plus `SecretRef`.
-- [ ] T002 Author `packages/schema/src/routing/budget.ts` with
+- [x] T002 Author `packages/schema/src/routing/budget.ts` with
   `BudgetPolicySchema`, `BudgetConsumptionSchema`, and
   `BudgetPolicySnapshotSchema`; pin `max_delegation_depth` to the constant 2 and
   export the three inferred types.
-- [ ] T003 Author `packages/schema/src/routing/config.ts` with
+- [x] T003 Author `packages/schema/src/routing/config.ts` with
   `RoutingConfigSchema` (enabled, mode, strict_gates, decision_model pool,
   role_pools as RolePoolID→ModelID[], fallback floor_role, capability block,
   budget reference, hierarchy max_depth constant 2, orchestration_only) and the
   `RolePoolID`, `TaskClass`, `RoutingProfile`, `TaskEffort`, `ReasoningEffort`,
   `ExecutionBoundary` type aliases.
-- [ ] T004 Author `packages/schema/src/routing/decision.ts` with
+- [x] T004 Author `packages/schema/src/routing/decision.ts` with
   `GateResultSchema`, `CandidateRecordSchema`, `RankedCandidateSchema`,
   `AuthContextSnapshotSchema`, and the immutable `RoutingDecisionSchema` carrying
   id (ULID), version, session/turn IDs, task_fingerprint, classification fields,
   two-stage pipeline fields, gates, decision-model fields, ranking, budget
   snapshot, catalog/policy versions, auth context, execution boundary, fallback
   state, and metadata.
-- [ ] T005 Author `packages/schema/src/routing/capability.ts` with
+- [x] T005 Author `packages/schema/src/routing/capability.ts` with
   `ToolCapabilityDimensionsSchema` (seven nullable tool-call dimensions),
   `CapabilitySourceSchema`, `CapabilityRecordSchema` (source, confidence clamped
   0–1, ttl, scope), and `CapabilityMismatchSchema` with the three-way outcome.
-- [ ] T006 Author `packages/schema/src/routing/events.ts` with
+- [x] T006 Author `packages/schema/src/routing/events.ts` with
   `HierarchyRoleSchema` and the `RoutingEventSchema` tagged union covering
   routing.decision, routing.fallback, hierarchy.dispatch, hierarchy.validation,
   hierarchy.escalation, capability.mismatch, todo.initialized, and
   todo.completion_blocked variants.
-- [ ] T007 Author `packages/schema/src/tui/smart-state.ts` with the
+- [x] T007 Author `packages/schema/src/tui/smart-state.ts` with the
   `SmartIndicatorStateSchema` active/inactive union and its inferred type.
-- [ ] T008 Mirror the routing and telemetry command-payload contracts into
+- [x] T008 Mirror the routing and telemetry command-payload contracts into
   `packages/protocol/src/routing/` and `packages/protocol/src/telemetry/` so the
   wire types match `contracts/ports.ts` request/response shapes for evaluate,
   explain, test, capability inspect, status, and the telemetry surface.

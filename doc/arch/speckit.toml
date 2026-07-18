@@ -96,6 +96,24 @@ specScopeGlobs = [
   "packages/opencode/git",
   "packages/tui/src/component/prompt/cwd.ts",
   "packages/opencode/test/config/plugin.test.ts",
+
+  # Feature 001 implement-phase paths (T001-T039): schema/protocol modules,
+  # their test suites, CLI Spec-tree registration, and observability tests.
+  "packages/schema/src/routing/**",
+  "packages/schema/src/telemetry/**",
+  "packages/schema/src/tui/**",
+  "packages/schema/src/index.ts",
+  "packages/schema/test/**",
+  "packages/protocol/src/routing/**",
+  "packages/protocol/src/telemetry/**",
+  "packages/protocol/src/api.ts",
+  "packages/protocol/test/**",
+  "packages/cli/src/commands/**",
+  "packages/cli/src/index.ts",
+  "packages/core/test/observability/**",
+  "packages/opencode/test/routing/**",
+  "packages/opencode/test/telemetry/**",
+  "packages/tui/test/**",
 ]
 
 # Waivers for intentional near-empty files (warnings only; errors are never
