@@ -49,6 +49,8 @@ import { JobPersistence } from "@/jobs/persistence"
 import { LangLockStackWiring } from "./langlock/stack-wiring"
 import { LangLockBackendLive } from "./langlock/backend-live"
 import { LangLockPersistence } from "@/langlock/persistence"
+import { OutputSpoolStackWiring } from "./outputspool/stack-wiring"
+import { OutputSpoolBackendLive } from "./outputspool/backend-live"
 import { createDispatcher, type Dispatcher } from "./application/dispatcher"
 import type { MutationPorts } from "./application/mutation"
 import { createFlockLockPort } from "./application/ports/lock-port"
@@ -369,11 +371,24 @@ export async function createLiveOperatorStack(input: CreateLiveOperatorStackInpu
   })
   const langLockWiring = LangLockStackWiring.createLangLockDomainWiring({ backend: langLockBackend })
 
+  // === Feature 005 — outputspool domain port composition ====================
+  // The typed `output.*` operator port over the Feature 005 application adapters.
+  // The live spool control store / page reader / retention sweeper are not
+  // reachable from the operator AppRuntime in this wave, so the honest backend
+  // returns typed capability gaps for the reads/admin ops and cross-project
+  // deny-by-default for export/share (see backend-live.ts and the Feature 005
+  // tasks.md T037 note). Feature 007 stays the sole command-registration
+  // authority — this override replaces the not_implemented stub and adds no ids
+  // (the reserved output.* ids already live in the catalog at 1.3.0).
+  const outputSpoolBackend = OutputSpoolBackendLive.createLiveOutputSpoolBackend({})
+  const outputSpoolWiring = OutputSpoolStackWiring.createOutputSpoolDomainWiring({ backend: outputSpoolBackend })
+
   const domainPorts = wireDomainPorts(
     {
       ...lifecycleWiring.ports,
       ...jobsWiring.ports,
       ...langLockWiring.ports,
+      ...outputSpoolWiring.ports,
       routing: createRoutingDomainPort(routingService),
     },
     { dnsResolver },
@@ -417,6 +432,7 @@ export async function createLiveOperatorStack(input: CreateLiveOperatorStackInpu
     dispose: () => {
       lifecycleWiring.dispose()
       jobsWiring.dispose()
+      outputSpoolWiring.dispose()
       maintenance.dispose()
     },
   }
