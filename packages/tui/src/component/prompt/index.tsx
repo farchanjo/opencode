@@ -60,6 +60,7 @@ import { usePromptMove } from "./move"
 import { readLocalAttachment } from "./local-attachment"
 import { useLocation } from "../../context/location"
 import { useOperatorSlash } from "../../context/operator-slash"
+import { INACTIVE_SMART_ROUTING_SIGNAL, useSmartIndicator } from "../../smart"
 
 registerOpencodeSpinner()
 
@@ -1402,6 +1403,15 @@ export function Prompt(props: PromptProps) {
     return !!current
   })
 
+  const smartFallbackText = createMemo(() =>
+    store.mode === "shell" ? "Shell" : Locale.titlecase(local.agent.current()?.name ?? ""),
+  )
+  // No live brain-mode/Smart-Routing signal is wired into the TUI yet
+  // (that lands with the SmartPort adapter integration); the constant
+  // inactive signal keeps the indicator honest — fallback label only —
+  // until that wiring exists.
+  const smartLabel = useSmartIndicator(() => INACTIVE_SMART_ROUTING_SIGNAL, smartFallbackText)
+
   const agentMetaAlpha = createFadeIn(() => !!local.agent.current(), animationsEnabled)
   const modelMetaAlpha = createFadeIn(() => !!local.agent.current() && store.mode === "normal", animationsEnabled)
   const variantMetaAlpha = createFadeIn(
@@ -1546,9 +1556,17 @@ export function Prompt(props: PromptProps) {
                 <Show when={local.agent.current()} fallback={<box height={1} />}>
                   {(agent) => (
                     <>
-                      <text fg={fadeColor(highlight(), agentMetaAlpha())}>
-                        {store.mode === "shell" ? "Shell" : Locale.titlecase(agent().name)}
+                      <text
+                        fg={fadeColor(
+                          smartLabel().tone === "critical" ? theme.error : highlight(),
+                          agentMetaAlpha(),
+                        )}
+                      >
+                        {smartLabel().text}
                       </text>
+                      <Show when={smartLabel().detail}>
+                        {(detail) => <text fg={fadeColor(theme.textMuted, agentMetaAlpha())}>{detail()}</text>}
+                      </Show>
                       <Show when={store.mode === "normal" && local.permission.mode === "auto"}>
                         <text fg={fadeColor(theme.textMuted, agentMetaAlpha())}>auto</text>
                       </Show>
