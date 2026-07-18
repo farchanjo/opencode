@@ -50,82 +50,82 @@ Feature 007 registry; none hold management authority of their own.
 
 ### Telemetry foundation (Phase 1)
 
-- [ ] T009 Extend `packages/core/src/observability/otlp.ts` to export metrics and
+- [x] T009 Extend `packages/core/src/observability/otlp.ts` to export metrics and
   structured logs alongside traces, add a bounded export queue with configurable
   capacity and batch size, and apply the ADR-0001 cardinality allowlist so
   over-budget label values map to `other`.
-- [ ] T010 Add `packages/core/src/observability/telemetry-instruments.ts`
+- [x] T010 Add `packages/core/src/observability/telemetry-instruments.ts`
   defining the concept spans (`routing.evaluate`, `decision_model`,
   `hard_gates`, `rank`, `task.execute`, `llm.request`, `tool.execute`,
   `fallback`) and the bounded-cardinality metric instruments (routing decision
   latency, hard-gate rejection count, authorized-candidate count, queue depth,
   export drops, exporter errors).
-- [ ] T011 Implement the async bounded export queue drop and backpressure policy
+- [x] T011 Implement the async bounded export queue drop and backpressure policy
   in `packages/core/src/observability/otlp.ts`, emitting queue-depth,
   queue-capacity, and drop-reason signals and never blocking the hot path.
-- [ ] T012 Implement privacy redaction defaults in
+- [x] T012 Implement privacy redaction defaults in
   `packages/opencode/src/routing/application/telemetry-service.ts` that strip
   prompts, secrets, personal paths, file content, and tool payloads, with
   per-signal enablement gates from `TelemetryConfig`.
-- [ ] T013 Implement `TelemetryPort` in
+- [x] T013 Implement `TelemetryPort` in
   `packages/opencode/src/routing/application/telemetry-service.ts` (status,
   enable, disable, show, configure, test signal-or-connectivity, flush) reading
   and writing config through the Feature 007 Config.Service adapter and resolving
   secrets through the SecretPort; all reads offline-capable and zero-cost.
-- [ ] T014 Add the OTLP outbound adapter at
+- [x] T014 Add the OTLP outbound adapter at
   `packages/opencode/src/routing/adapters/outbound/otlp-adapter.ts` wiring the
   telemetry service to the extended `otlp.ts` exporter with the bounded queue.
 
 ### Routing domain engine (Phase 2)
 
-- [ ] T015 Implement `packages/opencode/src/routing/domain/classifier.ts`
+- [x] T015 Implement `packages/opencode/src/routing/domain/classifier.ts`
   producing a `TaskClass` and `RoutingProfile` (`direct_worker` or `manager`)
   from the structured evaluation signals in `hierarchy-flow.md` (domain count,
   independent units, mutation/risk, ambiguity, context size, expected tools,
   parallelism, security/migration), deterministically and with no model call.
-- [ ] T016 Implement
+- [x] T016 Implement
   `packages/opencode/src/routing/domain/capability-resolver.ts` resolving the
   seven tool-call dimensions from canonical catalog metadata, applying validated
   override overlays with source/confidence/TTL, and enforcing the conservative
   unknown policy (`deny` treats null dimensions as unmet).
-- [ ] T017 Implement `packages/opencode/src/routing/domain/routing-evaluator.ts`
+- [x] T017 Implement `packages/opencode/src/routing/domain/routing-evaluator.ts`
   hard-gate evaluation: reject candidates per unmet capability dimension, keep
   only the authorized set, and record `GateResult` reasons per candidate.
-- [ ] T018 Extend `routing-evaluator.ts` with deterministic two-stage ranking
+- [x] T018 Extend `routing-evaluator.ts` with deterministic two-stage ranking
   (task → specialist agent → executor model) over the authorized set only,
   adding skill and effort dimensions and a deterministic tie-break recorded in
   the decision.
-- [ ] T019 Implement the decision-model selection step in `routing-evaluator.ts`
+- [x] T019 Implement the decision-model selection step in `routing-evaluator.ts`
   that picks from the authorized healthy pool without recursion, records
   structured decision inputs and outputs with no raw prompts, and skips the model
   when the bypass policy is met.
-- [ ] T020 Implement `packages/opencode/src/routing/domain/routing-decision.ts`
+- [x] T020 Implement `packages/opencode/src/routing/domain/routing-decision.ts`
   as the immutable decision record plus the atomic commit protocol (temp page →
   journal flag → atomic rename) with the `(session_id, turn_id,
   task_fingerprint)` idempotency key.
-- [ ] T021 Implement fallback and execution-boundary classification in
+- [x] T021 Implement fallback and execution-boundary classification in
   `packages/opencode/src/routing/domain/routing-evaluator.ts`: classify
   safe/retryable/mutation_risky, retry only authorized compatible candidates,
   never blind-repeat a mutation-risky candidate, and emit explicit
   `no_authorized_candidate` errors.
-- [ ] T022 Implement `packages/opencode/src/routing/domain/budget-policy.ts`
+- [x] T022 Implement `packages/opencode/src/routing/domain/budget-policy.ts`
   enforcing Context, Turn and Delegation Budget hard maximums (max_turns,
   context/output token and byte caps, max_workers, max_delegation_depth,
   retrieval/rerank/skill limits, time/cost/token budgets, retry and validation
   depth, escalation threshold) with explicit blocked/escalation/error on exceed
   and no silent truncation.
-- [ ] T023 Implement
+- [x] T023 Implement
   `packages/opencode/src/routing/domain/hierarchy-dispatcher.ts` producing
   Architect → Manager → Worker dispatch envelopes at max depth 2, enforcing
   orchestration-only Architect/Manager, admission-controlled fanout
   (`min(requested, max_workers, cost_budget, token_budget)`), and reused
   evidence/OutputRefs/lineage on escalation.
-- [ ] T024 Implement `packages/opencode/src/routing/domain/todo-authority.ts` as
+- [x] T024 Implement `packages/opencode/src/routing/domain/todo-authority.ts` as
   the session-owned Todo aggregate (exactly one per goal-bearing Session),
   non-empty snapshot gate before dispatch, completion gate on required items plus
   version plus validation step, durable snapshot outside message prose, and
   rehydration after compaction or restart.
-- [ ] T025 Add `packages/opencode/src/routing/domain/errors.ts` with the typed
+- [x] T025 Add `packages/opencode/src/routing/domain/errors.ts` with the typed
   routing errors mirrored from `contracts/ports.ts` (`no_authorized_candidate`,
   `catalog_mismatch`, `unavailable`, `invalid_argument`, `not_implemented`).
 
