@@ -78,6 +78,10 @@ Acceptance criteria live as prioritized scenarios in each feature `spec.md`.
 - **Task process lifecycle** — the ten-state Process Table state machine is modeled
   in [task-lifecycle statechart](../statecharts/task-lifecycle.md) (created →
   queued → waiting/running → cancelling/completed/failed/zombie/unknown).
+- **Scheduled job occurrence lifecycle** — the occurrence claim state machine is
+  modeled in [job-occurrence statechart](../statecharts/job-occurrence.md) (due →
+  claimed → admitted → executing → terminal, with misfire/overlap/reconciliation
+  branches).
 
 ## Phase 2 deferred (explicit)
 

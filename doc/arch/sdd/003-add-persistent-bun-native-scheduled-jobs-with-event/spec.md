@@ -2,7 +2,7 @@
 id: 019f698e-8b57-7851-84d1-8f09a10d08e2
 number: 003
 slug: add-persistent-bun-native-scheduled-jobs-with-event
-status: clarified
+status: planned
 created_at: 2026-07-16T06:12:57.303777Z
 ---
 
@@ -461,7 +461,7 @@ local authority remains usable during outage.
 | Misfire/overlap/admission safety   | FR15–FR19                 | 3, 5, 12, 21            | 1     |
 | Authorized async notifications     | FR20–FR27                 | 7–10, 17                | 1–2   |
 | Operator management                | FR28–FR32                 | 14, 17                  | 2     |
-| OTEL and Process Table integration | NFRs, FR8–FR14, FR43–FR48 | 11–12, 15–16, 18        | 1–2   |
+| OTEL and Process Table integration | NFRs, FR8–FR14, FR17–FR19 | 11–12, 15–16, 18        | 1–2   |
 | Security and privacy               | Security Requirements     | 8–10, 16–20             | 1–2   |
 
 ## Clarifications

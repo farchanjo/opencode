@@ -32,6 +32,54 @@ requirements and decisions; it is not an ADR and does not authorize implementati
   `https://bun.com/docs/runtime/timers` on 2026-07-16 (HTTP 404). No timer API claim
   is derived from that URL.
 
+## Local runtime and type-declaration verification (2026-07-18)
+
+This subsection records a direct, reproducible verification of the `Bun.cron` surface on
+the installed toolchain, independent of the official documentation. The finding is that
+`Bun.cron` **exists** at both the runtime and the type-declaration level in this
+repository, so no pivot to an interval-only scheduler is required; the C1 typed capability
+gap applies narrowly to the OS-level form's per-platform semantics, not to the existence of
+the in-process API.
+
+- Runtime probe (`bun --version` reports `1.3.14`): `typeof Bun.cron === "function"`;
+  `Object.getOwnPropertyNames(Bun.cron)` is `["length", "name", "remove", "parse"]`; a
+  handle constructed by `Bun.cron("*/5 * * * *", () => {})` has prototype members
+  `["cron", "ref", "stop", "unref"]`. The in-process callback form and the `stop`/`ref`/
+  `unref` handle are therefore present in the installed runtime.
+- Type declarations ship in `bun-types@1.3.13` (pinned transitively via `@types/bun@1.3.13`
+  in [`bun.lock:2833`](../../../../bun.lock#L2833) and [`bun.lock:3261`](../../../../bun.lock#L3261)),
+  materialized at `node_modules/.bun/bun-types@1.3.13/node_modules/bun-types/bun.d.ts`.
+  The `Bun` namespace declares:
+  - the in-process overload
+    `(schedule: CronWithAutocomplete, handler: (this: CronJob) => unknown): CronJob`
+    (`bun.d.ts:7586`);
+  - the `CronJob` handle `{ readonly cron: string; stop(): CronJob; ref(): CronJob;
+    unref(): CronJob }` extending `Disposable` (`bun.d.ts:7486`);
+  - the OS-level overload
+    `(path: string, schedule: CronWithAutocomplete, title: string): Promise<void>`
+    (`bun.d.ts:7672`), with `remove(title: string): Promise<void>` (`bun.d.ts:7684`);
+  - `parse(expression: CronWithAutocomplete, relativeDate?: Date | number): Date | null`
+    returning the next matching `Date` in UTC, or `null` when no match exists within eight
+    years (`bun.d.ts:7711`);
+  - `CronWithAutocomplete` as a 5-field expression or nickname (`@hourly`/`@daily`/...)
+    validated by the runtime parser (`bun.d.ts:7457`); `CronController` carries `cron` and
+    OS-level `scheduledTime` (`bun.d.ts:7438`).
+- `Bun.cron.parse` is the source for deterministic next-occurrence computation in UTC. The
+  domain occurrence layer (C4) wraps it behind a `NextOccurrencePort` so IANA-timezone
+  normalization and DST/leap/duplicate-time policy are computed and testable with a fake
+  clock, rather than relying on the runtime's UTC interpretation alone.
+- The documented in-process no-overlap guarantee (the next fire waits for the handler's
+  returned Promise) is consistent with the callback overload's return-type contract and is
+  the basis for the C3 `forbid` default; the OS-level overload runs a separate module in a
+  distinct process and is out of scope for V1 (C2). Under `bun --hot`, in-process cron jobs
+  are stopped before the module graph is re-evaluated (`bun.d.ts` cron doc comment), which
+  the adapter accounts for during development but does not treat as durability.
+- Honesty boundary: no `while true`/`sleep` polling loop and no bespoke timer scheduler are
+  introduced; the confirmed `Bun.cron` in-process function and `Bun.cron.parse` cover the
+  V1 requirement. Where a platform does not support a requested OS-level capability, the
+  adapter exposes a typed capability gap and validation fails before registration (FR5,
+  AC22) — it never invents an absent API.
+
 ## Current-core evidence
 
 - TaskTool uses `BackgroundJob.Service`, Session, config, scope, and prompt execution
@@ -94,3 +142,5 @@ does not restate Feature 007 requirements.
 - [ADR-0001 — OpenTelemetry telemetry foundation](../../adr/0001-opentelemetry-telemetry-foundation.md)
 - [ADR-0002 — Core Smart Agent Routing](../../adr/0002-core-smart-agent-routing.md)
 - [ADR-0003 — Operator Control Plane and native command authority](../../adr/0003-operator-control-plane-and-native-command-authority.md)
+- [ADR-0004 — Scheduled Job Runtime and Async Notification Channel](../../adr/0004-scheduled-job-runtime-and-async-notification-channel.md)
+- [Feature 003 implementation plan](plan.md)
