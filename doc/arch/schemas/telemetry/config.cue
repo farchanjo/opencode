@@ -7,7 +7,29 @@ package telemetry.config
 
 // SecretRef is an opaque reference resolved via Feature 007 SecretPort.
 // Never store the actual secret value.
-#SecretRef: string
+//
+// Canonical opaque encoding (parsed only by the SecretPort adapter, never by
+// telemetry): "backend:name" or "backend:name@vN", where backend is a
+// SecretPort backend id, name is the secret name, and the optional "@vN" pins
+// an integer version >= 1. Examples: "keychain:otlp-token",
+// "env-ref:OTLP_HEADER@v3". The empty string denotes "no reference configured"
+// (e.g. an unset TLS cert while TLS is disabled).
+#SecretRef: string & =~"^(|[A-Za-z0-9._-]+:[^@]+(@v[1-9][0-9]*)?)$"
+
+// CardinalityBudget bounds the distinct values admitted per dynamic metric
+// label dimension before collapsing to "other" (uint, > 0).
+#CardinalityBudget: uint & >0
+
+// SignalShaping groups the volume/precision knobs that shape exported signal
+// data: the sampling ratio and the dynamic-label cardinality budget.
+#SignalShaping: {
+	// Sampling ratio: 0.0 = no signals, 1.0 = everything.
+	// Constrained to [0.0, 1.0] — no bare float.
+	sampling: float & >=0.0 & <=1.0
+
+	// Per-dimension distinct-value budget for dynamic metric labels.
+	cardinality_budget: #CardinalityBudget
+}
 
 // Transport protocol for OTLP export.
 #Transport: "http/protobuf" | "grpc"
@@ -90,6 +112,9 @@ package telemetry.config
 		// Exclude file system paths from all signals.
 		file_paths: bool
 
+		// Exclude file content (bodies, diffs, snippets) from all signals.
+		file_content: bool
+
 		// Exclude tool call payloads from all signals.
 		tool_payloads: bool
 	}
@@ -97,7 +122,6 @@ package telemetry.config
 	// OpenTelemetry resource attributes attached to every signal.
 	resource_attributes: { [ADDRESS]: string }
 
-	// Sampling ratio: 0.0 = no signals, 1.0 = everything.
-	// Constrained to [0.0, 1.0] — no bare float.
-	sampling: float & >=0.0 & <=1.0
+	// Sampling ratio and dynamic-label cardinality budget.
+	shaping: #SignalShaping
 }

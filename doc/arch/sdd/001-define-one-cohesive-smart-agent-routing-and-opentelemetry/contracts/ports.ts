@@ -138,6 +138,7 @@ export interface RoutingStatusOutput {
 export type RoutingError =
   | { type: "no_authorized_candidate"; reason: string }
   | { type: "catalog_mismatch"; decisionId: string; catalogVersion: string }
+  | { type: "mutation_risky"; reason: string; agentId: string; modelId: string }
   | { type: "unavailable"; reason: string }
   | { type: "invalid_argument"; field: string; reason: string }
   | { type: "not_implemented" }

@@ -4,11 +4,13 @@
 
 package routing.budget
 
-// ConsumptionThroughput records turn and token spend.
+// ConsumptionThroughput records turn, token and byte spend.
 #ConsumptionThroughput: {
 	turns_used:          uint & >=0
 	context_tokens_used: uint & >=0
 	output_tokens_used:  uint & >=0
+	context_bytes_used:  uint & >=0
+	output_bytes_used:   uint & >=0
 }
 
 // ConsumptionConcurrency records worker and delegation spend.
@@ -18,9 +20,11 @@ package routing.budget
 	delegation_depth_used: uint & >=0
 }
 
-// ConsumptionRetrieval records retrieval and skill-context spend.
+// ConsumptionRetrieval records retrieval, rerank and skill-context spend.
 #ConsumptionRetrieval: {
 	retrieval_chunks_used: uint & >=0
+	rerank_chunks_used:    uint & >=0
+	skill_chunks_used:     uint & >=0
 	skill_tokens_used:     uint & >=0
 }
 

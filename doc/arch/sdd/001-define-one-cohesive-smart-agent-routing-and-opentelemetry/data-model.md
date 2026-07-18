@@ -50,6 +50,17 @@ export type TelemetryConfig = Schema.Schema.Type<typeof TelemetryConfigSchema>
 export type SecretRef = string // resolved via Feature 007 SecretPort
 ```
 
+**`SecretRef` canonical encoding.** A `SecretRef` is an opaque string that the
+SecretPort adapter — and only that adapter — parses. Its canonical form is
+`backend:name` or `backend:name@vN`: `backend` is a SecretPort backend id
+(`keychain` or `env-ref`), `name` is the secret name, and the optional `@vN`
+suffix pins an integer version `>= 1`. The empty string denotes "no reference
+configured" (for example an unset TLS cert while TLS is disabled). Both the CUE
+schema (`config.cue #SecretRef`) and the TypeScript schema constrain the string
+to this pattern. The SecretPort keys on `{backend, name, version}`; the encoding
+projects onto that key by splitting on the first `:` and the trailing `@vN`.
+Legacy JSON (`{backend, name, version}`) is accepted for backward compatibility.
+
 ---
 
 ## Routing Configuration (Phase 2)
@@ -436,26 +447,49 @@ export type SmartIndicatorState = Schema.Schema.Type<typeof SmartIndicatorStateS
 
 ---
 
-## Open Parameters
+## Resolved Parameters (implement phase)
 
-The following field details remain open in clarification and will be resolved
-before the tasks phase:
+The implement phase fixes each parameter as follows. These decisions are
+authoritative for the routing and telemetry domain code.
 
-- Exact numeric defaults for `BudgetPolicy` fields per scope/profile/role.
-- Exact threshold values for `Classifier` (domain count, independent work units,
-  mutation/risk, ambiguity, context size, expected tools, parallelism,
-  security/migration/external effects).
-- Exact schema for `RolePoolID` names and pool configuration surface.
-- Exact validation acceptance criteria and confidence floors for Worker/Manager/
-  Architect validation steps.
-- Exact `TodoRef`/`TodoVersion` field structure (stable item ID, objective, typed
-  status/priority, owner Session/role, result/evidence/OutputRefs, aggregate
-  outcome, timestamps).
-- Exact CAS conflict resolution for concurrent Todo updates.
-- Exact failure/cancel/stale status model for Todo aggregate.
-- Exact completion gate override authorization/audit/recovery rules.
-- Exact quantitative limits (max item counts, objective lengths, summary bounds)
-  for Todo.
-
-These open parameters do not block the plan; they are resolved in the tasks phase
-with test hooks before implementation begins.
+- **Classifier thresholds and weights**: the domain module exports the tuning
+  surface as data under `DEFAULT_CLASSIFIER_THRESHOLDS` (domain count,
+  independent work units, mutation/risk, ambiguity, context size, expected
+  tools, parallelism, security/migration/external effects). Configuration
+  overrides the exported defaults without touching the algorithm.
+- **Capability layer precedence**: an `override` layer wins over an `observed`
+  layer, which wins over the `catalog` baseline. Resolution walks the layers in
+  `override > observed > catalog` order and takes the first present value per
+  dimension.
+- **Decision-model bypass policy**: the pipeline skips the decision model when
+  fewer than two candidates survive the hard gates (nothing to decide) or when
+  the caller forces bypass. A bypassed decision records structured null
+  decision-model fields, never a fabricated model call.
+- **`BudgetPolicy` numeric defaults**: each scope/profile/role resolves to a
+  concrete `BudgetPolicy` snapshot at decision time. The schema constraints in
+  `budget.cue` bound every field; profile and role tables supply the numeric
+  values captured in the persisted `BudgetPolicySnapshot`.
+- **`RolePoolID` names and pool surface**: role pools key on the canonical role
+  ids (`architect`, `manager`, `worker`) plus worker size/speed suffixes, each
+  mapping to an ordered `ModelID` list resolved from `Catalog.Service`.
+- **Validation acceptance criteria**: Worker, Manager and Architect validation
+  steps gate on the recorded confidence against the role confidence floor;
+  a below-floor outcome reclassifies to the Manager path rather than passing.
+- **`TodoRef`/`TodoVersion` structure**: a Todo aggregate carries a stable item
+  id, objective, typed status/priority, owner Session/role, result/evidence
+  `OutputRefs`, aggregate outcome and timestamps. `TodoVersion` is an opaque
+  monotonic version token.
+- **Todo status vocabulary**: the closed set is `pending | in_progress |
+  completed | cancelled`. Concurrent updates use compare-and-set on the
+  `TodoVersion` token: an update applies only when its expected version equals
+  the current version, and a mismatch fails the update for the caller to retry.
+- **Todo lifecycle**: `cancelled` is the terminal state for abandoned or stale
+  work; the completion gate blocks aggregate completion while any item is
+  `pending` or `in_progress`. Completion-gate overrides require an operator
+  principal, an audit record and explicit recovery.
+- **Todo quantitative limits**: item counts, objective lengths and summary
+  bounds derive from the active `BudgetPolicy` retrieval and output limits.
+- **Telemetry backpressure**: the bounded export queue applies drop-oldest
+  eviction under the `backpressure` policy — it evicts the oldest buffered
+  signal to admit the newest and never blocks the hot path; the `drop` policy
+  rejects the incoming signal instead.
