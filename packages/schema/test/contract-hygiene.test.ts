@@ -6,9 +6,17 @@ import { Model } from "../src/model"
 import { Project } from "../src/project"
 import { Pty } from "../src/pty"
 import { Question } from "../src/question"
+import { Budget } from "../src/routing/budget"
+import { Capability } from "../src/routing/capability"
+import { RoutingConfig } from "../src/routing/config"
+import { Decision } from "../src/routing/decision"
+import { Events } from "../src/routing/events"
+import { Ids } from "../src/routing/ids"
 import { Session } from "../src/session"
 import { SessionEvent } from "../src/session-event"
 import { SessionTodo } from "../src/session-todo"
+import { Config as TelemetryConfig } from "../src/telemetry/config"
+import { SmartState } from "../src/tui/smart-state"
 import { optional } from "../src/schema"
 
 describe("contract hygiene", () => {
@@ -47,6 +55,84 @@ describe("contract hygiene", () => {
       Project.Info,
       Pty.Info,
       Session.ListAnchor,
+      Ids.Reason,
+      Ids.Requirement,
+      Capability.Reason,
+      Capability.Requirement,
+      Capability.ToolCallDimensions,
+      Capability.Identity,
+      Capability.Confidence,
+      Capability.Assessment,
+      Capability.Freshness,
+      Capability.Record,
+      Capability.Mismatch,
+      Decision.GatePassed,
+      Decision.CandidateRejected,
+      Decision.TieBreakApplied,
+      Decision.FallbackAttempted,
+      Decision.Offline,
+      Decision.GateResult,
+      Decision.GateList,
+      Decision.SkillList,
+      Decision.CandidateIdentity,
+      Decision.CandidateProfile,
+      Decision.CandidateOutcome,
+      Decision.CandidateRecord,
+      Decision.RankedCandidate,
+      Decision.RankingList,
+      Decision.AuthContextSnapshot,
+      Decision.ExpectedTools,
+      Decision.InputStructure,
+      Decision.InputRisk,
+      Decision.InputConcurrency,
+      Decision.DecisionInputs,
+      Decision.DecisionOutput,
+      Decision.DecisionContext,
+      Decision.DecisionClassification,
+      Decision.DecisionSelection,
+      Decision.DecisionEvaluation,
+      Decision.DecisionAccounting,
+      Decision.DecisionLifecycle,
+      Decision.RoutingDecision,
+      Events.DecisionCorrelation,
+      Events.EventClassification,
+      Events.EventSelection,
+      Events.DispatchLineage,
+      Events.DispatchFanout,
+      Events.TodoPointer,
+      Events.EvidenceRefs,
+      Events.RoutingDecisionEvent,
+      Events.RoutingFallbackEvent,
+      Events.HierarchyDispatchEvent,
+      Events.HierarchyValidationEvent,
+      Events.HierarchyEscalationEvent,
+      Events.CapabilityMismatchEvent,
+      Events.TodoInitializedEvent,
+      Events.TodoCompletionBlockedEvent,
+      Events.RoutingEvent,
+      Budget.Limits,
+      Budget.Concurrency,
+      Budget.Retrieval,
+      Budget.Cost,
+      Budget.Resilience,
+      Budget.Policy,
+      Budget.Scope,
+      Budget.PolicySnapshot,
+      Budget.ConsumptionThroughput,
+      Budget.ConsumptionConcurrency,
+      Budget.ConsumptionRetrieval,
+      Budget.ConsumptionCost,
+      Budget.ConsumptionResilience,
+      Budget.Consumption,
+      RoutingConfig.Activation,
+      RoutingConfig.Models,
+      RoutingConfig.Enforcement,
+      RoutingConfig.Info,
+      TelemetryConfig.SecretRef,
+      TelemetryConfig.ExportTarget,
+      TelemetryConfig.TelemetryConfig,
+      SmartState.Active,
+      SmartState.Inactive,
     ].map((schema) => schema.ast.annotations?.identifier)
 
     expect(identifiers.every((identifier) => typeof identifier === "string")).toBe(true)
