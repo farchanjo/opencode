@@ -493,3 +493,49 @@ authoritative for the routing and telemetry domain code.
   eviction under the `backpressure` policy — it evicts the oldest buffered
   signal to admit the newest and never blocks the hot path; the `drop` policy
   rejects the incoming signal instead.
+- **`TaskAnalyzer` deterministic port**: the model-free derivation of
+  `DecisionInputs`, hard-gate `DimensionRequirements` and `RankingCriteria` from
+  a task description is a pure, deterministic heuristic (composition-root
+  `task-analyzer.ts`) — zero model calls, no clock, no randomness. Documented
+  lexicons drive each signal: domain families → `domain_count`; enumeration
+  markers (commas, `and`, newlines, bullets, `then`) → `independent_units`;
+  description byte length → `context_size`; verb→tool keyword maps →
+  `expected_tools`/`requiredSkills`; mutation/ambiguity/security/external term
+  sets → the four `risk` unit intervals; parallel terms plus independent units →
+  `parallelism`. The raw string never reaches a model, keeping the "zero LLM
+  call" invariant honest. A hard-gate requirement is only asserted when
+  positively justified from the text (tool-call presence when tools are
+  expected); everything else stays unknown and the config `unknown_policy`
+  governs it. The lexicons are exported defaults (open-parameter surface) a
+  future routing policy can override wholesale.
+- **`routing.explain` not-found mapping**: an explain request for an unknown
+  `decisionId` maps to `RoutingError.invalid_argument` with `field: "decisionId"`
+  (not `unavailable`), so the operator envelope reports a bad argument rather
+  than a backend outage. A genuine store read failure still maps to
+  `unavailable`.
+- **Reserved-catalog additions (v1.1.0)**: `RESERVED_CATALOG_VERSION` bumps to
+  `1.1.0` (additive) to add the read-only routing surface the `RoutingPort` and
+  CLI require: `routing.explain` and `routing.capability.inspect`. Both are
+  non-mutating, offline-capable, `global`/`project` scoped, and require no
+  confirmation. Feature 007 remains the sole command-registration authority; the
+  routing inbound adapter only supplies the `DomainInvoke` for these ids.
+- **Composition-root routing wiring**: the live operator stack registers the
+  routing domain port with real seams — `Config.Service`-backed config source,
+  a `Provider.Service` catalog candidate source (live model catalog, never
+  hardcoded ids), the `AgentV2` specialist registry (`listSpecialists`, hidden
+  agents excluded) as the `AgentResolver`, a filesystem `DecisionStore` rooted
+  under the state dir (`<state>/routing-decisions`), the deterministic
+  `TaskAnalyzer`, and a non-blocking OTLP telemetry sink. Agent skill/effort
+  metadata is not yet carried on `Agent.Info`, so the specialist pool exposes
+  empty skills and neutral effort defaults today; hard gates and ranking still
+  apply. Telemetry/Smart inbound domain ports have no `DomainInvoke` adapter yet,
+  so only routing overrides the stub.
+- **TUI Smart indicator signal source**: the Smart indicator is a per-turn,
+  server-side routing computation. The TUI sync payload carries session status,
+  config, agents and messages but no brain-mode / Smart-Routing / hierarchy-role
+  signal, and no `smart.*`/`routing.*` server event exists to derive one from.
+  A genuine live signal therefore waits for a server-push feature — a
+  routing-state projection pushed the same way `session_status` is. Until then
+  the prompt component binds a single reactive accessor to the honest inactive
+  baseline (fallback label only); when the push lands, only that accessor's body
+  changes.

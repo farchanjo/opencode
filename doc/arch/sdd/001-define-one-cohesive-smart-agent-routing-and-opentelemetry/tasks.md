@@ -177,18 +177,18 @@ Feature 007 registry; none hold management authority of their own.
 
 ### Tests and validation
 
-- [ ] T036 Add unit tests (pure, deterministic, no I/O) for the classifier,
+- [x] T036 Add unit tests (pure, deterministic, no I/O) for the classifier,
   capability resolver, routing evaluator hard gates and ranking, budget policy,
   todo authority, hierarchy dispatcher, and telemetry instruments.
-- [ ] T037 Add integration tests through the Feature 007 sandbox wrapper for
+- [x] T037 Add integration tests through the Feature 007 sandbox wrapper for
   TelemetryPort with a mock OTLP exporter, RoutingPort with the catalog adapter,
   Config.Service and EventV2 adapters, and decision-store persistence with the
   atomic-commit and crash-recovery paths, using real files under `.dev/`.
-- [ ] T038 Add contract tests asserting the `smart.*`, `routing.*`, and
+- [x] T038 Add contract tests asserting the `smart.*`, `routing.*`, and
   `telemetry.*` command IDs against the Feature 007 registry and the loopback API
   against `contracts/ports.ts`, plus a cardinality audit asserting no
   session/message/dynamic-skill IDs appear in metric labels.
-- [ ] T039 Add end-to-end tests through the sandbox wrapper for the CLI (human
+- [x] T039 Add end-to-end tests through the sandbox wrapper for the CLI (human
   and JSON output), the slash intercept, the Settings path, and the Smart TUI
   indicator, confirming content-free OTEL labels.
 
