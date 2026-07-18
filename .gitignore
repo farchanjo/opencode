@@ -33,3 +33,6 @@ logs/
 *.bun-build
 tsconfig.tsbuildinfo
 doc/.specify/*.db
+
+# Feature 007 operator isolation sandbox (never commit runtime data)
+.dev/
