@@ -814,3 +814,54 @@ rule (an unreachable runtime seam keeps a typed gap, never a fabricated wiring):
    envelope re-nested in an event decode fails, since the event expects the
    encoded form). `redacted_metadata` is scrubbed of any content-bearing key
    before the event is built (Security 5, AC14).
+
+## Settings, CLI, and TUI surfaces — implementation notes (T034–T036)
+
+Provenance notes recorded during the Phase 4 wave, per the honest-provenance
+rule (an unreachable runtime seam keeps a typed gap, never a fabricated wiring):
+
+1. **T035 CLI verbs.** `opencode op langlock status|show|set|reset` are thin
+   `Runtime.handler` leaves under `packages/cli/src/langlock/**` dispatching the
+   reserved `langlock.*` ids through the same `Dispatch`/`Output` seam as
+   `telemetry`/`jobs` — no divergent hardcoded verb, no direct import of the
+   application services. `show` is the show-effective alias of `status` (both
+   call `port.resolve`, matching the operator command port). `set` takes a
+   required `tag` argument plus a required `--expected-version` CAS flag
+   (mirroring the jobs mutation flags); `reset` takes only `--expected-version`.
+   Renderers never present the canonical tag without its human display name
+   (FR31, C13). Surface parity against the reserved catalog is pinned by
+   `langlock/surface.test.ts` (mirrors `jobs/surface.test.ts`).
+
+2. **T034/T036 TUI — display-only honest baseline; no live query seam yet.**
+   `OperatorSlashPort.tryHandle` (`packages/tui/src/context/operator-slash.tsx`)
+   returns only an `OperatorSlashDisplay` (title/message/variant/outcome
+   strings) — there is no structured `LangLockPolicyPort.resolve`/`AdvisoryPort`
+   query result, and no live `langlock.*` observation stream, reachable from the
+   TUI today. Both the Settings row (`packages/tui/src/settings/langlock/**`)
+   and the operator panel (`packages/tui/src/operator/langlock/**`) are built as
+   pure projection modules (`row.ts` / `card.ts` / `history.ts` / `state.ts`)
+   plus a display component that accepts an optional `policy`/`signal` accessor
+   and renders an honest `EMPTY_LANGLOCK_SETTINGS_ROW` / `EMPTY_LANGLOCK_PANEL_
+   SIGNAL` baseline when omitted — mirroring `packages/tui/src/operator/
+   jobs/**`'s (Feature 003 T030) identical, already-accepted wiring-point
+   pattern. This is the same class of documented gap as note 2 above (T026
+   injection), not a new one.
+
+3. **T034 mutation path — dispatch works today; live read does not.** Unlike the
+   read side, the Lang Lock `set` mutation IS reachable from the TUI: the
+   Settings row's `DialogLangLockPicker` looks up the registry-generated
+   `langlock.set` entry via `listOperatorSettingsEntries("langlock")` (Feature
+   007, never a hardcoded id) and dispatches it through
+   `executeOperatorCommand`. That helper's `text` builder
+   (`packages/tui/src/operator/execute.ts`) previously only supported
+   argument-less commands (`/op.<id>`); it gained an optional `payload` field
+   that JSON-encodes into the same `argsText` position the inbound slash
+   adapters already parse (`packages/opencode/src/operator/adapters/inbound/
+   slash.ts` `parseSlashPayload`, `rpc-slash-port.ts` / `http-slash-port.ts`
+   `parseStrictPayload`) — a minimal, backward-compatible extension (existing
+   argument-less callers are unaffected), not a new registry or a divergent
+   verb. The picker's options are the fixed 8-entry
+   `@opencode-ai/schema/langlock/allowlist` `INITIAL_ALLOWLIST` (a static value
+   object, not a live operator query, so no port gap applies) titled by human
+   display name only — the canonical tag is sent as the `tag` payload field but
+   never used as a picker label (FR3, FR4, AC3).

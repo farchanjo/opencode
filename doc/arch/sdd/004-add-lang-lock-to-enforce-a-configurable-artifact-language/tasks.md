@@ -294,19 +294,19 @@ schema modules so a single vocabulary is enforced (see the Traceability note).
 
 ### Settings, CLI, and TUI surfaces (Phase 4)
 
-- [ ] T034 [S18] Author the Settings **Lang Lock** row under
+- [x] T034 [S18] Author the Settings **Lang Lock** row under
   `packages/tui/src/**/settings/` presenting **Artifact language** with human/native
   language names, separate from the UI Language row, wired through the Feature 007
   adapters, and never surfacing the canonical tag as the primary label (FR31, C13, AC3).
   Acceptance: `bun test packages/tui` asserts the row renders native names and stores the
   canonical tag.
-- [ ] T035 [S18] Author `packages/cli/src/**/langlock/**` for `opencode op langlock
+- [x] T035 [S18] Author `packages/cli/src/**/langlock/**` for `opencode op langlock
   status|show|set|reset`, each dispatching through the Feature 007 registry to the
   `LangLockPolicyPort` with registry-generated names (no divergent hardcoded verbs),
   emitting redacted/versioned human and JSON output, working offline, and making zero
   provider/model calls (FR32, FR33, C3, AC13). Acceptance: `bun test packages/cli` asserts
   human and JSON output with no model call.
-- [ ] T036 [S18] Author `packages/tui/src/**/operator/langlock/**` rendering the Lang Lock
+- [x] T036 [S18] Author `packages/tui/src/**/operator/langlock/**` rendering the Lang Lock
   panel (effective policy, scope/origin, redacted/versioned advisory history) as a thin
   adapter over the Feature 007 registry with registry-generated names, live `langlock.*`
   watch over the observation seam, and screen-reader text independent of color (FR31, FR32,
