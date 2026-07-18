@@ -2,7 +2,7 @@
 id: 019f6d98-1380-7213-b3e5-9e742d5824a5
 number: 004
 slug: add-lang-lock-to-enforce-a-configurable-artifact-language
-status: tasked
+status: implemented
 created_at: 2026-07-17T01:01:50.848332Z
 ---
 
