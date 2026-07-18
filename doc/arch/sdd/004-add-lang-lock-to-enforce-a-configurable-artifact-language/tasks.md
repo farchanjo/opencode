@@ -221,14 +221,14 @@ schema modules so a single vocabulary is enforced (see the Traceability note).
 
 ### Application and enforcement seams (Phase 3)
 
-- [ ] T025 [S10] Author `packages/opencode/src/langlock/persistence.ts` persisting
+- [x] T025 [S10] Author `packages/opencode/src/langlock/persistence.ts` persisting
   `LangLockPolicy`/`LangLockConfig` under the `langlock.*` keys in the Feature 007
   Config.Service authority (global base plus permission-gated project override), atomic
   with version/CAS and idempotency, resolving an unconfigured project to the enabled
   `en-US` default without translating untouched content, and never opening a parallel
   store (FR5, FR7, C2, C15, AC5, AC16). Acceptance: `bun test packages/opencode` under the
   Feature 007 sandbox asserts CAS persistence and the en-US default resolution.
-- [ ] T026 [S11] Author `packages/opencode/src/langlock/injection-service.ts` injecting the
+- [x] T026 [S11] Author `packages/opencode/src/langlock/injection-service.ts` injecting the
   effective-language block (conversational/artifact boundary plus exemptions) into the
   V1/V2 system array in `packages/opencode/src/session/prompt.ts` and reapplying it after
   `experimental.chat.system.transform` in `packages/opencode/src/session/llm/request.ts`
@@ -237,7 +237,7 @@ schema modules so a single vocabulary is enforced (see the Traceability note).
   follow the lock (FR11, FR12, FR15, FR17, FR24, FR25, C4, C7, AC1, AC2, AC7, AC15, AC17,
   AC19). Acceptance: `bun test packages/opencode` asserts the block survives a mutating
   transform and the conversational axis is unchanged.
-- [ ] T027 [S12] Author `packages/opencode/src/langlock/envelope-stamper.ts` stamping the
+- [x] T027 [S12] Author `packages/opencode/src/langlock/envelope-stamper.ts` stamping the
   `ExecutionStamp` (tag/version/config-version/source/mode plus nullable `todo_ref` and
   `output_ref`) onto Task/subagent/write/edit/apply_patch/shell-commit contexts as native
   immutable metadata that is never a model-controlled tool argument, capturing the
@@ -248,36 +248,36 @@ schema modules so a single vocabulary is enforced (see the Traceability note).
   (FR9, FR18, FR19, FR23, FR26, FR28, FR29, C4, C10, C11, AC4, AC12, AC18, AC21, AC22).
   Acceptance: `bun test packages/opencode` asserts the stamp is immutable for a running
   execution and Todo text inherits the tag while chrome does not.
-- [ ] T028 [S13] Author `packages/opencode/src/langlock/advisory-validator.ts` running
+- [x] T028 [S13] Author `packages/opencode/src/langlock/advisory-validator.ts` running
   post-write advisory detection only on confidently classified prose over the domain
   detector, recording provenance/bucket/path-kind/version/remediation content-free, never
   gating the write, and never rewriting an entire mixed-language file or retrotranslating
   untouched content (FR8, FR10, FR20, FR21, C5, C6, C12, AC8, AC11, AC20). Acceptance:
   `bun test packages/opencode` asserts a flagged advisory is recorded without blocking and
   generic code is not flagged.
-- [ ] T029 [S14] Author `packages/opencode/src/langlock/authorization.ts` applying the
+- [x] T029 [S14] Author `packages/opencode/src/langlock/authorization.ts` applying the
   canonical Feature 007 Permission/Policy gate to `langlock.override`, denying a project
   override unless native operator policy allows it and never relaxing the global
   hard-policy floor, and rejecting any session/user/LLM/agent/plugin/MCP/custom-command
   mutation as a typed `unauthorized` failure (FR5, FR6, Security 1, C2, AC5, AC6).
   Acceptance: `bun test packages/opencode` covers authorized override, unauthorized deny,
   and floor-relax rejection.
-- [ ] T030 [S15] Author `packages/opencode/src/langlock/audit.ts` projecting content-free
+- [x] T030 [S15] Author `packages/opencode/src/langlock/audit.ts` projecting content-free
   `langlock.*` audit and advisory-violation events over `publishLangLockEvent` per
   ADR-0001, carrying bounded enums/buckets/counts and opaque execution ids only and never
   file text/diff/prompt/message/path/snippet/reasoning/tool payload/secret (FR27,
   Security 5, C8, AC14). Acceptance: `bun test packages/opencode` asserts every projected
   field is bounded and content-free.
-- [ ] T031 [S19] Author the Feature 005 provenance seam attaching the Feature-005-owned
+- [x] T031 [S19] Author the Feature 005 provenance seam attaching the Feature-005-owned
   Lang Lock tag/version/provenance to the textual OutputRef metadata read from the trusted
   execution envelope, not recomputed by Lang Lock and never exporting raw content (FR30,
   C9, AC14). Acceptance: `bun test packages/opencode` asserts the provenance is read from
   the envelope and no content is exported.
-- [ ] T032 [S11–S14] Author the barrel `packages/opencode/src/langlock/index.ts`
+- [x] T032 [S11–S14] Author the barrel `packages/opencode/src/langlock/index.ts`
   re-exporting the persistence, injection-service, envelope-stamper, advisory-validator,
   authorization, and audit modules. Acceptance: `tsgo --noEmit` on `packages/opencode`
   green and the barrel imports without a duplicate-export error.
-- [ ] T033 [S16] Author `packages/opencode/src/operator/langlock/**` with the typed
+- [x] T033 [S16] Author `packages/opencode/src/operator/langlock/**` with the typed
   `LangLockPolicyPort`/`AdvisoryPort` domain implementations for the reserved
   `langlock.status`, `langlock.show` (show-effective alias), `langlock.set`, and
   `langlock.reset` operations, each emitting audit events and registered through the

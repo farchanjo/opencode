@@ -751,3 +751,66 @@ re-declared here (C2, C8).
 | LangLockConfig | `langlock/config.cue` | `langlock/config.ts` | FR5, FR7, C2 |
 | LangLockEnvelope | `langlock/envelope.cue`, `envelope-parts.cue` | `langlock/envelope.ts` | C8 |
 | LangLockEvent vocabulary | `langlock/events.cue`, `events-audit.cue`, `events-advisory.cue` | `langlock/events.ts` + member files | FR27, FR34, C8 |
+
+---
+
+## Application and enforcement seams — implementation notes (T025–T033)
+
+Provenance notes recorded during the Phase 3 wave, per the honest-provenance
+rule (an unreachable runtime seam keeps a typed gap, never a fabricated wiring):
+
+1. **T025 persistence CAS vs domain version.** `LangLockPersistence` stores the
+   `LangLockConfig` document under `langlock/global` and `langlock/project/<ref>`
+   through the reused `ConfigPort`. Two version counters coexist and are NOT
+   conflated: the Config.Service string CAS token (`cas_vN`) is the optimistic
+   concurrency guard for the physical write, while the numeric `config.version`
+   inside the document is the domain policy version the protocol port's
+   `expectedVersion` compares against. `resolveEffective` defaults an unconfigured
+   global base to the enabled `en-US` `defaultConfig` (a pure value, never a
+   stored side effect) and runs the framework-free `PolicyResolution` over the
+   optional project override (FR1, C15, AC16).
+
+2. **T026 injection — pure module, honest live-pipeline seam.** `injection-service`
+   implements the content-free block builder plus `injectIntoSystemArray` /
+   `reapplyAfterTransform`, which are idempotent (a prior block is stripped and
+   the canonical block re-appended, so a transform cannot strip or duplicate the
+   lock, FR25/AC7) and preserve every non-lock system entry (the conversational
+   axis is untouched, AC19). The live insertion into `session/prompt.ts` and the
+   post-transform reapply in `session/llm/request.ts` (line 69 `experimental.chat
+   .system.transform`) and `agent/agent.ts` (line 416) require plumbing the
+   resolved `EffectiveConfig` through `PrepareInput`, which the session runtime
+   does not carry today. That plumbing is an honest runtime seam left unwired
+   rather than a risky mutation of the hot LLM-request path; the module surface it
+   would call is complete and tested. The `langlock.policy_injected` /
+   `policy_reapplied` audit members exist for when the seam is plumbed.
+
+3. **T031 provenance module location.** The Feature 005 provenance seam lives at
+   `packages/opencode/src/langlock/provenance.ts` (in `specScopeGlobs`) and is
+   re-exported from the application barrel; the plan's illustrative
+   `opencode/src/langlock/` tree did not enumerate a separate file, so this is a
+   structural placement decision, not a shape change. It reads tag/version/origin
+   /output_ref off the trusted `ExecutionStamp` and never recomputes or exports
+   content (FR30, C9).
+
+4. **T033 operator domain — honestly reachable; fail-closed override.** Lang Lock
+   policy is a simple content-free document (no external assembler), so
+   `resolve`/`set`/`reset` are all honestly backed by the reachable Config.Service
+   persistence (unlike Feature 003 `jobs.create`/`update`, which needed an unbuilt
+   assembler). The `langlock` `DomainInvoke` override is wired in `stack-live.ts`
+   next to jobs; Feature 007 stays the sole registration authority (the reserved
+   `langlock.status|show|set|reset` ids are already in the catalog). The injected
+   `OverridePermissionPort` defaults to fail-closed DENY, so an unconfigured
+   project override is rejected as `unauthorized` — never a fabricated grant —
+   until a real Feature 007 Permission/Policy gate is bound (Security 1, AC5). The
+   operator access-audit sink defaults to a bounded debug log at the command-port
+   seam, mirroring the jobs wiring; the richer content-free `langlock.*` EventV2
+   projection (T030) over `publishLangLockEvent` is a distinct seam whose live
+   binding to the bridge from the operator `AppRuntime` follows the same boundary
+   jobs left.
+
+5. **T030 audit — single-decode envelope.** The projector builds the ENCODED
+   envelope record (timestamp as epoch millis) and decodes the full member event
+   ONCE, so the `DateTimeUtcFromMillis` field is never double-decoded (a decoded
+   envelope re-nested in an event decode fails, since the event expects the
+   encoded form). `redacted_metadata` is scrubbed of any content-bearing key
+   before the event is built (Security 5, AC14).
