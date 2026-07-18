@@ -1,8 +1,48 @@
-- To regenerate the legacy JavaScript SDK, run `./packages/sdk/js/script/build.ts`.
-- After changing the public Protocol or Server `HttpApi`, run `bun run generate` from `packages/client`. Do not edit `src/generated` or `src/generated-effect` directly.
-- Keep runtime dependencies directed from Schema to Core and Protocol, then from Core and Protocol to Server. Client runtime code may depend on Schema and Protocol but never Core or Server; `sdk-next` composes Client, Core, and Server.
-- The default branch in this repo is `dev`.
-- Local `main` ref may not exist; use `dev` or `origin/dev` for diffs.
+# OpenCode Agent Instructions
+
+## Project
+
+OpenCode monorepo (Bun workspaces): local-first AI coding agent with TUI, CLI,
+loopback server/SDK, and domain packages under packages/. Default branch is dev.
+
+## Architecture
+
+Runtime dependencies: Schema → Core/Protocol → Server. Client depends on Schema
+and Protocol only; sdk-next composes Client, Core, and Server. Operator management
+authority is Feature 007 (packages/core/src/operator, packages/opencode/src/operator)
+with Config.Service + EventV2 reuse — never parallel admin stores or LLM/MCP/plugin
+management authority. Domain features register ports/adapters into the operator
+control plane; reserved IDs live only in packages/core/src/operator/catalog.ts.
+
+## Commands
+
+- Regenerate legacy JS SDK: ./packages/sdk/js/script/build.ts
+- After public Protocol or Server HttpApi changes: bun run generate from packages/client
+- Typecheck: bun typecheck from a package directory (never bare tsc from root)
+- Tests: bun test from package directories (not repo root)
+- Speckit: speckit status / next / validate; Feature 007 sandbox:
+  ./scripts/dev/opencode-operator-sandbox
+
+## Conventions or constraints
+
+- Conventional commits; short hyphenated branch names (no type prefixes).
+- Prefer Bun APIs; avoid any; no try/catch when avoidable; functional array methods.
+- Do not edit packages/client generated sources by hand.
+- Local main ref may not exist; use dev or origin/dev for diffs.
+
+## Spec-first protocol
+
+spec-first: doc/arch is the source of truth — run `speckit status` then `speckit next`
+and read the active feature spec before writing code. On fcustom, Speckit guard and
+validation govern; do not hand-edit doc/.specify databases.
+
+## SDK and package graph
+
+- To regenerate the legacy JavaScript SDK, run ./packages/sdk/js/script/build.ts.
+- After changing the public Protocol or Server HttpApi, run bun run generate from packages/client. Do not edit client generated sources directly.
+- Keep runtime dependencies directed from Schema to Core and Protocol, then from Core and Protocol to Server. Client runtime code may depend on Schema and Protocol but never Core or Server; sdk-next composes Client, Core, and Server.
+- The default branch in this repo is dev.
+- Local main ref may not exist; use dev or origin/dev for diffs.
 
 ## Branch Names
 
@@ -29,7 +69,7 @@ Examples: `fix(tui): simplify thinking toggle styling`, `docs: update contributi
 - Use Bun APIs when possible, like `Bun.file()`
 - Rely on type inference when possible; avoid explicit type annotations or interfaces unless necessary for exports or clarity
 - Prefer functional array methods (flatMap, filter, map) over for loops; use type guards on filter to maintain type inference downstream
-- In `src/config`, follow the existing self-export pattern at the top of the file (for example `export * as ConfigAgent from "./agent"`) when adding a new config module.
+- In packages/opencode/src/config, follow the existing self-export pattern at the top of the file (for example export \* as ConfigAgent from "./agent") when adding a new config module.
 - In Effect generators, bind services to named variables before calling methods. Do not use nested service yields such as `yield* (yield* Foo.Service).bar()`.
 
 Reduce total variable count by inlining when a value is only used once.
@@ -158,7 +198,20 @@ const table = sqliteTable("session", {
 - Keep local Session drains process-local until clustering is implemented. `SessionRunCoordinator` joins explicit same-Session resumes, coalesces prompt wakeups, and allows different Sessions to run concurrently. Advisory wakes drain eligible durable inbox rows only; post-crash continuation recovery requires a separate explicit design before it may retry provider work. A drain has no durable identity or transcript boundary.
 - Keep delivery vocabulary explicit. Prompts steer by default and promote at the next safe provider-turn boundary while the current drain requires continuation. An explicit `queue` input remains pending until the Session would otherwise become idle; promote one queued input at that boundary, then reevaluate continuation before promoting another. Promoting any new user input resets the selected agent's provider-turn allowance; a batch of steers resets it once.
 - Keep EventV2 replay owner claims separate from clustered Session execution ownership.
-- Keep the System Context algebra, registry, and built-ins in `src/system-context`; keep Context Source producers with their observed domains, and keep Session History selection plus Context Epoch persistence Session-owned.
+- Keep the System Context algebra, registry, and built-ins in packages/opencode/src/system-context; keep Context Source producers with their observed domains, and keep Session History selection plus Context Epoch persistence Session-owned.
+
+## Operator Control Plane (Feature 007)
+
+Native management authority for setup/configuration. ADR-0003 accepted. Full integrator
+reference: doc/arch/sdd/007-add-a-unified-native-operator-control-plane-for-all-opencode/reserved-catalog-v1.md
+
+- **Sole management path:** typed operator commands via Feature 007 registry + dispatcher + thin adapters (TUI Settings/palette/native slash, CLI opencode op, loopback HTTP/SDK). Reuse Config.Service and EventV2 — no parallel config or event store.
+- **Never authority:** Config.command / custom templates, session.command prompt path, ToolRegistry admin tools, MCP tools/prompts, plugins, skills, LLM/shell free-form setup. Do not create LLM, custom, MCP, or plugin management authority.
+- **Future domain features (001–006, 008, …):** own domain schemas and business logic; register ports + adapters into the operator composition root under packages/opencode/src/operator/. Add reserved IDs only by additive bumps to packages/core/src/operator/catalog.ts. Surface aliases come from generateAliases only — never hand-fork slash/CLI/palette names or duplicate ID lists in the SDK.
+- **Reserved catalog v1:** import listReservedIds / RESERVED_CATALOG_VERSION from packages/core/src/operator (core package export). Collisions fail closed (reserved_name). Legacy admin-like names: one-release warn, reject new — see feature migration note.
+- **Flag:** experimental.operator*control_plane (default off); sandbox OPENCODE_DEV_OPERATOR*=1. Dynamic resolve per dispatch — do not hardcode featureEnabled true in live stack.
+- **Phase 1 surfaces only:** core + TUI + CLI + loopback API/SDK. App/Desktop (T090–T091) and multi-user/vault/non-loopback (T092) are Phase 2, not Phase 1 incomplete work.
+- **Isolation:** Feature 007 local work uses scripts/dev/opencode-operator-sandbox, port 14096, .dev/ only — never production user config dir, port 4096, service register, or real OAuth 19876.
 
 ## Spec Kit on `fcustom`
 

@@ -1,0 +1,280 @@
+#!/usr/bin/env bash
+# Feature 007 operator isolation wrapper (T003).
+# Sets sandbox env BEFORE any Bun/core import and execs local source only.
+# Never invokes global `opencode`, OS service registration, real OAuth, or prod ports.
+set -euo pipefail
+
+SCRIPT_PATH="${BASH_SOURCE[0]:-$0}"
+# Resolve symlinks (macOS/Linux)
+while [ -L "$SCRIPT_PATH" ]; do
+  link_dir="$(cd -P "$(dirname "$SCRIPT_PATH")" && pwd)"
+  SCRIPT_PATH="$(readlink "$SCRIPT_PATH")"
+  case "$SCRIPT_PATH" in
+    /*) ;;
+    *) SCRIPT_PATH="$link_dir/$SCRIPT_PATH" ;;
+  esac
+done
+SCRIPT_DIR="$(cd -P "$(dirname "$SCRIPT_PATH")" && pwd)"
+# scripts/dev -> repo root
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+
+OPERATOR_PORT="${OPENCODE_OPERATOR_PORT:-14096}"
+OPERATOR_BIND="${OPENCODE_OPERATOR_BIND:-127.0.0.1}"
+SANDBOX_ROOT="${OPENCODE_OPERATOR_SANDBOX_ROOT:-$REPO_ROOT/.dev/opencode-operator}"
+CLI_ENTRY="$REPO_ROOT/packages/opencode/src/index.ts"
+FORBIDDEN_PROD_PORT=4096
+FORBIDDEN_OAUTH_PORT=19876
+
+# Capture Bun + PATH before HOME isolation so the executable remains resolvable.
+BUN_BIN="$(command -v bun || true)"
+if [ -z "$BUN_BIN" ]; then
+  echo "opencode-operator-sandbox: bun not found on PATH before HOME isolation" >&2
+  exit 127
+fi
+TRUSTED_PATH="$PATH"
+REAL_HOME="${HOME:-}"
+
+log() {
+  # shellcheck disable=SC2034
+  local ts
+  ts="$(date -u +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date)"
+  printf '%s %s\n' "$ts" "$*" >>"$SANDBOX_ROOT/logs/wrapper.log" 2>/dev/null || true
+}
+
+die() {
+  echo "opencode-operator-sandbox: $*" >&2
+  log "ERROR: $*"
+  exit 1
+}
+
+is_loopback() {
+  case "$1" in
+    127.0.0.1|localhost|::1|\[::1\]|::ffff:127.0.0.1) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# --- layout ---
+mkdir -p \
+  "$SANDBOX_ROOT/config" \
+  "$SANDBOX_ROOT/data" \
+  "$SANDBOX_ROOT/cache" \
+  "$SANDBOX_ROOT/state" \
+  "$SANDBOX_ROOT/tmp" \
+  "$SANDBOX_ROOT/home" \
+  "$SANDBOX_ROOT/managed" \
+  "$SANDBOX_ROOT/logs"
+
+# Cache version marker so Global.Path import does not wipe cache on version skew.
+mkdir -p "$SANDBOX_ROOT/cache/opencode"
+if [ ! -f "$SANDBOX_ROOT/cache/opencode/version" ]; then
+  printf '14\n' >"$SANDBOX_ROOT/cache/opencode/version"
+fi
+
+# --- policy: bind ---
+if ! is_loopback "$OPERATOR_BIND"; then
+  die "bind must be loopback (127.0.0.1); refused: $OPERATOR_BIND"
+fi
+
+# --- canonicalize sandbox root; must stay under repo .dev/opencode-operator ---
+EXPECTED_SANDBOX="$REPO_ROOT/.dev/opencode-operator"
+# Resolve SANDBOX_ROOT (may not exist yet — resolve parent)
+if command -v realpath >/dev/null 2>&1; then
+  SANDBOX_ROOT="$(realpath -m "$SANDBOX_ROOT" 2>/dev/null || echo "$SANDBOX_ROOT")"
+  EXPECTED_SANDBOX="$(realpath -m "$EXPECTED_SANDBOX" 2>/dev/null || echo "$EXPECTED_SANDBOX")"
+fi
+case "$SANDBOX_ROOT" in
+  "$EXPECTED_SANDBOX"|"$EXPECTED_SANDBOX"/*) ;;
+  *) die "sandbox root must be under $EXPECTED_SANDBOX (got $SANDBOX_ROOT)" ;;
+esac
+
+# --- policy: config dir not under real ~/.config/opencode; must be under sandbox ---
+CONFIG_DIR="${OPENCODE_CONFIG_DIR:-$SANDBOX_ROOT/config}"
+if command -v realpath >/dev/null 2>&1; then
+  CONFIG_DIR_RESOLVED="$(realpath -m "$CONFIG_DIR" 2>/dev/null || echo "$CONFIG_DIR")"
+else
+  CONFIG_DIR_RESOLVED="$CONFIG_DIR"
+fi
+case "$CONFIG_DIR_RESOLVED" in
+  "$REAL_HOME/.config/opencode"|"$REAL_HOME/.config/opencode"/*|"$REAL_HOME/.config")
+    die "OPENCODE_CONFIG_DIR must not resolve under production ~/.config/opencode (got $CONFIG_DIR_RESOLVED)"
+    ;;
+esac
+case "$CONFIG_DIR_RESOLVED" in
+  "$SANDBOX_ROOT"|"$SANDBOX_ROOT"/*) ;;
+  *) die "OPENCODE_CONFIG_DIR must stay under sandbox root $SANDBOX_ROOT (got $CONFIG_DIR_RESOLVED)" ;;
+esac
+CONFIG_DIR="$CONFIG_DIR_RESOLVED"
+
+# Re-mkdir after resolution
+mkdir -p \
+  "$SANDBOX_ROOT/config" \
+  "$SANDBOX_ROOT/data" \
+  "$SANDBOX_ROOT/cache" \
+  "$SANDBOX_ROOT/state" \
+  "$SANDBOX_ROOT/tmp" \
+  "$SANDBOX_ROOT/home" \
+  "$SANDBOX_ROOT/managed" \
+  "$SANDBOX_ROOT/logs" \
+  "$SANDBOX_ROOT/state/locks"
+
+# --- export isolation env BEFORE any bun/core import ---
+export PATH="$TRUSTED_PATH"
+export OPENCODE_DEV_OPERATOR_="1"
+export OPENCODE_OPERATOR_PORT="$OPERATOR_PORT"
+export OPENCODE_OPERATOR_BIND="$OPERATOR_BIND"
+export OPENCODE_CONFIG_DIR="$CONFIG_DIR"
+export XDG_CONFIG_HOME="$SANDBOX_ROOT/config"
+export XDG_DATA_HOME="$SANDBOX_ROOT/data"
+export XDG_CACHE_HOME="$SANDBOX_ROOT/cache"
+export XDG_STATE_HOME="$SANDBOX_ROOT/state"
+export TMPDIR="$SANDBOX_ROOT/tmp"
+export TMP="$SANDBOX_ROOT/tmp"
+export TEMP="$SANDBOX_ROOT/tmp"
+export HOME="$SANDBOX_ROOT/home"
+export OPENCODE_TEST_HOME="$SANDBOX_ROOT/home"
+export OPENCODE_TEST_MANAGED_CONFIG_DIR="$SANDBOX_ROOT/managed"
+export OPENCODE_DISABLE_MODELS_FETCH="${OPENCODE_DISABLE_MODELS_FETCH:-1}"
+export OPENCODE_PURE="${OPENCODE_PURE:-1}"
+export OPENCODE_DISABLE_AUTOUPDATE="${OPENCODE_DISABLE_AUTOUPDATE:-1}"
+export OPENCODE_DISABLE_AUTOCOMPACT="${OPENCODE_DISABLE_AUTOCOMPACT:-1}"
+
+# Drop secrets-bearing env that could leak into sandbox logs (never load a secrets env file).
+unset OPENCODE_SERVER_PASSWORD OPENCODE_SERVER_USERNAME 2>/dev/null || true
+
+log "repo=$REPO_ROOT sandbox=$SANDBOX_ROOT bind=$OPERATOR_BIND port=$OPERATOR_PORT bun=$BUN_BIN config=$CONFIG_DIR"
+
+# --- parse argv ---
+args=("$@")
+# Support `wrapper -- opencode ...` and `wrapper opencode ...` and `wrapper serve ...`
+if [ "${#args[@]}" -gt 0 ] && [ "${args[0]}" = "--" ]; then
+  args=("${args[@]:1}")
+fi
+if [ "${#args[@]}" -gt 0 ] && [ "${args[0]}" = "opencode" ]; then
+  args=("${args[@]:1}")
+fi
+
+# Reject empty invocation with help (printf — avoid heredoc pipe stalls in harnesses)
+if [ "${#args[@]}" -eq 0 ]; then
+  printf '%s\n' \
+    "Usage: opencode-operator-sandbox [--] [opencode] <command> [args...]" \
+    "" \
+    "Isolation:" \
+    "  sandbox root : $SANDBOX_ROOT" \
+    "  bind/port    : $OPERATOR_BIND:$OPERATOR_PORT" \
+    "  config dir   : $CONFIG_DIR" \
+    "" \
+    "Forbidden:" \
+    "  global/bare opencode binary, service *, serve --register, port $FORBIDDEN_PROD_PORT," \
+    "  real OAuth / port $FORBIDDEN_OAUTH_PORT, non-loopback bind, secrets env files." \
+    "" \
+    "Examples:" \
+    "  $0 -- opencode op langlock status --json" \
+    "  $0 -- serve" >&2
+  exit 2
+fi
+
+# Reject absolute/relative path to a global opencode binary as command head
+case "${args[0]}" in
+  opencode|*/opencode|*\\opencode)
+    die "bare/global opencode invocation is forbidden; pass subcommands only (wrapper rewrites to local source)"
+    ;;
+  service)
+    die "service commands are forbidden in the operator sandbox"
+    ;;
+esac
+
+joined=" ${args[*]} "
+
+# --register (OS service)
+case "$joined" in
+  *" --register "*|*" --register="*)
+    die "serve --register / --register is forbidden in the operator sandbox"
+    ;;
+esac
+
+# Forbidden ports in any arg
+for a in "${args[@]}"; do
+  case "$a" in
+    --port="$FORBIDDEN_PROD_PORT"|"$FORBIDDEN_PROD_PORT"|*":$FORBIDDEN_PROD_PORT"*|*"localhost:$FORBIDDEN_PROD_PORT"*|*"127.0.0.1:$FORBIDDEN_PROD_PORT"*)
+      die "port $FORBIDDEN_PROD_PORT is forbidden in the operator sandbox (use $OPERATOR_PORT)"
+      ;;
+    --port="$FORBIDDEN_OAUTH_PORT"|*":$FORBIDDEN_OAUTH_PORT"*)
+      die "port $FORBIDDEN_OAUTH_PORT (MCP OAuth) is prohibited under the operator sandbox"
+      ;;
+  esac
+  if [ "$a" = "--port" ]; then
+    :
+  fi
+done
+
+# Explicit --port N scan
+prev=""
+for a in "${args[@]}"; do
+  if [ "$prev" = "--port" ]; then
+    if [ "$a" = "$FORBIDDEN_PROD_PORT" ] || [ "$a" = "$FORBIDDEN_OAUTH_PORT" ]; then
+      die "port $a is forbidden in the operator sandbox"
+    fi
+    if [ "${args[0]}" = "serve" ] || [ "${args[0]}" = "web" ] || [ "${args[0]}" = "attach" ]; then
+      if [ "$a" != "$OPERATOR_PORT" ]; then
+        die "sandbox operator port must be $OPERATOR_PORT; refused $a"
+      fi
+    fi
+  fi
+  if [ "$prev" = "--hostname" ]; then
+    if ! is_loopback "$a"; then
+      die "bind must be loopback; refused --hostname $a"
+    fi
+  fi
+  prev="$a"
+done
+
+# Real OAuth shortcuts
+if [ "${args[0]}" = "mcp" ]; then
+  case "$joined" in
+    *" auth "*|*" auth")
+      case "$joined" in
+        *" --oauth "*|*" --real-oauth "*|*" oauth "*)
+          die "real OAuth shortcuts are prohibited under the operator sandbox"
+          ;;
+      esac
+      ;;
+  esac
+fi
+
+# mDNS would force non-loopback
+case "$joined" in
+  *" --mdns "*|*" --mdns")
+    if [ "${args[0]}" = "serve" ] || [ "${args[0]}" = "web" ]; then
+      die "mDNS / non-loopback discovery is forbidden in the operator sandbox"
+    fi
+    ;;
+esac
+
+# Inject serve defaults
+if [ "${args[0]}" = "serve" ] || [ "${args[0]}" = "web" ]; then
+  has_port=0
+  has_host=0
+  for a in "${args[@]}"; do
+    case "$a" in
+      --port|--port=*) has_port=1 ;;
+      --hostname|--hostname=*) has_host=1 ;;
+    esac
+  done
+  if [ "$has_port" -eq 0 ]; then
+    args+=(--port "$OPERATOR_PORT")
+  fi
+  if [ "$has_host" -eq 0 ]; then
+    args+=(--hostname "$OPERATOR_BIND")
+  fi
+fi
+
+if [ ! -f "$CLI_ENTRY" ]; then
+  die "local CLI entry not found: $CLI_ENTRY"
+fi
+
+log "exec: $BUN_BIN run --conditions=browser $CLI_ENTRY ${args[*]}"
+
+# Exec local source only — never `opencode` from PATH.
+cd "$REPO_ROOT/packages/opencode"
+exec "$BUN_BIN" run --conditions=browser "$CLI_ENTRY" "${args[@]}"

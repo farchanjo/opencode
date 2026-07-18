@@ -2,7 +2,7 @@
 id: 019f6f5e-884e-7e33-ac5a-df5c0f03b450
 number: 007
 slug: add-a-unified-native-operator-control-plane-for-all-opencode
-status: specified
+status: implemented
 created_at: 2026-07-17T09:18:14.095054Z
 ---
 
@@ -54,7 +54,7 @@ event store.
 
 **ADR.** Architectural authority for native command authority is recorded in
 [ADR-0003](../../adr/0003-operator-control-plane-and-native-command-authority.md)
-(proposed; not accepted). This specification does not substitute for that ADR.
+(**accepted**, 2026-07-17). This specification does not substitute for that ADR.
 
 ## User Stories
 
@@ -554,43 +554,218 @@ Priority uses P1 (must have), P2 (should have), and P3 (could have).
 - Exposing secrets in args, history, output, config JSON, or plain audit.
 - Automatic transcript injection of admin output.
 - Public unauthenticated control API.
+- Public remote operator API in V1 (loopback-only only).
+- Multi-user operator RBAC in V1 (deferred).
+- Vault multi-user secret backend in V1 (deferred; OS keychain + CI env-ref only).
+- App/Desktop parity in Phase 1 (deferred to Phase 2).
 - Hardcoding provider/model IDs in product policy.
 - Replacing domain business logic of Features 001–006 or Feature 008 MCP runtime.
-- Accepting ADR-0003 (remains proposed until explicit acceptance).
 - Runtime MCP tools/resources as Feature 007 command IDs or ToolRegistry admin.
 - Automatic embedding/reranker fallback pools or silent model substitution.
 - Architect/Manager selection of embedding/reranker bindings.
 - Inferring rerank capability from model name alone.
+- Touching `~/.config/opencode` or production processes from Feature 007 isolation
+  harness / sandbox runs.
+- Registering real OS services, real OAuth clients, or non-sandbox network listeners
+  during Feature 007 development.
 
-## Clarification Questions
+## Clarification Outcomes
 
-1. What is the exact local operator principal / RBAC model for single-user vs future
-   multi-user, including manager-view read-only?
-2. What is the full scope matrix (global/project/session/root-tree) per operation,
-   including which ops forbid narrower scope?
-3. What persistence schema, snapshot retention, and outbox/reconciliation design apply
-   per authority?
-4. What internal API transport and exposure (loopback-only vs remote) and CSRF/origin
-   rules apply?
-5. What final command naming and alias generation rules apply across palette/slash/CLI?
-6. Which mutations require interactive confirmation vs non-interactive `--yes`?
-7. What rollback retention window and snapshot count are defaults?
-8. Which secret backends are mandatory vs optional (OS keychain, vault, env ref)?
-9. How are plugin/MCP reserved-name lists versioned and published to integrators?
-10. What is the offline operation matrix (which ops require network/provider)?
-11. What is the App/Desktop parity phase order relative to TUI/CLI?
-12. Is multi-user operator RBAC in V1 or deferred?
-13. What audit retention and export policy apply?
-14. What feature-flag and migration sequence deprecates legacy admin-like custom names?
-15. Exact OpenAI-compatible adapter reuse and `/v1/rerank` / chat-rerank schemas?
-16. Local network allow policy and SSRF denylist defaults?
-17. Semantic probe fixtures, validation thresholds, and confirmation matrix?
-18. Global vs project scope defaults for semantic profiles/bindings?
+All 18 clarification questions are **closed** by the user-approved V1 package
+(2026-07-17). No residual open parameters remain for plan/tasks. Native-only
+authority and no-LLM-setup decisions are fixed and MUST NOT be reopened.
+
+### Q1 / Q12 — Principals and multi-user
+
+| Principal                 | V1 capability                                                           | Mutates config |
+| ------------------------- | ----------------------------------------------------------------------- | -------------- |
+| `operator`                | Local single-user default; full command/query after local identity bind | Yes            |
+| `system`                  | Internal automation (jobs, migration, recovery) under system scope      | Yes (system)   |
+| `manager-view`            | Optional read-only view of effective state, versions, audit summaries   | No             |
+| LLM / tool / MCP / plugin | Never a config-mutating actor; denied on operator mutations             | No             |
+
+- V1 is **local single-user operator** only.
+- Multi-user operator RBAC is **deferred** beyond V1 and requires a future ADR.
+- Cross-project privileged access fails closed even for the local operator when the
+  principal is project-bound to another project.
+
+### Q2 / Q18 — Scope matrix and semantic/LangLock defaults
+
+| Scope       | Default use                                                                | Hard policy                          |
+| ----------- | -------------------------------------------------------------------------- | ------------------------------------ |
+| `project`   | **Default** for project-bound config, LangLock, semantic profiles/bindings | Cannot relax global hard policy      |
+| `global`    | Templates only; copy-on-write into project on first use                    | Templates never override hard policy |
+| `session`   | Process/task control (`process.*`, `task.*`) bound to Session              | Session cannot widen project/global  |
+| `root-tree` | Workspace / root-tree ops only                                             | Explicit; no silent cross-tree       |
+
+**Per-domain scope defaults (normative):**
+
+| Domain group                          | Allowed scopes                          | Default | Notes                                 |
+| ------------------------------------- | --------------------------------------- | ------- | ------------------------------------- |
+| `telemetry.*`, `smart.*`, `routing.*` | global, project                         | project | Session forbidden for mutation        |
+| `budget.*`, `pools.*`                 | global, project                         | project | Hard budgets not relaxable by session |
+| `process.*`, `task.*`                 | session (required), project (list/tree) | session | Mutate only bound Session             |
+| `jobs.*`                              | global, project                         | project | Create/run-now project-bound          |
+| `langlock.*`                          | global (template), project              | project | Global = template copy-on-write       |
+| `output.*` consume                    | session/project per auth                | as auth | Re-eval per action                    |
+| `output.*` admin                      | project (default); global retention     | project | Cross-project share deny-by-default   |
+| `semantic.*` profiles/bindings/index  | global (template), project              | project | Global templates copy-on-write        |
+| `mcp.*`                               | global, project                         | project | Server add/update project-bound       |
+
+Narrower scopes MUST NOT relax hard policy defined at a wider authority.
+
+### Q3 / Q7 / Q13 — Persistence, snapshots, audit, outbox
+
+| Concern               | V1 decision                                                                                     |
+| --------------------- | ----------------------------------------------------------------------------------------------- |
+| Config authority      | **Reuse Config.Service** — no parallel config store                                             |
+| Event/audit authority | **Reuse EventV2** — no parallel event store                                                     |
+| Writes                | Atomic per authority                                                                            |
+| Concurrency           | Optimistic **CAS** with version; conflict is structured error                                   |
+| Retries               | **Idempotency key** required on mutations; same key → idempotent success                        |
+| Snapshots             | Keep **10 snapshots or 30 days**, whichever limit is hit first                                  |
+| Cutover rollback      | Explicit **rollback slot** retained for last successful cutover                                 |
+| Audit retention       | **90 days**; export is operator admin with confirmation                                         |
+| Outbox                | **External systems only** (e.g. remote OTLP, remote index); local Config/EventV2 need no outbox |
+
+### Q4 — Internal API transport and exposure
+
+| Rule               | V1 decision                                                                                         |
+| ------------------ | --------------------------------------------------------------------------------------------------- |
+| Bind address       | **Loopback only** (`127.0.0.1` / `::1`)                                                             |
+| Public remote API  | **Forbidden in V1**                                                                                 |
+| Operator principal | Required for mutations; unauthenticated denied                                                      |
+| CSRF / Origin      | Not required on pure loopback; **mandatory** if any future non-loopback exposure is added (new ADR) |
+| LLM shell/curl     | Denied without operator principal; no credential mint                                               |
+| Dev sandbox port   | **14096** under isolation harness (see plan/quickstart)                                             |
+
+### Q5 — Command naming and alias generation
+
+| Surface   | Rule                                                                        |
+| --------- | --------------------------------------------------------------------------- |
+| Canonical | Dotted IDs: `domain.operation` (and `domain.sub.operation` when needed)     |
+| Registry  | Feature 007 registry **generates** palette labels, slash aliases, CLI verbs |
+| Slash     | `/op.<domain>.<op>` form from registry; no free-form admin slash            |
+| CLI       | `opencode op <domain> <op>` (human default; `--json` machine)               |
+| Palette   | Registry title + dotted ID; same command ID as slash/CLI                    |
+| Clients   | MUST NOT hardcode divergent names; consume registry-generated aliases       |
+
+### Q6 — Confirmation vs `--yes`
+
+**Always require interactive confirmation (TTY):**
+
+`cutover`, `rollback`, `delete`, `disable` (when bound), `purge`,
+`rotate-secret`, `experimental.enable`, `export`, `share`.
+
+| Channel               | `--yes` / auto-confirm                                            |
+| --------------------- | ----------------------------------------------------------------- |
+| Interactive TUI/slash | **Never** auto-yes; always prompt for listed ops                  |
+| CLI TTY               | Prompt; `--yes` rejected without non-TTY + authenticated          |
+| CLI non-TTY           | `--yes` allowed **only** when operator principal is authenticated |
+| Internal API/SDK      | Explicit `confirm: true` field required for listed ops            |
+
+### Q8 — Secret backends
+
+| Backend     | V1 status                                                  |
+| ----------- | ---------------------------------------------------------- |
+| OS keychain | **Mandatory** for stored secrets                           |
+| Env-ref     | Allowed for **CI only** (reference, not value)             |
+| Vault       | Deferred beyond V1                                         |
+| Multi-user  | Deferred beyond V1                                         |
+| Plaintext   | **Forbidden** in args, history, output, config JSON, audit |
+
+### Q9 — Reserved operator IDs versioning
+
+- Reserved operator IDs and aliases are **versioned** in the internal SDK package and
+  published docs (`reserved-operator-ids` catalog).
+- Plugin, MCP, custom command, and PromptTemplate registration **rejects collisions**
+  at register/migrate time with structured `reserved_name` error.
+- Catalog version bumps are additive; renames require migration and deprecation notes.
+
+### Q10 — Offline operation matrix
+
+| Operation class                                  | Offline (no provider/network) | Notes                                       |
+| ------------------------------------------------ | ----------------------------- | ------------------------------------------- |
+| `*.status`, `*.show`, `*.list` (local state)     | Yes                           | Local Config/EventV2 only                   |
+| `smart.on/off/auto`, `langlock.set/reset`        | Yes                           | Local mutation + audit                      |
+| `budget.*`, `pools.*` set/reset/validate         | Yes                           | Local policy                                |
+| `routing.test` (baseline)                        | Yes                           | Zero model/provider calls                   |
+| `telemetry.on/off/configure/show`                | Yes                           | Local config                                |
+| `telemetry.test` connectivity                    | Network required              | Explicit `unavailable` if offline           |
+| `process.*` / `task.*` local control             | Yes                           | Local process table                         |
+| `jobs.create/update/enable/disable/delete/list`  | Yes                           | Local definitions                           |
+| `jobs.run-now` when job needs network            | Partial                       | Job starts; domain reports unavailable      |
+| `semantic.*.show/status/list/select` (local)     | Yes                           | No model call                               |
+| `semantic.provider.test`, `*.validate`, discover | Network required              | Fixed native probe only                     |
+| `semantic.*.reindex/cutover`                     | Domain-dependent              | Local CAS; index backend may be unavailable |
+| `mcp.server.*` connect/test                      | Network required              | Explicit `unavailable`                      |
+| `output.stat/read/follow` local spool            | Yes                           | Local FS authority                          |
+| `output.export/share` remote                     | Network may be required       | Explicit unavailable                        |
+
+Human and JSON outputs MUST use structured outcome `unavailable` distinct from
+`unauthorized`, `invalid_argument`, `conflict`, and `transport_error`.
+
+### Q11 — App/Desktop phase order
+
+| Phase       | Surfaces                                                                                         |
+| ----------- | ------------------------------------------------------------------------------------------------ |
+| **Phase 1** | Core control plane, TUI Settings/palette/native slash, CLI human+JSON, internal loopback API/SDK |
+| **Phase 2** | App and Desktop Settings/commands parity (same command IDs)                                      |
+
+Phase 1 MUST NOT claim App/Desktop complete.
+
+### Q14 — Feature flags and migration sequence
+
+1. Flag `operator_control_plane` defaults off until isolation harness + core dispatcher green.
+2. Enable registry + reserved-name rejection (read path) without removing non-admin customs.
+3. Migrate legacy custom names that collide: **reject or reserve**; non-colliding non-admin customs remain.
+4. Enable mutation path (CAS/idempotency/audit) behind flag.
+5. Enable TUI/CLI/slash adapters.
+6. Enable internal loopback API/SDK.
+7. Document reserved catalog version in SDK release notes.
+
+### Q15 — OpenAI-compatible adapter and rerank schemas
+
+- Reuse Feature 006 schema SSOT for `SemanticProviderProfile`, `SemanticModelDescriptor`,
+  `SemanticModelBinding`.
+- Embedding: OpenAI-compatible `/v1/embeddings` with fixed native deterministic probe.
+- Rerank profile A: `/v1/rerank`. Profile B: structured-chat fixed native schema.
+  Profile C: embedding-similarity only — never badged or selected as reranker.
+- Feature 007 command payloads reference those schemas; MUST NOT redefine fields.
+
+### Q16 — Local network allow and SSRF
+
+- SSRF-safe URL parse; scheme/host/port policy.
+- Localhost/LAN only with **explicit operator allowance** on the profile.
+- Resolve DNS and **re-validate** each connection/redirect against policy.
+- Block metadata, link-local, and private addresses unless explicit local profile allowance.
+- Remote TLS by default; insecure HTTP only for explicit local profile with visible warning.
+
+### Q17 — Semantic probes and confirmation
+
+- Multilingual fixed semantic probes are **fixed fixtures** in Feature 006/007 specs
+  (no open probe set in V1).
+- Validate thresholds: wrong dimension or failed embedding probe → reject select with
+  structured error; live binding unchanged.
+- Confirmation matrix for semantic: `cutover`, `rollback`, bound `delete`/`disable`,
+  `rotate-secret` follow Q6.
+
+### Fixed decisions (not reopenable)
+
+- Native-only management authority; no LLM setup path.
+- No parallel Config or EventV2 store.
+- Lexical/catalog fallback is **default** when semantic binding/index unavailable;
+  fail-closed is **opt-in**.
+- ADR-0003 is **accepted** (this clarify package).
 
 ## Related Features and Decisions
 
-- [ADR-0003 — Operator Control Plane and native command authority](../../adr/0003-operator-control-plane-and-native-command-authority.md) — proposed; semantic binding immutability and no silent substitution.
+- [ADR-0003 — Operator Control Plane and native command authority](../../adr/0003-operator-control-plane-and-native-command-authority.md) — **accepted**; semantic binding immutability and no silent substitution.
 - [Feature 007 research](research.md) — evidence and confirmed native-only boundary; not a decision.
+- [Reserved catalog v1 (T048)](reserved-catalog-v1.md) — integrator SSOT for IDs, surfaces, flag, scopes, offline/SSRF, keychain, audit, errors; Phase 2 T090–T092 deferred.
+- [Quickstart & runbook](quickstart.md) — sandbox XDG/HOME/TMPDIR, port 14096, flag enable/disable, troubleshooting.
+- [Migration legacy admin names](migration-legacy-admin-names.md) — dry-run; one-release warn; no auto-rename.
+- [Command envelope contract](contracts/command-envelope.md) — request/result/error taxonomy including `audit_pending`.
 - [Feature 001 Smart Agent Routing and Telemetry](../001-define-one-cohesive-smart-agent-routing-and-opentelemetry/spec.md) — smart/routing/telemetry/`budget.*`/`pools.*`; route record captures binding versions; Architect/Manager do not select embedding/reranker.
 - [Feature 002 Task Lifecycle Event Bus and Process Table](../002-build-an-event-driven-asynchronous-task-lifecycle-engine/spec.md) — process/task control; reindex/probe jobs; binding version metadata.
 - [Feature 003 Scheduled Jobs](../003-add-persistent-bun-native-scheduled-jobs-with-event/spec.md) — jobs domain ops; reconcile uses pinned binding; cannot change it.
@@ -603,17 +778,21 @@ Priority uses P1 (must have), P2 (should have), and P3 (could have).
 
 ## Initial Traceability Matrix
 
-| Outcome                    | Requirements            | Acceptance scenarios | Phase |
-| -------------------------- | ----------------------- | -------------------- | ----- |
-| Native-only authority      | FR1–FR7                 | 2–4, 8, 16, 24       | 1     |
-| Unified dispatcher + reuse | FR8–FR12                | 1, 9                 | 1     |
-| Principals and scopes      | FR13–FR15               | 8, 11                | 1     |
-| CAS / audit / secrets      | FR16–FR18               | 9–10, 18, 26         | 1     |
-| Adapter parity             | FR19–FR21               | 1, 5, 15, 34         | 1–2   |
-| Todo data vs setup plane   | FR22–FR24               | 12                   | 1     |
-| Output consume vs admin    | FR25–FR26               | 13                   | 1     |
-| Domain operation catalog   | FR27–FR32               | 6–7, 14              | 1–2   |
-| Semantic fixed bindings    | FR33–FR40               | 17–36                | 1     |
-| MCP operator catalog       | FR41–FR44               | 15 (via 008 AC)      | 1–2   |
-| Security/privacy/obs       | NFRs, security, privacy | 2, 8, 10–11, 33      | 1–2   |
-| Migration / reserved names | FR7, FR12               | 3, 16                | 2     |
+| Outcome                      | Requirements            | Acceptance scenarios | Phase |
+| ---------------------------- | ----------------------- | -------------------- | ----- |
+| Native-only authority        | FR1–FR7                 | 2–4, 8, 16, 24       | 1     |
+| Unified dispatcher + reuse   | FR8–FR12                | 1, 9                 | 1     |
+| Principals and scopes        | FR13–FR15               | 8, 11                | 1     |
+| CAS / audit / secrets        | FR16–FR18               | 9–10, 18, 26         | 1     |
+| Adapter parity (TUI/CLI/API) | FR19–FR21               | 1, 5, 15, 34         | 1     |
+| Adapter parity (App/Desktop) | FR19                    | 1, 34                | 2     |
+| Todo data vs setup plane     | FR22–FR24               | 12                   | 1     |
+| Output consume vs admin      | FR25–FR26               | 13                   | 1     |
+| Domain operation catalog     | FR27–FR32               | 6–7, 14              | 1     |
+| Semantic fixed bindings      | FR33–FR40               | 17–36                | 1     |
+| MCP operator catalog         | FR41–FR44               | 15 (via 008 AC)      | 1     |
+| Security/privacy/obs         | NFRs, security, privacy | 2, 8, 10–11, 33      | 1     |
+| Migration / reserved names   | FR7, FR12               | 3, 16                | 1     |
+| Clarification package V1     | Q1–Q18 closed           | All matrices         | 1     |
+
+## Clarifications

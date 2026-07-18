@@ -15,6 +15,7 @@ import path from "path"
 import { fileURLToPath } from "url"
 import { useLocal } from "../../context/local"
 import { Flag } from "@opencode-ai/core/flag/flag"
+import { isOperatorSlash } from "@opencode-ai/core/operator"
 import { tint, useTheme } from "../../context/theme"
 import { EmptyBorder, SplitBorder } from "../../ui/border"
 import { useTuiPaths, useTuiTerminalEnvironment } from "../../context/runtime"
@@ -45,6 +46,7 @@ import { createColors, createFrames } from "../../ui/spinner"
 import { useDialog } from "../../ui/dialog"
 import { DialogProvider as DialogProviderConnect } from "../dialog-provider"
 import { DialogAlert } from "../../ui/dialog-alert"
+import { DialogConfirm } from "../../ui/dialog-confirm"
 import { useToast } from "../../ui/toast"
 import { useKV } from "../../context/kv"
 import { createFadeIn } from "../../util/signal"
@@ -57,6 +59,7 @@ import { usePromptWorkspace } from "./workspace"
 import { usePromptMove } from "./move"
 import { readLocalAttachment } from "./local-attachment"
 import { useLocation } from "../../context/location"
+import { useOperatorSlash } from "../../context/operator-slash"
 
 registerOpencodeSpinner()
 
@@ -160,6 +163,7 @@ export function Prompt(props: PromptProps) {
   const tuiConfig = useTuiConfig()
   const dialog = useDialog()
   const toast = useToast()
+  const operatorSlash = useOperatorSlash()
   const status = createMemo(() => sync.data.session_status?.[props.sessionID ?? ""] ?? { type: "idle" })
   const history = usePromptHistory()
   const stash = usePromptStash()
@@ -943,6 +947,99 @@ export function Prompt(props: PromptProps) {
     }
   }
 
+  function clearOperatorPrompt() {
+    if (input && !input.isDestroyed) input.extmarks.clear()
+    setStore("prompt", {
+      input: "",
+      parts: [],
+    })
+    setStore("extmarkToPartIndex", new Map())
+    props.onSubmit?.()
+  }
+
+  function showOperatorDisplay(display: {
+    title: string
+    message: string
+    variant: "info" | "success" | "warning" | "error"
+    auditPending?: boolean
+  }) {
+    const message = display.auditPending ? `${display.message} [audit pending]` : display.message
+    toast.show({
+      title: display.title,
+      message,
+      variant: display.variant,
+      duration: display.auditPending || display.variant === "warning" ? 8000 : 5000,
+    })
+  }
+
+  /**
+   * Native operator slash path: no Message/Part/transcript, no provider/LLM.
+   * Confirmation uses DialogConfirm; cancel leaves config/version/audit unchanged.
+   */
+  async function handleOperatorSlash(text: string) {
+    const projectId = project.project()
+    const sessionId = props.sessionID
+    const first = await operatorSlash.tryHandle({ text, projectId, sessionId })
+
+    if (first === null) {
+      // No host-injected port: still never fall through to LLM/custom/MCP.
+      showOperatorDisplay({
+        title: "Operator unavailable",
+        message: "Operator control plane is not available in this TUI session",
+        variant: "warning",
+      })
+      clearOperatorPrompt()
+      return true
+    }
+
+    if (!first.handled) {
+      // Should not happen for reserved form; block fallback defensively.
+      showOperatorDisplay({
+        title: "Operator",
+        message: "Reserved operator slash was not handled",
+        variant: "error",
+      })
+      clearOperatorPrompt()
+      return true
+    }
+
+    if (first.needsConfirmation) {
+      const ok = await DialogConfirm.show(
+        dialog,
+        "Confirm operator command",
+        first.needsConfirmation.message,
+      )
+      if (!ok) {
+        operatorSlash.port?.cancelConfirmation?.(first.needsConfirmation.token)
+        showOperatorDisplay({
+          title: "Operator cancelled",
+          message: `${first.needsConfirmation.commandId} cancelled`,
+          variant: "info",
+        })
+        clearOperatorPrompt()
+        return true
+      }
+
+      const second = await operatorSlash.tryHandle({
+        text,
+        projectId,
+        sessionId,
+        confirmToken: first.needsConfirmation.token,
+      })
+      if (second && second.handled) {
+        showOperatorDisplay(second.display)
+      } else {
+        showOperatorDisplay(first.display)
+      }
+      clearOperatorPrompt()
+      return true
+    }
+
+    showOperatorDisplay(first.display)
+    clearOperatorPrompt()
+    return true
+  }
+
   async function submitInner() {
     workspace.clearNotice()
 
@@ -964,6 +1061,12 @@ export function Prompt(props: PromptProps) {
       void exit()
       return true
     }
+
+    // T029–T031: reserved operator slash BEFORE shell/model/session/custom/LLM (all modes).
+    if (isOperatorSlash(trimmed)) {
+      return await handleOperatorSlash(trimmed)
+    }
+
     const selectedModel = local.model.current()
     if (!selectedModel) {
       void promptModelWarning()

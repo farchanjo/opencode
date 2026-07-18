@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 date: 2026-07-17
 deciders: [project maintainers]
 ---
@@ -24,6 +24,8 @@ prompt, custom, MCP, plugin, and ToolRegistry paths never hold management author
 - Safe mutations: operator principal, explicit scope, CAS, idempotency, audit.
 - Domain features keep business logic; control plane owns dispatch/auth/audit/adapters.
 - Align Features 001–008 without inventing parallel config or event stores.
+- Local single-user V1 with explicit deferral of multi-user RBAC and vault backends.
+- Loopback-only internal operator API in V1; App/Desktop parity deferred to Phase 2.
 
 ## Considered Options
 
@@ -84,7 +86,44 @@ We choose **management and setup only via the unified native core control plane*
   under Permission only — never Feature 007 command IDs and never ToolRegistry admin.
   Experimental Tasks/sampling/elicitation remain disabled by default.
 
-**This ADR remains proposed.** It is not accepted by this write.
+### V1 decisions accepted with this ADR (Feature 007 clarify package)
+
+User-approved V1 package (2026-07-17); full matrices live in Feature 007 `spec.md`
+Clarification Outcomes:
+
+1. **Principals.** Local single-user operator. Principals: `operator`, `system`, optional
+   read-only `manager-view`. Multi-user RBAC deferred beyond V1.
+2. **API exposure.** Internal operator API is loopback-only in V1. No public remote
+   control API in V1. CSRF/origin enforcement is mandatory when any future non-loopback
+   exposure is introduced.
+3. **Scopes.** Project scope is default for project-bound config. Global is for templates
+   only (copy-on-write into project). Session scope for process/task ops. Root-tree for
+   workspace ops. Hard policy cannot be relaxed by a narrower scope.
+4. **Persistence.** Reuse Config.Service and EventV2. Atomic writes, CAS, and
+   idempotency are always on. Outbox/reconciliation applies only to external systems.
+   Snapshot retention: 10 snapshots or 30 days, whichever first. Audit retention: 90 days.
+   Cutover keeps an explicit rollback slot.
+5. **Naming.** Canonical IDs are dotted (`domain.operation`). Surface aliases (slash/CLI/
+   palette) are registry-generated; clients MUST NOT hardcode divergent names.
+6. **Confirmations.** Cutover, rollback, delete, disable, purge, secret rotate,
+   experimental enable, export, and share require interactive confirmation. `--yes` is
+   allowed only for authenticated non-TTY CLI; native slash never auto-yes.
+7. **Secrets.** OS keychain is mandatory for stored secrets. Env-ref is allowed for CI.
+   Vault and multi-user secret backends are deferred. Plaintext secret persistence is
+   forbidden.
+8. **Reserved IDs.** Reserved operator IDs are versioned in SDK and docs. Collisions at
+   plugin/MCP/custom registration are rejected.
+9. **Offline.** Offline matrix is normative (status/set local ops work offline; network
+   ops report explicit `unavailable`).
+10. **Delivery.** Phase 1: core + TUI/CLI/internal SDK. App/Desktop parity is Phase 2.
+11. **Semantic defaults.** LangLock and semantic profiles/bindings default to project
+    scope; global templates use copy-on-write. Unavailable semantic path defaults to
+    lexical/catalog fallback; fail-closed is opt-in.
+12. **SSRF and probes.** SSRF deny/revalidation and multilingual fixed semantic probes
+    follow Feature 006/007 spec MUST rules; no open parameters remain for V1.
+
+**This ADR is accepted** (user-approved V1 package, 2026-07-17). ADR-0001 and ADR-0002
+remain proposed.
 
 ### Consequences
 
@@ -94,19 +133,26 @@ We choose **management and setup only via the unified native core control plane*
 - Eliminates LLM/prompt/MCP/plugin admin paths and parallel command registries.
 - Enables consistent audit, CAS, offline status, and secret redaction.
 - Domain features can register canonical operation IDs without re-implementing adapters.
+- Closed V1 principal, scope, confirmation, offline, secret, and retention matrices
+  unblock plan/tasks without reopening native-only authority.
 
-#### Trade-offs and open questions
+#### Trade-offs
 
-- Principal/RBAC, scope matrix, persistence/outbox, API exposure, naming/aliases,
-  confirmation/`--yes`, rollback retention, secret backend, CSRF, offline matrix,
-  App/Desktop parity phase, multi-user, audit retention, and feature-flag migration
-  remain open in Feature 007 clarification questions.
+- Multi-user RBAC, vault backends, and public/remote operator API are deferred; V1 is
+  local single-user loopback.
+- App/Desktop parity is Phase 2; Phase 1 ships core + TUI/CLI/internal SDK only.
 - Migration must reject or reserve legacy custom admin-like names without breaking
   non-admin custom commands.
-- Domain feature specs must normalize wording to Feature 007 IDs (done as related
-  patches; business logic remains domain-owned).
-- Semantic probe schemas, local network allowlists, validation thresholds, and
-  cutover UX remain open in Features 006/007 clarification questions.
+- Domain feature specs must normalize wording to Feature 007 IDs (related patches;
+  business logic remains domain-owned).
+- Isolation harness and sandbox prefix (port 14096, `.dev/`, no prod register/service/
+  OAuth) are mandatory before any implement-phase OpenCode process.
+
+#### Follow-ups
+
+- Feature 007 plan/tasks implement Phase 1 slices and isolation harness first.
+- ADR-0001 / ADR-0002 acceptance remains separate.
+- Multi-user, vault, and non-loopback API require a new ADR before implementation.
 
 ## Related
 

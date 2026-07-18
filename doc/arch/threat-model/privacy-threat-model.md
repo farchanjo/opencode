@@ -1,27 +1,26 @@
 # Privacy Threat Model (LINDDUN)
 
-How opencode reasons about privacy threats to the people whose data it
-touches. This model uses LINDDUN, which is deliberately *data-subject focused*:
-where the sibling STRIDE threat model (the other documents under
-`doc/arch/threat-model/`) asks "how can an attacker harm the system?", LINDDUN
-asks "how can the system harm the privacy of a person?". The seven LINDDUN
-categories are Linking, Identifying, Non-repudiation, Detecting,
-Data-disclosure, Unawareness, and Non-compliance.
+How OpenCode reasons about privacy threats to people whose data it touches.
+LINDDUN is data-subject focused. Feature 007 operator audit, secrets, and
+telemetry constraints are the primary Phase 1 mitigations documented here.
 
-Operators own this document: edit the threats as opencode evolves, keep
-every cell concrete, and replace these generic starters with the real privacy
-threats and mitigations for this system. `speckit validate` scans the table
-below (never the prose around it), so keep it accurate and cover every LINDDUN
-category. The `Category` column uses the seven lowercase LINDDUN tokens exactly:
-linking, identifying, non-repudiation, detecting, data-disclosure, unawareness,
-and non-compliance.
+Operators own this document. `speckit validate` scans the table below. The
+`Category` column uses the seven lowercase LINDDUN tokens exactly: linking,
+identifying, non-repudiation, detecting, data-disclosure, unawareness, and
+non-compliance.
 
-| ID | Category | Threat | Affected Data | Mitigation |
-|----|----------|--------|---------------|------------|
-| PT-01 | linking | two separate records or actions are correlated back to the same person | request logs and stored identifiers | rotate and salt identifiers, and separate logs by purpose |
-| PT-02 | identifying | an operator identity appears in project config and re-identifies a real person | committer name and email | recorded only in committed config the operator authored, never third-party data |
-| PT-03 | non-repudiation | a person is unable to plausibly deny that they performed a recorded action | signed or attributed action history | scope retention to what a documented purpose requires |
-| PT-04 | detecting | the mere presence or existence of a person is inferred from observable behaviour | request timing and error responses | pad, batch, or normalise observable side effects |
-| PT-05 | data-disclosure | personal data is exposed to parties beyond its stated purpose | stored profile and exported reports | encrypt at rest, minimise fields, and enforce least-privilege access |
-| PT-06 | unawareness | a person is unaware their data is processed or cannot exercise control over it | consent and preference state | present a clear privacy notice and honour data-subject requests |
-| PT-07 | non-compliance | processing drifts out of line with a stated policy or regulation | processing and retention records | audit processing against the retention and privacy policy on a schedule |
+| ID    | Category        | Threat                                                                                         | Affected Data                                | Mitigation                                                                                                              |
+| ----- | --------------- | ---------------------------------------------------------------------------------------------- | -------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| PT-01 | linking         | operator audit records correlated across projects re-identify a person                         | EventV2 operator.audit actorRef + scope refs | project-bound principals fail-closed; audit fields are content-free versions/outcomes only; no payload/body in audit    |
+| PT-02 | identifying     | local operator subject or committer identity appears in shared exports                         | principal subject, config export/share       | export/share require confirmation; redacted outputs; multi-user identity directory deferred (T092)                      |
+| PT-03 | non-repudiation | operator cannot show or bound who performed a management mutation                              | audit stream retention                       | every mutation projects secret-free audit; 90-day retention; `audit_pending` preserves CAS while reconcile completes    |
+| PT-04 | detecting       | presence of private provider endpoints inferred from error side channels                       | SSRF denials, connectivity errors            | structured `unavailable`/`ssrf_denied` without leaking internal network maps; DNS fail-closed                           |
+| PT-05 | data-disclosure | API keys or OAuth material leak via config JSON, logs, slash output, or OTEL labels            | secrets, tokens, headers                     | SecretRef only (keychain/env-ref); plaintext scanner; redacted slash/CLI; OTEL allowlist excludes secrets/paths/content |
+| PT-06 | unawareness     | user unaware that management actions are audited or that telemetry test signals leave the host | audit + telemetry.test                       | native operator surfaces show outcomes; telemetry off by default until operator enables; test signal clearly marked     |
+| PT-07 | non-compliance  | audit/config retention drifts past stated policy or dual stores diverge                        | snapshots, audit rows, config authorities    | single Config.Service + EventV2; snapshot ≤10/30d; audit 90d prune; no parallel admin stores                            |
+
+## Phase 2 privacy deferrals
+
+Multi-user vault backends, remote non-loopback API CSRF/origin, and App/Desktop
+shared identity surfaces are **not** Phase 1 claims (T090–T092). Do not treat
+their absence as a Phase 1 privacy defect; document residual risk until Phase 2 ADR.

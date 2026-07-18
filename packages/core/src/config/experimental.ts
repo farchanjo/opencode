@@ -15,4 +15,8 @@ export class Policy extends Schema.Class<Policy>("ConfigV2.Experimental.Policy")
 
 export class Experimental extends Schema.Class<Experimental>("ConfigV2.Experimental")({
   policies: Policy.pipe(Schema.Array, Schema.optional),
+  /** Feature 007: native operator control plane (default false). */
+  operator_control_plane: Schema.Boolean.pipe(Schema.optional),
+  /** Feature 007: treat operator connectivity as offline when true. */
+  offline: Schema.Boolean.pipe(Schema.optional),
 }) {}

@@ -47,6 +47,30 @@ export const rpc = {
       body,
     }
   },
+  /**
+   * Trusted operator path for local TUI (no spoofable client principal).
+   * Directory/project come from the TUI parent process via RPC (same trust boundary as Instance load).
+   */
+  async operatorFetch(input: {
+    directory: string
+    projectId?: string | null
+    sessionId?: string | null
+    url: string
+    method: string
+    headers?: Record<string, string>
+    body?: string
+  }) {
+    const { handleWorkerOperatorFetch } = await import("@/operator/worker-adapter")
+    return handleWorkerOperatorFetch({
+      directory: input.directory,
+      projectId: input.projectId ?? null,
+      sessionId: input.sessionId,
+      url: input.url,
+      method: input.method,
+      headers: input.headers,
+      body: input.body,
+    })
+  },
   snapshot() {
     const result = writeHeapSnapshot("server.heapsnapshot")
     return result

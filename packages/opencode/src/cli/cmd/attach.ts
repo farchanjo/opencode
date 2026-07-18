@@ -130,6 +130,17 @@ export const AttachCommand = cmd({
     const { Effect } = await import("effect")
     const { run } = await import("../tui/layer")
     const { createLegacyTuiPluginHost } = await import("@/plugin/tui/runtime")
+    const { wireOperatorSlashForTui } = await import("@/operator/tui-wire")
+    // Attach/remote: typed Operator SDK/HTTP with server-derived auth; never session.command.
+    // Session scope is supplied at tryHandle time from TUI sessionID (not body principal).
+    const operatorSlash = wireOperatorSlashForTui({
+      mode: "remote",
+      baseUrl: args.url,
+      headers,
+      password: args.password,
+      username: args.username,
+      getSessionId: () => args.session,
+    })
     await Effect.runPromise(
       run({
         url: args.url,
@@ -142,6 +153,7 @@ export const AttachCommand = cmd({
         },
         directory,
         headers,
+        operatorSlash,
       }),
     )
   },

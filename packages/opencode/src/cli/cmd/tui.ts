@@ -270,6 +270,21 @@ export const TuiThreadCommand = cmd({
         const { Effect } = await import("effect")
         const { run } = await import("../tui/layer")
         const { createLegacyTuiPluginHost } = await import("@/plugin/tui/runtime")
+        const { wireOperatorSlashForTui } = await import("@/operator/tui-wire")
+        // Local: trusted worker RPC operatorFetch (same worker as session SDK) — no parent live stack.
+        // External: typed Operator SDK/HTTP with server auth.
+        const operatorSlash = external
+          ? wireOperatorSlashForTui({
+              mode: "remote",
+              baseUrl: transport.url,
+              fetch: transport.fetch,
+              headers: transport.headers,
+            })
+          : wireOperatorSlashForTui({
+              mode: "local",
+              directory: cwd,
+              operatorFetch: async (input) => await client.call("operatorFetch", input),
+            })
         await Effect.runPromise(
           run({
             url: transport.url,
@@ -284,6 +299,7 @@ export const TuiThreadCommand = cmd({
             fetch: transport.fetch,
             headers: transport.headers,
             events: transport.events,
+            operatorSlash,
             args: {
               continue: args.continue,
               sessionID: args.session,

@@ -3,7 +3,7 @@ export * as EventV2 from "./event"
 import { Cause, Context, Effect, Layer, Option, PubSub, Queue, Schema, Stream } from "effect"
 import { Event } from "@opencode-ai/schema/event"
 import type { Data, Definition, Payload } from "@opencode-ai/schema/event"
-import { and, asc, eq, gt, inArray } from "drizzle-orm"
+import { and, asc, eq, gt, inArray, sql } from "drizzle-orm"
 import { Database } from "./database/database"
 import { EventSequenceTable, EventTable } from "./event/sql"
 import { Location } from "./location"
@@ -145,6 +145,31 @@ export interface Interface {
   ) => Effect.Effect<string | undefined>
   readonly remove: (aggregateID: string) => Effect.Effect<void>
   readonly claim: (aggregateID: string, ownerID: string) => Effect.Effect<void>
+  /**
+   * Hard-prune durable rows for an aggregate matching versioned type prefix
+   * and data.createdAtMs < olderThanMs. Bounded by limit. Preserves other types.
+   * Feature 007 operator.audit retention (T024).
+   */
+  readonly pruneDurable: (input: {
+    readonly aggregateID: string
+    /** Versioned type key prefix, e.g. "operator.audit" matches operator.audit.1 */
+    readonly typePrefix: string
+    readonly olderThanMs: number
+    readonly limit: number
+  }) => Effect.Effect<number>
+  /**
+   * Bounded durable page read (no infinite stream collect).
+   * Returns up to `limit` events after `after` seq; hasMore if more exist.
+   */
+  readonly readDurablePage: (input: {
+    readonly aggregateID: string
+    readonly after?: number
+    readonly limit: number
+  }) => Effect.Effect<{
+    readonly events: readonly Payload[]
+    readonly hasMore: boolean
+    readonly lastSeq: number
+  }>
 }
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/Event") {}
@@ -301,18 +326,28 @@ export const layerWith = (options?: LayerOptions) =>
                             )
                           }
                           const stored = yield* db
-                            .select({ aggregateID: EventTable.aggregate_id, seq: EventTable.seq })
+                            .select()
                             .from(EventTable)
                             .where(eq(EventTable.id, event.id))
                             .get()
                             .pipe(Effect.orDie)
-                          if (stored)
+                          if (stored) {
+                            if (
+                              stored.aggregate_id === aggregateID &&
+                              stored.type === versionedType(definition.type, durable.version) &&
+                              isDeepStrictEqual(stored.data, encoded)
+                            ) {
+                              // A retry with the same stable id and complete payload is
+                              // idempotent. A different payload still fails closed below.
+                              return { aggregateID, seq: stored.seq }
+                            }
                             yield* Effect.die(
                               new InvalidDurableEventError({
                                 type: event.type,
-                                message: `Event ${event.id} already exists at aggregate ${stored.aggregateID} sequence ${stored.seq}`,
+                                message: `Event ${event.id} already exists with different aggregate, type, or data`,
                               }),
                             )
+                          }
                           const committed = {
                             ...event,
                             durable: { aggregateID, seq, version: durable.version },
@@ -531,6 +566,86 @@ export const layerWith = (options?: LayerOptions) =>
           .pipe(Effect.orDie)
       }
 
+      /**
+       * SQL-bounded hard prune: aggregate + type prefix + json_extract(createdAtMs) < cutoff.
+       * No full-table JS filter. Sequence counter unchanged (gaps OK for audit).
+       * Errors propagate (no silent 0).
+       */
+      function pruneDurable(input: {
+        readonly aggregateID: string
+        readonly typePrefix: string
+        readonly olderThanMs: number
+        readonly limit: number
+      }) {
+        return Effect.gen(function* () {
+          if (!Number.isFinite(input.olderThanMs)) yield* Effect.die(new Error("Invalid durable prune cutoff"))
+          if (!Number.isSafeInteger(input.limit) || input.limit <= 0) {
+            yield* Effect.die(new Error("Invalid durable prune limit"))
+          }
+          const limit = Math.max(1, Math.min(input.limit, 500))
+          const typeBase = input.typePrefix.endsWith(".*")
+            ? input.typePrefix.slice(0, -2)
+            : input.typePrefix.endsWith(".")
+              ? input.typePrefix.slice(0, -1)
+              : input.typePrefix
+          if (!typeBase) yield* Effect.die(new Error("Invalid durable prune type prefix"))
+          const prefix = `${typeBase}.%`
+          // SQL predicate only — no full SELECT * JS filter (T024 review)
+          const deleted = yield* db
+            .all(
+              sql`
+                DELETE FROM event
+                WHERE id IN (
+                  SELECT id FROM event
+                  WHERE aggregate_id = ${input.aggregateID}
+                    AND type LIKE ${prefix}
+                   AND CAST(json_extract(data, '$.createdAtMs') AS INTEGER) < ${input.olderThanMs}
+                   ORDER BY seq ASC
+                   LIMIT ${limit}
+                 )
+                 RETURNING id
+              `,
+            )
+            .pipe(Effect.orDie)
+          if (!Array.isArray(deleted)) yield* Effect.die(new Error("SQLite durable prune returned invalid rows"))
+          return deleted.length
+        })
+      }
+
+      /** Bounded page — never collect infinite durable stream. */
+      function readDurablePage(input: {
+        readonly aggregateID: string
+        readonly after?: number
+        readonly limit: number
+      }) {
+        return Effect.gen(function* () {
+          const after = input.after ?? -1
+          const limit = Math.max(1, Math.min(input.limit, 500))
+          yield* options?.beforeAggregateRead?.(input.aggregateID) ?? Effect.void
+          const rows = yield* db
+            .select()
+            .from(EventTable)
+            .where(and(eq(EventTable.aggregate_id, input.aggregateID), gt(EventTable.seq, after)))
+            .orderBy(asc(EventTable.seq))
+            .limit(limit + 1)
+            .all()
+            .pipe(Effect.orDie)
+          const page = rows.slice(0, limit)
+          const events = page.map((row) => decodeSerializedEvent({
+            id: row.id,
+            type: row.type,
+            seq: row.seq,
+            aggregateID: row.aggregate_id,
+            data: row.data,
+          }))
+          return {
+            events,
+            hasMore: rows.length > limit,
+            lastSeq: page.at(-1)?.seq ?? after,
+          }
+        })
+      }
+
       const subscribe = <D extends Definition>(definition: D): Stream.Stream<Payload<D>> =>
         Stream.unwrap(getOrCreate(definition).pipe(Effect.map((pubsub) => Stream.fromPubSub(pubsub)))).pipe(
           Stream.map((event) => event as Payload<D>),
@@ -630,6 +745,8 @@ export const layerWith = (options?: LayerOptions) =>
         replayAll,
         remove,
         claim,
+        pruneDurable,
+        readDurablePage,
       })
     }),
   )

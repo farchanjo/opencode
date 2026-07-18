@@ -54,6 +54,7 @@ import { ModelV2 } from "@opencode-ai/core/model"
 import { MCP } from "@/mcp"
 import { PermissionV1 } from "@opencode-ai/core/v1/permission"
 import { McpCatalog } from "@/mcp/catalog"
+import { checkReservedRegistrationName, type RegistrationSource } from "@opencode-ai/core/operator"
 
 export function webSearchEnabled(providerID: ProviderV2.ID, flags = { exa: false, parallel: false }) {
   return providerID === ProviderV2.ID.opencode || flags.exa || flags.parallel
@@ -187,13 +188,18 @@ const layer = Layer.effect(
           const mod = yield* Effect.promise(() => import(pathToFileURL(match).href))
           for (const [id, def] of Object.entries(mod)) {
             if (!isPluginTool(def)) continue
-            custom.push(fromPlugin(id === "default" ? namespace : `${namespace}_${id}`, def))
+            const toolId = id === "default" ? namespace : `${namespace}_${id}`
+            // T042: external custom tool files — fail-closed reserved_name (no silent rename)
+            if (!assertExternalToolName(toolId, "custom")) continue
+            custom.push(fromPlugin(toolId, def))
           }
         }
 
         const plugins = yield* plugin.list()
         for (const p of plugins) {
           for (const [id, def] of Object.entries(p.tool ?? {})) {
+            // T042: external plugin tools only (builtin task/mcp never enter fromPlugin)
+            if (!assertExternalToolName(id, "plugin")) continue
             custom.push(fromPlugin(id, def))
           }
         }
@@ -342,6 +348,17 @@ const layer = Layer.effect(
     return Service.of({ ids, all, named, tools })
   }),
 )
+
+/** T042: external plugin/custom tools only — never applied to builtin task/mcp. */
+function assertExternalToolName(id: string, source: Extract<RegistrationSource, "plugin" | "custom">): boolean {
+  const check = checkReservedRegistrationName(id, source)
+  if (!check.ok) {
+    // Fail-closed: skip registration (no silent rename). Surface for diagnostics.
+    console.warn(`[operator] reserved_name rejected ${source} tool "${id}": ${check.reason} (catalog ${check.catalogVersion})`)
+    return false
+  }
+  return true
+}
 
 function isZodType(value: unknown): value is z.ZodType {
   return typeof value === "object" && value !== null && "_zod" in value

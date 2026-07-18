@@ -75,4 +75,15 @@ export const Flag = {
   get OPENCODE_CLIENT() {
     return process.env["OPENCODE_CLIENT"] ?? "cli"
   },
+
+  /**
+   * Feature 007 operator control plane (T041) — env/sandbox slice only.
+   * Full resolution (config + env + sandbox) lives in
+   * `@opencode-ai/core/operator` `resolveOperatorControlPlaneFlag`.
+   * Default OFF. Sandbox: OPENCODE_DEV_OPERATOR_=1. Dev/ops: OPENCODE_OPERATOR_CONTROL_PLANE.
+   * Native: experimental.operator_control_plane in Config. Never LLM fallback when off.
+   */
+  get OPENCODE_OPERATOR_CONTROL_PLANE() {
+    return truthy("OPENCODE_OPERATOR_CONTROL_PLANE") || process.env["OPENCODE_DEV_OPERATOR_"] === "1"
+  },
 }

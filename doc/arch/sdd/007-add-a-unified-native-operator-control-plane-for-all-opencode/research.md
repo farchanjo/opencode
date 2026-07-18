@@ -6,7 +6,7 @@ This note records confirmed decision evidence for the unified native Operator Co
 Plane. It is not an ADR and does not authorize implementation. Requirements live in
 `spec.md`; the architectural decision is recorded in
 [ADR-0003](../../adr/0003-operator-control-plane-and-native-command-authority.md)
-(proposed).
+(**accepted**, 2026-07-17).
 
 ## Confirmed native-only decision (user-confirmed)
 
@@ -39,6 +39,28 @@ clarification questions that reverse the authority model.
 9. **Feature 007 is management foundation.** Domain features own business logic;
    Feature 007 owns command/query/auth/audit adapters. Feature 007 is not runtime
    execution authority.
+
+## Clarification package V1 (user-approved 2026-07-17)
+
+All 18 clarification questions in `spec.md` are closed. Summary of closed decisions
+(full matrices in `spec.md` Clarification Outcomes):
+
+| Area              | Decision                                                                                                                                       |
+| ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| Principals        | Local single-user; `operator` / `system` / optional `manager-view` RO; multi-user deferred                                                     |
+| API               | Loopback-only; no public remote V1; CSRF/origin when future non-loopback                                                                       |
+| Scopes            | Project default for project-bound config; global templates only; session process/task; root-tree workspace; hard policy not relaxable          |
+| Persistence       | Config.Service + EventV2; atomic/CAS/idempotency always; outbox external only                                                                  |
+| Snapshots         | 10 snapshots or 30 days; cutover rollback slot                                                                                                 |
+| Audit             | 90 days retention; export is confirmed admin op                                                                                                |
+| Naming            | Dotted IDs; registry-generated aliases; slash/CLI mapping from registry                                                                        |
+| Confirmations     | cutover/rollback/delete/disable/purge/rotate-secret/experimental enable/export/share; `--yes` only authenticated non-TTY; never slash auto-yes |
+| Secrets           | OS keychain mandatory; env-ref CI; vault/multi-user later; plaintext forbidden                                                                 |
+| Reserved IDs      | Versioned in SDK/docs; collisions rejected                                                                                                     |
+| Offline           | Normative matrix; network ops report explicit `unavailable`                                                                                    |
+| Delivery          | Phase 1 core+TUI/CLI/internal SDK; App/Desktop Phase 2                                                                                         |
+| Semantic defaults | Project default; global templates copy-on-write; lexical/catalog fallback default; fail-closed opt-in                                          |
+| SSRF / probes     | Deny/revalidation and multilingual fixed probes as spec MUST                                                                                   |
 
 ## Todo: data plane vs setup plane
 
@@ -103,8 +125,22 @@ never auto model swap.
 
 ## Delivery phases (factual)
 
-Feature 007 is Phase 1 management foundation and authority. Feature 001 “Phase 2”
-labels domain surface delivery only; it does not redefine management authority.
+Feature 007 is Phase 1 management foundation and authority (core + TUI/CLI/internal
+SDK). App/Desktop is Phase 2. Feature 001 “Phase 2” labels domain surface delivery only;
+it does not redefine management authority.
+
+## Isolation and reuse evidence (codebase)
+
+- Existing `packages/opencode/src/control-plane/` is **workspace** control plane
+  (adapters, worktree), not the operator command plane. Feature 007 introduces the
+  **operator** control plane modules without replacing workspace control plane.
+- Config authority: `packages/opencode/src/config/config.ts` (`Config.Service`).
+- Events: `packages/opencode/src/event-v2-bridge.ts` and core EventV2.
+- Server routes already include control/control-plane handlers for workspace move;
+  operator API is a separate loopback-bound surface under Feature 007.
+- Packages to extend (not fork): `packages/core`, `packages/opencode`,
+  `packages/server`, `packages/cli`, `packages/tui`, `packages/sdk` / `sdk-next`,
+  `packages/protocol`, `packages/schema`. App/Desktop packages are Phase 2 only.
 
 ## Alignment patches expected in sibling features
 
@@ -118,10 +154,21 @@ labels domain surface delivery only; it does not redefine management authority.
 - **008:** owns MCP runtime and `mcp.*` domain schemas; Feature 007 owns
   registry/auth/audit/adapters only; `mcp.resource.admin.*` vs runtime Permission
   adapter (no dual authority).
-- **ADR-0001 / ADR-0002 / ADR-0003:** operator authority; no silent semantic
-  substitution; MCP never admin path.
+- **ADR-0001 / ADR-0002:** remain proposed. **ADR-0003:** accepted with this package.
+
+## Integrator documentation (T048)
+
+- [reserved-catalog-v1.md](reserved-catalog-v1.md) — catalog v1.0.0 SSOT rules, surfaces,
+  flag, scopes, offline/SSRF, keychain, EventV2 audit 90d, errors, Phase 2 deferrals.
+- [quickstart.md](quickstart.md) — sandbox, XDG/HOME/TMPDIR, port 14096, CLI/TUI/API,
+  troubleshooting (`audit_pending` / `conflict` / `unavailable`), rollback.
+- [migration-legacy-admin-names.md](migration-legacy-admin-names.md) — dry-run, one-release warn.
+- [contracts/command-envelope.md](contracts/command-envelope.md) — request/result/error taxonomy.
+
+SDK clients import `listReservedIds` / `RESERVED_CATALOG_VERSION` from
+`@opencode-ai/core/operator` only — no generated divergent ID copies.
 
 ## Out of research scope
 
-Implementation code, provider/model hardcoding, accepting ADR-0003, clarify/plan/tasks
-phases, and parallel admin systems.
+Implementation code, provider/model hardcoding, reopen of closed clarify questions,
+and parallel admin systems.
