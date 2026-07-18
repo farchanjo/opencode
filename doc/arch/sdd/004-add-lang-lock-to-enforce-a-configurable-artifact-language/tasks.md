@@ -345,7 +345,7 @@ schema modules so a single vocabulary is enforced (see the Traceability note).
   exception under en-US lock, and override denied/allowed (AC1, AC2, AC3, AC5, AC6, AC9,
   AC13, AC17). Acceptance: `bun test packages/opencode`/`packages/cli`/`packages/tui` green
   under the sandbox.
-- [ ] T041 [S20] Run per-package `tsgo --noEmit` typecheck and `bun test` for
+- [x] T041 [S20] Run per-package `tsgo --noEmit` typecheck and `bun test` for
   `packages/schema`, `packages/protocol`, `packages/core`, `packages/opencode`,
   `packages/cli`, and `packages/tui`, plus a telemetry cardinality audit under
   `packages/core/test/langlock/**` asserting `session_id`/`execution_id`/file/path never
