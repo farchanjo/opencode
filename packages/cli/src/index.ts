@@ -58,6 +58,12 @@ const Handlers = Runtime.handlers(Commands, {
     watch: () => import("./task/watch"),
     cancel: () => import("./task/cancel"),
   },
+  langlock: {
+    status: () => import("./langlock/status"),
+    show: () => import("./langlock/show"),
+    set: () => import("./langlock/set"),
+    reset: () => import("./langlock/reset"),
+  },
   jobs: {
     list: () => import("./jobs/list"),
     status: () => import("./jobs/status"),

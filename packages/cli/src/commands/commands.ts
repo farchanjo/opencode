@@ -228,6 +228,35 @@ export const Commands = Spec.make(typeof OPENCODE_CLI_NAME === "string" ? OPENCO
         }),
       ],
     }),
+    Spec.make("langlock", {
+      description:
+        "Manage the configurable artifact language lock (Feature 004; native operator-only, zero model calls, redacted/versioned output)",
+      commands: [
+        Spec.make("status", {
+          description: "Show the effective Lang Lock policy: tag, scope, origin, enforcement mode",
+          params: { scope: scope(), json: json() },
+        }),
+        Spec.make("show", {
+          description: "Show the effective Lang Lock policy (show-effective alias of status)",
+          params: { scope: scope(), json: json() },
+        }),
+        Spec.make("set", {
+          description: "Set the Lang Lock artifact language tag (canonical BCP 47, CAS, scope, audit)",
+          params: {
+            tag: Argument.string("tag").pipe(
+              Argument.withDescription("canonical BCP 47 allowlisted artifact language tag"),
+            ),
+            expectedVersion: langLockExpectedVersionFlag(),
+            scope: scope(),
+            json: json(),
+          },
+        }),
+        Spec.make("reset", {
+          description: "Reset the Lang Lock policy to the global default (CAS, scope, audit)",
+          params: { expectedVersion: langLockExpectedVersionFlag(), scope: scope(), json: json() },
+        }),
+      ],
+    }),
     Spec.make("jobs", {
       description:
         "Manage persistent Bun-native scheduled jobs (Feature 003; native operator-only, zero model calls, redacted/versioned output)",
@@ -384,6 +413,12 @@ function pollIntervalFlag() {
 
 function maxPollsFlag() {
   return Flag.integer("max-polls").pipe(Flag.withDescription("maximum number of polls before giving up"), Flag.optional)
+}
+
+// -- langlock (Feature 004) command params ------------------------------------
+
+function langLockExpectedVersionFlag() {
+  return Flag.integer("expected-version").pipe(Flag.withDescription("expected Lang Lock policy version (CAS)"))
 }
 
 // -- jobs (Feature 003) command params ---------------------------------------
