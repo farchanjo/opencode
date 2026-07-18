@@ -7,6 +7,7 @@ import {
 } from "@modelcontextprotocol/sdk/types.js"
 import { dynamicTool, jsonSchema, type JSONSchema7, type Tool } from "ai"
 import { Effect } from "effect"
+import { checkReservedRegistrationName } from "@opencode-ai/core/operator"
 
 const DEFAULT_TIMEOUT = 30_000
 const MAX_LIST_PAGES = 1_000
@@ -117,6 +118,25 @@ export function fetch<T extends { name: string }>(
 export const sanitize = (value: string) => value.replace(/[^a-zA-Z0-9_-]/g, "_")
 
 export const toolName = (clientName: string, name: string) => sanitize(clientName) + "_" + sanitize(name)
+
+/**
+ * T042: MCP tool registration allowed only when composed/raw names do not collide
+ * with reserved operator catalog (fail-closed, no silent rename).
+ */
+export function isMcpToolNameAllowed(clientName: string, name: string): boolean {
+  const composed = toolName(clientName, name)
+  // Check composed + raw names only — do not invent /op.* forms for unrelated tools
+  for (const candidate of [composed, name, `${clientName}.${name}`]) {
+    if (!checkReservedRegistrationName(candidate, "mcp").ok) return false
+  }
+  return true
+}
+
+/** Returns composed tool name or null when reserved (caller skips registration). */
+export function toolNameIfAllowed(clientName: string, name: string): string | null {
+  if (!isMcpToolNameAllowed(clientName, name)) return null
+  return toolName(clientName, name)
+}
 
 export function prompts(client: Client, timeout?: number) {
   if (!client.getServerCapabilities()?.prompts) return Promise.resolve([])

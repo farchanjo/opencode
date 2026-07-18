@@ -12,6 +12,39 @@ email = "farchanjo@gmail.com"
 mode = "enforce"               # "enforce" (default) | "advisory"
 overrideFlag = "--allow-out-of-spec"
 specScopeGlobs = [
-  # Add implementation directories the implement phase may write, e.g.:
-  # "src/**",
+  # Feature 007 Phase 1 — narrow implement paths (operator control plane only).
+  # Do not open whole packages; workspace control-plane paths stay out of scope.
+  "packages/core/src/operator/**",
+  "packages/core/src/flag/flag.ts",
+  "packages/core/src/command.ts",
+  "packages/core/src/config/experimental.ts",
+  "packages/core/src/v1/config/config.ts",
+  "packages/core/src/v1/config/migrate.ts",
+  "packages/core/test/operator/**",
+  "packages/core/test/command.test.ts",
+  "packages/core/test/config/config.test.ts",
+  "packages/opencode/src/operator/**",
+  "packages/opencode/src/dev/sandbox/**",
+  "packages/opencode/src/cli/cmd/op.ts",
+  "packages/opencode/src/tool/registry.ts",
+  "packages/opencode/src/mcp/catalog.ts",
+  "packages/opencode/src/mcp/index.ts",
+  "packages/opencode/test/operator/**",
+  "packages/opencode/test/dev/sandbox/**",
+  "packages/server/src/**/operator/**",
+  "packages/cli/src/**/operator/**",
+  "packages/tui/src/**/operator/**",
+  "packages/tui/src/**/settings/**",
+  "packages/schema/src/**/operator/**",
+  "packages/schema/src/operator-event.ts",
+  "packages/schema/src/durable-event-manifest.ts",
+  "packages/schema/src/event-manifest.ts",
+  "packages/schema/test/event-manifest.test.ts",
+  "packages/core/src/event.ts",
+  "packages/core/src/event/sql.ts",
+  "packages/protocol/src/**/operator/**",
+  "packages/sdk/**/operator/**",
+  "packages/sdk-next/**/operator/**",
+  "scripts/dev/opencode-operator-sandbox*",
+  ".gitignore",
 ]

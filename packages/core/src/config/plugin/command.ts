@@ -29,6 +29,8 @@ export const Plugin = define({
         }).pipe(Effect.map((documents) => documents.flat()))
         for (const document of documents) {
           for (const [name, command] of Object.entries(document.commands ?? {})) {
+            // T042: CommandV2.update throws ReservedNameError on collision — fail-closed, no rename.
+            // Error carries code/catalogVersion for deterministic config-load reporting.
             draft.update(name, (item) => {
               item.template = command.template
               if (command.description !== undefined) item.description = command.description

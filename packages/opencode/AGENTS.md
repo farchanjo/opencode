@@ -130,6 +130,15 @@ Use `EffectBridge` for native or external callbacks (`@parcel/watcher`, `node-pt
 
 Plain async code should pass explicit context or stay inside an Effect fiber; do not add ambient instance context shims.
 
+## Operator Control Plane (Feature 007)
+
+- Management authority is the native operator control plane under `src/operator/` (composition root, ports, inbound/outbound adapters). Domain features register **ports/adapters** here; they do not invent parallel admin registries.
+- Reserved command IDs live only in `@opencode-ai/core/operator` (`catalog.ts`). Do not duplicate ID lists in SDK, plugins, MCP, or custom command registration. Collisions → fail-closed `reserved_name`.
+- Never expose setup/admin as LLM tools, MCP admin tools, plugin slash authority, or `session.command` prompt templates. Runtime MCP/tools stay under Permission (data plane); Feature 007 owns `mcp.*` **admin** IDs only.
+- Feature flag `operator_control_plane` resolves dynamically (sandbox → env → `experimental.operator_control_plane` → default off). Live stack must pass real config enablement — never hardcode enabled.
+- Isolation harness: `scripts/dev/opencode-operator-sandbox`, port **14096**, `.dev/opencode-operator/` only. Keychain tests use mock FFI only (no real SecKeychain). Audit list scans are bounded and fail-closed (T024).
+- Integrator docs: `doc/arch/sdd/007-add-a-unified-native-operator-control-plane-for-all-opencode/reserved-catalog-v1.md` and `quickstart.md`.
+
 ## Spec Kit governance on `fcustom`
 
 - `doc/arch` is the source of truth: check `speckit status`/`speckit next`, active feature, and guard before changing opencode.

@@ -66,8 +66,24 @@ export function migrate(info: typeof ConfigV1.Info.Type) {
     plugins: info.plugin?.map((plugin) =>
       typeof plugin === "string" ? plugin : { package: plugin[0], options: plugin[1] },
     ),
-    experimental: info.experimental?.policies && { policies: info.experimental.policies },
+    experimental: migrateExperimental(info.experimental),
     providers: providers(info.provider),
+  }
+}
+
+/** Preserve Feature 007 experimental flags through V1→V2 (roundtrip-safe). */
+function migrateExperimental(experimental: typeof ConfigV1.Info.Type["experimental"]) {
+  if (!experimental) return undefined
+  const policies = experimental.policies
+  const operator_control_plane = experimental.operator_control_plane
+  const offline = experimental.offline
+  if (policies === undefined && operator_control_plane === undefined && offline === undefined) {
+    return undefined
+  }
+  return {
+    ...(policies !== undefined ? { policies } : {}),
+    ...(operator_control_plane !== undefined ? { operator_control_plane } : {}),
+    ...(offline !== undefined ? { offline } : {}),
   }
 }
 

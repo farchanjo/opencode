@@ -1,64 +1,82 @@
-# opencode — Product Overview
+# OpenCode — Product Overview
 
-Functional documentation for opencode, written from the user's point of
-view: what the product does, who uses it, how the main flow runs, and how we
-know it works. Keep this in sync with feature specifications under
-`doc/arch/sdd/*/spec.md` (acceptance scenarios and requirements).
+Functional documentation for OpenCode from the user's point of view: what the
+product does, who uses it, how the main flows run, and how we know it works.
+Keep this in sync with feature specifications under `doc/arch/sdd/*/spec.md`.
 
 ## Overview
 
-opencode exists to <state the product's purpose in one sentence —
-replace this placeholder>. Describe the problem it solves and the outcome a
-user can expect. Keep this section high level; the details belong in the
-per-feature specs.
+OpenCode is a local-first AI coding agent platform: sessions, tools, providers,
+and project-scoped configuration run under native surfaces (TUI, CLI, and
+internal APIs). **Setup and management are native-only** via the Feature 007
+Operator Control Plane — not via LLM tools, MCP admin tools, plugins, or free-form
+prompt commands. Domain features own runtime business logic; the operator plane
+owns typed command/query dispatch, principals, scopes, CAS, secrets, and audit.
 
 ## Actors
 
-The people and systems that interact with opencode:
+- **Operator (local single-user, Phase 1)** — installs, configures, and manages
+  OpenCode through Settings, palette, native slash (`/op.*`), CLI (`opencode op …`),
+  and loopback HTTP/SDK. Principal kinds: `operator`, `system`, optional
+  `manager-view` (read-only).
+- **End user / agent session** — runs prompts and tools inside the execution
+  envelope with read-only effective policy; cannot mutate admin config.
+- **Domain services** — Smart routing, tasks/jobs, LangLock, OutputSpool, semantic
+  retrieval, MCP client (Features 001–006, 008) register ports into the control plane.
+- **External systems** — LLM providers, OTLP collectors, MCP servers, embedding
+  endpoints — reached only under offline/SSRF policy and secret refs.
 
-- **End user** — the primary human who uses the product to accomplish a goal.
-- **Operator** — installs, configures, and runs the deployment.
-- **External system** — any upstream or downstream service the product
-  integrates with.
-
-Replace these placeholders with the real actors for opencode.
+Multi-user directory, vault backends, and public remote operator API are **Phase 2**
+(T092), not Phase 1 product claims.
 
 ## Main Flow
 
-The primary end-to-end flow through opencode:
+Primary management flow (Phase 1):
 
 ```mermaid
 flowchart LR
-    A[User request] --> B[Validate input]
-    B --> C[Apply business rule]
-    C --> D[Persist result]
-    D --> E[Return response]
+    A[Operator surface CLI/TUI/API] --> B[Principal + scope auth]
+    B --> C[Registry + schema validate]
+    C --> D{Confirm / CAS / offline}
+    D -->|ok| E[Domain port invoke]
+    E --> F[Config.Service + EventV2 audit]
+    F --> G[Redacted result]
+    D -->|deny| H[Structured error]
 ```
 
-Replace the placeholder steps above with the product's real main flow.
+Primary runtime flow (data plane, not admin):
+
+```mermaid
+flowchart LR
+    U[User prompt] --> S[Session admit]
+    S --> R[Provider turn / tools]
+    R --> O[Output + events]
+```
+
+Admin slash is intercepted **before** prompt admission (zero tokens by default).
 
 ## Acceptance
 
-Acceptance criteria for opencode are expressed as prioritized acceptance
-scenarios inside each feature specification under `doc/arch/sdd/*/spec.md`.
+Acceptance criteria live as prioritized scenarios in each feature `spec.md`.
 
-- Every user-visible behavior has matching acceptance scenarios in the owning
-  feature `spec.md`.
-- A change to the Main Flow above starts with a change to those specs, not to
-  the code.
-- Run `speckit validate` and feature scoring before implementation; executable
-  Gherkin corpora may be reintroduced later by explicit feature decision.
+- Management behaviors: Feature 007
+  ([spec](../sdd/007-add-a-unified-native-operator-control-plane-for-all-opencode/spec.md),
+  [reserved catalog](../sdd/007-add-a-unified-native-operator-control-plane-for-all-opencode/reserved-catalog-v1.md)).
+- Domain behaviors: Features 001–006, 008 specs.
+- A change to Main Flow management steps starts in Feature 007 artifacts, not ad-hoc code.
+- Run `speckit validate` before completion; App/Desktop parity is Phase 2 (T090–T091).
 
 ## Observability
 
-How we see opencode working in production:
+- **Metrics / traces** — operator dispatch labels are content-free (command_id,
+  domain, surface, scope_kind, outcome, error_code, duration_ms, retry).
+- **Logs** — structured, secret-free; audit detail in EventV2 (90 days).
+- **Conventions** — `doc/arch/observability/observability.md`.
 
-- **Metrics** — user-visible health signals (request rate, error rate,
-  latency) exported via OTLP.
-- **Logs** — structured log events for the Main Flow's decisions, carrying
-  trace context.
-- **Tracing** — one trace per user request through the Main Flow, with
-  request-scoped identifiers carried as span attributes.
+## Phase 2 deferred (explicit)
 
-Keep metric label sets bounded; the full conventions live in
-`doc/arch/observability/observability.md`.
+| Item                                  | Task | Why deferred from Phase 1                                 |
+| ------------------------------------- | ---- | --------------------------------------------------------- |
+| App Settings parity                   | T090 | Phase 1 delivers core + TUI + CLI + loopback API/SDK only |
+| Desktop Settings parity               | T091 | Depends on App surface delivery                           |
+| Multi-user / vault / non-loopback API | T092 | Requires new ADR; V1 is local single-user loopback        |

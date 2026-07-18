@@ -4,6 +4,7 @@ import { makeLocationNode } from "./effect/app-node"
 import { Context, Effect, Layer, Types } from "effect"
 import { Command } from "@opencode-ai/schema/command"
 import { State } from "./state"
+import { checkReservedRegistrationName, ReservedNameError } from "./operator/reserved-names"
 
 export const Info = Command.Info
 export type Info = Command.Info
@@ -35,6 +36,14 @@ const layer = Layer.effect(
         list: () => Array.from(draft.commands.values()) as Info[],
         get: (name) => draft.commands.get(name),
         update: (name, update) => {
+          // T042: reject reserved operator /op.* and catalog collisions (fail-closed, no rename).
+          // Built-in first-party commands (init/review) use source "builtin" via transform callers
+          // that already own those names — external/custom use "custom".
+          const isBuiltinFirstParty = name === "init" || name === "review"
+          const reserved = checkReservedRegistrationName(name, isBuiltinFirstParty ? "builtin" : "custom")
+          if (!reserved.ok) {
+            throw new ReservedNameError(reserved)
+          }
           const current = draft.commands.get(name) ?? ({ name, template: "" } as Types.DeepMutable<Info>)
           if (!draft.commands.has(name)) draft.commands.set(name, current)
           update(current)

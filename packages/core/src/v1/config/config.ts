@@ -185,6 +185,14 @@ export const Info = Schema.Struct({
       policies: Schema.optional(Schema.mutable(Schema.Array(ConfigExperimental.Policy))).annotate({
         description: "Policy statements applied to supported resources, such as provider access",
       }),
+      operator_control_plane: Schema.optional(Schema.Boolean).annotate({
+        description:
+          "Enable Feature 007 native operator control plane (default false). Enable via config or OPENCODE_OPERATOR_CONTROL_PLANE for dev/ops.",
+      }),
+      offline: Schema.optional(Schema.Boolean).annotate({
+        description:
+          "When true, operator treats connectivity as offline (network ops → unavailable). Override with OPENCODE_CONNECTIVITY/OPENCODE_OFFLINE.",
+      }),
     }),
   ),
 }).annotate({ identifier: "Config" })

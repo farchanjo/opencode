@@ -143,6 +143,30 @@ describe("Config", () => {
     }),
   )
 
+  it.effect("migrates experimental.operator_control_plane and offline into V2 (Feature 007)", () =>
+    Effect.sync(() => {
+      const migrated = ConfigMigrateV1.migrate({
+        experimental: {
+          operator_control_plane: true,
+          offline: true,
+          policies: undefined,
+        },
+      })
+      expect(migrated.experimental).toEqual({
+        operator_control_plane: true,
+        offline: true,
+      })
+      // Roundtrip: V2 schema accepts migrated experimental
+      Schema.decodeUnknownSync(Config.Info)(migrated, { errors: "all" })
+      const off = ConfigMigrateV1.migrate({
+        experimental: { operator_control_plane: false, offline: false },
+      })
+      expect(off.experimental?.operator_control_plane).toBe(false)
+      expect(off.experimental?.offline).toBe(false)
+      Schema.decodeUnknownSync(Config.Info)(off, { errors: "all" })
+    }),
+  )
+
   it.live("returns an empty configuration when directory files do not exist", () =>
     Effect.acquireRelease(
       Effect.promise(() => tmpdir()),

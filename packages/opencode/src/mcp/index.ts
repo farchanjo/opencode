@@ -620,7 +620,9 @@ const layer = Layer.effect(
         .map(([name, item]) => ({
           name,
           instructions: item,
-          tools: (s.defs[name] ?? []).map((tool) => McpCatalog.toolName(name, tool.name)),
+          tools: (s.defs[name] ?? [])
+            .map((tool) => McpCatalog.toolNameIfAllowed(name, tool.name))
+            .filter((n): n is string => n !== null),
         }))
     })
 
@@ -681,7 +683,10 @@ const layer = Layer.effect(
         }
         const timeout = requestTimeout(s, clientName, mcpConfig, defaultTimeout)
         for (const def of listed) {
-          result[McpCatalog.toolName(clientName, def.name)] = { def, client, timeout }
+          // T042: skip MCP tools that collide with reserved operator catalog (fail-closed)
+          const key = McpCatalog.toolNameIfAllowed(clientName, def.name)
+          if (!key) continue
+          result[key] = { def, client, timeout }
         }
       }
       return result
