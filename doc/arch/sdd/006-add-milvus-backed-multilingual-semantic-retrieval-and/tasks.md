@@ -414,7 +414,7 @@ vocabulary is enforced (see the Traceability reconciliation note).
   operations dispatch with zero model calls on ordinary paths, a reserved-ID collision is
   rejected, a prompt/plugin/MCP attempt to change a binding leaves it unchanged, and
   confirmation is required for cutover/rollback/rotate-secret.
-- [ ] T035 [S23] Author `packages/opencode/src/semantic/eval-harness.ts` implementing the
+- [x] T035 [S23] Author `packages/opencode/src/semantic/eval-harness.ts` implementing the
   offline golden evaluation driver over the `EvalPort`: golden task→agent/skill relevance,
   recall@k / nDCG / MRR, multilingual pt/es/en suites, permission-leakage tests with a fixed
   **zero** cross-project/over-permission tolerance, and drift/model-migration checks, budgeting
@@ -422,7 +422,7 @@ vocabulary is enforced (see the Traceability reconciliation note).
   injected, and never mutating a binding, mirroring C18 (FR14, FR40, FR43, C18). Acceptance:
   `bun test packages/opencode` asserts the harness records per-locale recall/nDCG/MRR, fails on
   any leakage, injects only budgeted chunk ranges, and mutates no binding.
-- [ ] T036 [S6] Author `packages/opencode/src/semantic/retrieval-facade.ts` exposing the
+- [x] T036 [S6] Author `packages/opencode/src/semantic/retrieval-facade.ts` exposing the
   `RetrievalPort` (`retrieveAgents`/`retrieveSkills`) to Feature 001 Architect/Manager
   candidate support and wiring the deterministic score/tie-break/revalidation into a
   ranked-candidate result, and **honestly task the live agent/skill selection integration as a
@@ -434,7 +434,7 @@ vocabulary is enforced (see the Traceability reconciliation note).
   returns revalidated ranked candidates, records the effective binding versions and Feature 004
   language tag without content, and the documented Feature 001 seam is present and covered by a
   seam test.
-- [ ] T037 [S13–S23] Author the barrel `packages/opencode/src/semantic/index.ts` re-exporting
+- [x] T037 [S13–S23] Author the barrel `packages/opencode/src/semantic/index.ts` re-exporting
   the grpc-probe, milvus-adapter, embedding-client, rerank-client, url-guard, index-jobs,
   cutover-executor, credential-resolver, durable-events, eval-harness, and retrieval-facade
   modules. Acceptance: `tsgo --noEmit` on `packages/opencode` green and the barrel imports
