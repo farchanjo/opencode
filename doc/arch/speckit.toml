@@ -135,6 +135,27 @@ specScopeGlobs = [
   "packages/tui/src/routes/session/process-panel/**",
   "packages/core/test/lifecycle/**",
   "packages/opencode/test/lifecycle/**",
+
+  # Feature 003 implement-phase paths (T001-T036): jobs schema/protocol modules,
+  # the framework-free domain scheduler engine, application adapters, CLI
+  # op-jobs verbs, and the jobs test suites. Narrow, file-exact globs.
+  # Shared seams already in scope and NOT duplicated:
+  #   packages/opencode/src/event-v2-bridge.ts (Feature 001) — publishJobEvent;
+  #   packages/schema/src/durable-event-manifest.ts + packages/core/src/event.ts
+  #     + packages/core/src/operator/** + packages/core/test/operator/**
+  #     + packages/opencode/src/operator/** + packages/opencode/test/operator/**
+  #     (Feature 007) — durable manifest, EventV2 authority, reserved jobs.*
+  #     catalog bump (1.2.0 -> 1.3.0), and the operator/jobs command impls;
+  #   packages/tui/src/**/operator/** (Feature 007) — jobs panel;
+  #   packages/schema/src/index.ts + packages/schema/test/** (Feature 001),
+  #   packages/protocol/test/** (Feature 001) — schema barrel + schema/protocol tests.
+  "packages/schema/src/jobs/**",
+  "packages/protocol/src/jobs/**",
+  "packages/core/src/jobs/**",
+  "packages/opencode/src/jobs/**",
+  "packages/cli/src/**/jobs/**",
+  "packages/core/test/jobs/**",
+  "packages/opencode/test/jobs/**",
 ]
 
 # Waivers for intentional near-empty files (warnings only; errors are never
