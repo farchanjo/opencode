@@ -743,3 +743,98 @@ module, never inlined into an algorithm.
 
 Related Feature 001 constants (telemetry queue, cardinality allowlist, budget policy) are
 reused unchanged and are not re-declared here (C18).
+
+---
+
+## Resolved Parameters
+
+The integration-wiring decisions taken when composing the lifecycle domain ports into
+the live operator stack (`packages/opencode/src/operator/stack-live.ts` via
+`packages/opencode/src/operator/lifecycle/stack-wiring.ts`). Each records a concrete,
+committed seam and its honest provenance — no value here is a hidden default or a faked
+capability.
+
+### Runtime composition (stack-live)
+
+- **Single EventV2 authority (C2, C3).** `createLifecycleDomainWiring` resolves the
+  process-wide `EventV2Bridge.Service` singleton once and reaches it for every seam:
+  publish (`publishLifecycleEvent`), durable page read (`readDurablePage`), durable prune
+  (`pruneDurable`), and the session-owned `todo.*` publish. All four run through
+  `AppRuntime.runPromise` so InstanceRef/WorkspaceRef location tagging is applied and the
+  durable commit hook projects atomically (C4). No second event system, executor, or
+  runtime is introduced (FR6).
+- **Live Process Table feed.** One runtime `ProcessTable` is kept current by a bounded
+  `EventBus.subscribeBounded` background subscription (capacity `event_bus_queue_capacity`,
+  drop-oldest) folded through the idempotent projector. Because the projector dedupes by
+  event id (C9), an event already applied by the emit commit hook is a no-op when the live
+  feed redelivers it, so the two feeds never double-count. The subscription is scoped: the
+  wiring's `dispose` interrupts the fiber and unsubscribes with no leak (AC5).
+- **Startup / on-demand replay (C6).** `EventV2.readAggregate` is wired through the
+  adapter's `readAggregate` seam (`readDurablePage` → normalized `LifecycleEventRecord`
+  page), so `LifecyclePort.replay` rebuilds a root scope from the durable aggregate on
+  demand. Cold start has no active roots to replay; the live feed is the forward-from-now
+  table source, and per-root historical rebuild is invoked with a known `root_process_id`.
+- **AdmissionController (C11, C17).** The real `createAdmissionController` is composed and
+  reachable through the cancel `fence` seam: a first-press root cancel fences the `root`
+  admission scope for that `root_process_id`, quarantining new descendant admission (AC30).
+- **Watchdog cadence (C12).** The shared bucketed `createWatchdog` sweeper runs on a real
+  unref'd `setInterval` at `watchdog_sweep_interval_ms`; `dispose` clears it. Leases are
+  acquired by canonical executors, so until then the cadence sweeps an empty set — a real,
+  idle owner, never a fabricated assessment.
+- **Handoff (C16) and steer (T025).** `HandoffCoordinator` commits one durable
+  `lifecycle.handoff` through the adapter emit seam; steer publishes one
+  `lifecycle.steer_requested` intent through the same seam. Observation streams over the
+  same bounded live subscription (per-observer capacity `subscriber_queue_capacity`, C14).
+- **Operator control envelope provenance.** An operator steer/handoff/cancel event is
+  authored FRESH as an operator action from the bounded, redacted Process Table row —
+  never a replay of the process's own telemetry. `actor_kind` is `operator`, a new
+  `correlation_id` is minted, `causation_id` is `null`, `schema_version` is the current
+  version, and `hierarchy` is `null` because the bounded row does not carry the routing
+  `decision_id`/`turn_id` that `HierarchyContext` requires. `kind.event_type` on the
+  envelope is a descriptive origin; the authoritative event type is the EventV2 payload
+  `type` set per emit. The row's original `ownership` is preserved because the projector
+  advances an existing row rather than recreating it (C15, FR28, honest provenance).
+- **Registration authority.** Feature 007 remains the SOLE command-registration authority
+  (C19): `wireDomainPorts({ ...createLifecycleDomainPorts(port), routing: ... })` replaces
+  only the `not_implemented` `process.*`/`task.*` stubs and registers no ids.
+
+### Cancel — honest-unavailable forced-abort posture (C17)
+
+The FIRST-press root cancel path is fully wired and real: publish one
+`lifecycle.cancel_requested` per active (non-terminal) descendant resolved from the live
+Process Table, plus fence the root admission scope. The SECOND-press FORCED LOCAL ABORT
+drives `SessionRunCoordinator.interrupt`, which lives in the core `SessionExecution`
+layer. The operator stack's `AppRuntime` provides only the opencode `Session` facade,
+which neither exposes `interrupt` nor depends on `SessionExecution`, so that coordinator is
+NOT reachable from `stack-live`. Rather than fake a stop, the interrupt seam records the
+unavailability (a bounded debug log) and issues nothing; cancel surfaces its documented
+`unconfirmed` outcome — the outcome that already means "no remote kill, reversal, or
+mutation rollback is promised" (FR62, AC10, AC32). Making the forced abort real requires
+exposing the `SessionExecution`/`SessionRunCoordinator` interrupt through the operator
+`AppRuntime` (a composition change outside this feature's guarded scope).
+
+### todo.* EventV2 definitions (T032)
+
+The seven session-owned `todo.*` members (`todo.updated`, `todo.completed`, `todo.failed`,
+`todo.cancelled`, `todo.stale`, `todo.rehydrated`, `todo.handoff_attached`) are each
+registered as their own `EventV2.define` Definition on the `EventV2Bridge`
+(`dataFields(Member.fields)`, mirroring the routing/lifecycle patterns) and published
+through a new `publishTodoEvent` bridge method wired into the adapter's `TodoEventPublisher`
+seam. Classification is **live** for all seven: the `TodoEvents` schema module carries no
+durable annotation and never joins `durable-event-manifest.ts`, so none commits a sequence
+(C4). They stay DISTINCT from the Feature 001 `todo.initialized` / `todo.completion_blocked`
+events, which Feature 002 continues to consume read-only.
+
+### TUI live seam — honest empty baseline retained
+
+The direct-child process panel (`packages/tui/src/routes/session/process-panel/**`) is NOT
+mounted into the session route (`packages/tui/src/routes/session/index.tsx`) in this pass,
+and that file is deliberately NOT pulled into the guarded scope. The panel expects a
+`ProcessPanelSignal` accessor whose `cards` carry model/usage/activity enrichment; the
+TUI's existing session-scoped event stream delivers only the bounded, redacted lifecycle
+events, and no projection into the enriched card model exists yet as a live push source.
+Fabricating card enrichment from the bounded events would violate FR28. The panel therefore
+keeps its documented, honest EMPTY_PROCESS_PANEL_SIGNAL baseline (a real empty state, not a
+stub). The wiring point remains: render `<ProcessPanel rootSessionId={route.sessionID} />`
+near `<SubagentFooter />` once a session-scoped `ProcessPanelSignal` source (the S16/T036
+live card projection) is authored.

@@ -211,27 +211,27 @@ only and never holds management authority of its own.
 
 ### Tests and validation (Phase 5)
 
-- [ ] T037 [S17] Add pure deterministic unit tests under
+- [x] T037 [S17] Add pure deterministic unit tests under
   `packages/core/test/lifecycle/**` for state-machine transitions, projection
   idempotency over duplicate and out-of-order events, admission token-bucket ceilings
   and fanout, watchdog sweep, reconciliation with no auto-retry, and usage provenance
   reconciliation, with no I/O (AC2, AC11, AC13, AC14, AC21, AC26).
-- [ ] T038 [S17] Add schema and protocol tests under
+- [x] T038 [S17] Add schema and protocol tests under
   `packages/schema/test/lifecycle/**` and `packages/protocol/test/lifecycle/**`
   asserting envelope redaction, the closed 26-member vocabulary, the durable-versus-live
   split, and `protocol/lifecycle` shape parity against `contracts/ports.ts` (FR9, FR13,
   FR20, FR24).
-- [ ] T039 [S17] Add integration tests under `packages/opencode/test/lifecycle/**`
+- [x] T039 [S17] Add integration tests under `packages/opencode/test/lifecycle/**`
   through the Feature 007 sandbox stores under `.dev/` for projection over the EventV2
   durable aggregate, replay and restart rebuild into `unknown`/`unreconciled`, admission
   under saturation, observation authorization and redaction with sibling-leak rejection,
   and single-event dual handoff projection (AC1, AC3, AC4, AC6, AC13, AC15).
-- [ ] T040 [S17] Add end-to-end tests through the Feature 007 sandbox wrapper covering
+- [x] T040 [S17] Add end-to-end tests through the Feature 007 sandbox wrapper covering
   the CLI human and JSON output, the TUI direct-child process panel, root-tree Ctrl+C
   cancellation of visible and invisible descendants, Esc isolation, and reconnect
   reconstruction, with UI tests under `packages/tui/test/**` (AC23–AC23f, AC27, AC29,
   AC31, AC34).
-- [ ] T041 [S17] Add a telemetry cardinality audit under
+- [x] T041 [S17] Add a telemetry cardinality audit under
   `packages/core/test/lifecycle/**` asserting `task_id`/`session_id`/`process_id` never
   appear as metric labels, over-budget dynamic values map to `other`, lifecycle spans
   correlate with the Feature 001 spans, and Todo metrics export only enums/counts/
