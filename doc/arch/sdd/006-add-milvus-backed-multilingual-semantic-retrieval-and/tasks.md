@@ -218,7 +218,7 @@ vocabulary is enforced (see the Traceability reconciliation note).
 
 ### Domain retrieval engine (Phase 2)
 
-- [ ] T015 [S6] Author `packages/core/src/semantic/pipeline.ts` implementing the immutable
+- [x] T015 [S6] Author `packages/core/src/semantic/pipeline.ts` implementing the immutable
   nine-stage orchestrator over the injected Milvus/embedding/rerank/core-state/clock/config
   ports: structured profile → hard scalar filters → hybrid dense+sparse recall
   (`retrieval_top_k`) → reduced candidate set → rerank (`rerank_top_k`) → deterministic
@@ -229,7 +229,7 @@ vocabulary is enforced (see the Traceability reconciliation note).
   FR5, FR15, FR21, C2). Acceptance: `bun test packages/core` asserts the stage order is
   fixed, a no-candidate/empty-recall path yields no invented agent, and identical inputs yield
   identical stage sequencing with deterministic ports.
-- [ ] T016 [S7] Author `packages/core/src/semantic/tie-break.ts` and
+- [x] T016 [S7] Author `packages/core/src/semantic/tie-break.ts` and
   `packages/core/src/semantic/hybrid-fusion.ts` implementing the stable total order **rerank
   score → dense score → sparse/lexical score → canonical id/version** and the deterministic
   dense+sparse fusion (weighted / RRF) applied before the tie-break, so identical inputs yield
