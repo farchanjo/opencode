@@ -2,7 +2,7 @@
 id: 019f6f2f-d92f-7fa3-9a55-fc4b308a984d
 number: 006
 slug: add-milvus-backed-multilingual-semantic-retrieval-and
-status: planned
+status: tasked
 created_at: 2026-07-17T08:27:14.607608Z
 ---
 
