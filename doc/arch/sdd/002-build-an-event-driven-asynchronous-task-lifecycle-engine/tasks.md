@@ -92,59 +92,59 @@ only and never holds management authority of its own.
 
 ### Domain engine (Phase 2)
 
-- [ ] T014 [S5] Author `packages/core/src/lifecycle/event-bus.ts` registering one
+- [x] T014 [S5] Author `packages/core/src/lifecycle/event-bus.ts` registering one
   `EventV2.define` `Definition` per lifecycle member via `dataFields(Member.fields)`
   with `durable {version, aggregate: "root_process_id"}` on the eleven durable members
   and no `durable` annotation on the fifteen live members, exposing no raw tagged union
   to the bus (C2, C4).
-- [ ] T015 [S5] Extend `packages/opencode/src/event-v2-bridge.ts` with
+- [x] T015 [S5] Extend `packages/opencode/src/event-v2-bridge.ts` with
   `publishLifecycleEvent` mirroring `publishRoutingEvent` (location attach, single
   publish boundary) and extend `packages/schema/src/durable-event-manifest.ts` to join
   the eleven durable lifecycle definitions into the `Durable` inventory through
   `Event.durable([...])` (C1, C2, C5).
-- [ ] T016 [S6] Author `packages/core/src/lifecycle/projection.ts` as the idempotent
+- [x] T016 [S6] Author `packages/core/src/lifecycle/projection.ts` as the idempotent
   projector keyed on event id plus `(aggregateID, seq)`, surfacing duplicate,
   out-of-order, unknown-process, and unreconciled events as observable
   `ProjectionAnomaly` records without throwing and without inventing terminal state
   (FR23, FR29, C9).
-- [ ] T017 [S7] Author `packages/core/src/lifecycle/state-machine.ts` encoding the ten
+- [x] T017 [S7] Author `packages/core/src/lifecycle/state-machine.ts` encoding the ten
   states and the exact permitted transition table from C7 (`created`→`queued`→
   {`waiting`,`running`}; `running`↔`waiting`; {`queued`,`waiting`,`running`}→
   `cancelling`→{`cancelled`,`failed`,`unknown`}; `running`→{`completed`,`failed`};
   any non-terminal→{`zombie`,`unknown`}), rejecting illegal transitions (FR25, C7).
-- [ ] T018 [S7] Author `packages/core/src/lifecycle/process-table.ts` as the
+- [x] T018 [S7] Author `packages/core/src/lifecycle/process-table.ts` as the
   per-root/session in-memory projection rebuilt by replaying the durable aggregate via
   `EventV2.readAggregate`, applying events through the projector and state machine, and
   enforcing bounded retention via `EventV2.pruneDurable` with auditable counts (FR4,
   FR27, C6).
-- [ ] T019 [S8] Author `packages/core/src/lifecycle/admission/token-bucket.ts` and
+- [x] T019 [S8] Author `packages/core/src/lifecycle/admission/token-bucket.ts` and
   `packages/core/src/lifecycle/admission/capacity.ts`: a per-scope token bucket with
   hard `capacity` ceilings never relaxed by a model, and measured CPU/mem/provider/
   SQLite/event-queue/OTEL saturation signals as an explicit, overridable data constant
   surface (FR2, FR34, C11).
-- [ ] T020 [S8] Author `packages/core/src/lifecycle/admission/admission-controller.ts`
+- [x] T020 [S8] Author `packages/core/src/lifecycle/admission/admission-controller.ts`
   granting `granted`/`partial`/`queued`/`rejected` decisions per
   global/root/session/child/provider/agent/tool/event-queue/OTEL/SQLite/token/cost
   scope, projecting requested-versus-granted fanout, applying parent/child fairness
   weights, and quarantining descendants after a root fence, with no unbounded queue
   (FR30–FR34, C11).
-- [ ] T021 [S9] Author `packages/core/src/lifecycle/watchdog.ts` as a single shared
+- [x] T021 [S9] Author `packages/core/src/lifecycle/watchdog.ts` as a single shared
   bucketed sweeper holding in-memory lease and heartbeat state (never one timer per
   Task, never a per-heartbeat SQLite write) and publishing `owner_lost`,
   `zombie_detected`, and `unknown` without claiming a provider stopped (FR38, FR39,
   C12).
-- [ ] T022 [S9] Author `packages/core/src/lifecycle/reconciliation.ts` performing
+- [x] T022 [S9] Author `packages/core/src/lifecycle/reconciliation.ts` performing
   explicit versioned reconciliation against durable Sessions, emitting
   `ReconcileRecord` with `auto_retry` fixed false so no zombie or crash re-executes
   effects (FR40, FR42, C13).
-- [ ] T023 [S14] Author `packages/core/src/lifecycle/lifecycle-instruments.ts` adding
+- [x] T023 [S14] Author `packages/core/src/lifecycle/lifecycle-instruments.ts` adding
   the `admission`, `queue.wait`, `cancel`, `handoff`, and `reconciliation` spans
   correlated with the Feature 001 `task.execute`/`session.execution`/`llm.request`/
   `tool.execute`/`fallback` spans, the active/started/completed/failed/cancelled/
   zombie/unknown counters, queue-wait/TTFT/tokens-per-second/saturation metrics with
   bounded labels, and the local evidence window/confidence/TTL for Smart Routing,
   reusing the Feature 001 instruments and cardinality allowlist (FR43–FR47, C18).
-- [ ] T024 [S5–S14] Author the barrel `packages/core/src/lifecycle/index.ts`
+- [x] T024 [S5–S14] Author the barrel `packages/core/src/lifecycle/index.ts`
   re-exporting the event bus, projection, state machine, process table, admission,
   watchdog, reconciliation, and instruments modules.
 
