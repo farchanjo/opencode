@@ -477,7 +477,7 @@ vocabulary is enforced (see the Traceability reconciliation note).
   degrade), and the projection/content-hash + sanitization, with deterministic ports and no I/O
   (AC2, AC3, AC4, AC5, AC7, AC8, AC16, AC17, AC18, AC29, AC33). Acceptance: `bun test
   packages/core` green.
-- [ ] T041 [S25] Add schema and protocol tests under `packages/schema/test/semantic/**` and
+- [x] T041 [S25] Add schema and protocol tests under `packages/schema/test/semantic/**` and
   `packages/protocol/test/semantic/**` asserting contract hygiene (annotate-before-check
   identifiers on every brand), the closed 12-member `semantic.*` vocabulary and the durable
   (9) versus live (3) split, the real-valued score domain (`Score`/`RerankScore`/`DenseScore`/
