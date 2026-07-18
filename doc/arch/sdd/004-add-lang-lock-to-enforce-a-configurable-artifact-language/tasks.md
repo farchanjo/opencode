@@ -322,7 +322,7 @@ schema modules so a single vocabulary is enforced (see the Traceability note).
   advisory detector buckets (flag/compliant/unknown), and exception matching (match/deny/
   untrusted-reject), with deterministic ports and no I/O (AC3, AC5, AC6, AC9, AC10, AC11).
   Acceptance: `bun test packages/core` green.
-- [ ] T038 [S20] Add schema and protocol tests under `packages/schema/test/langlock/**`
+- [x] T038 [S20] Add schema and protocol tests under `packages/schema/test/langlock/**`
   and `packages/protocol/test/langlock/**` asserting contract hygiene
   (annotate-before-check identifiers), the closed 15-member `langlock.*` vocabulary and the
   durable-versus-live split, envelope and record redaction (no prompt/result/payload/path/

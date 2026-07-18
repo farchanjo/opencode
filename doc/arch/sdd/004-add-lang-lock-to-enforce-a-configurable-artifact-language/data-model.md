@@ -865,3 +865,27 @@ rule (an unreachable runtime seam keeps a typed gap, never a fabricated wiring):
    object, not a live operator query, so no port gap applies) titled by human
    display name only — the canonical tag is sent as the `tag` payload field but
    never used as a picker label (FR3, FR4, AC3).
+
+## Tests and validation — implementation notes (T037–T042)
+
+Decisions recorded during the Phase 5 (test/validation) wave:
+
+1. **T038 draft `Axis` reconciliation (completes T015).** The plan-phase draft
+   `contracts/ports.ts` still carried the pre-reconciliation second axis member
+   `product_i18n`, while the wire-shape authority — `doc/arch/schemas/langlock/
+   enums.cue` `#Axis`, this `data-model.md` (`Axis` literals above), and the
+   `packages/schema/src/langlock/enums.ts` mirror the protocol sources from — all
+   carry `product_docs`. T015's single-vocabulary reconciliation had missed this
+   one member. The draft is now aligned to `product_docs` so the T038 parity
+   suite pins full draft ↔ protocol ↔ schema agreement on the closed enums, not a
+   documented divergence. No runtime code changed — the schema/protocol already
+   carried `product_docs`; only the stale draft literal was corrected.
+
+2. **T038 parity strategy mirrors Feature 003 `jobs/contract-parity.test.ts`.**
+   The protocol parity suite source-scans the draft and the protocol mirror for
+   the two `as const` vocabulary arrays plus the closed error unions, and compares
+   the runtime `EventDefinitions` split — rather than importing the type-only
+   port interfaces (they carry no runtime representation). The closed enums the
+   protocol layer sources from `@opencode-ai/schema/langlock/*` (`import type`)
+   are pinned against the schema runtime literals so the transport contract can
+   never diverge from the wire shape.

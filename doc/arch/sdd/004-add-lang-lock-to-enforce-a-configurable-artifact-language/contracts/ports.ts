@@ -110,7 +110,7 @@ export type ExceptionCategory =
   | "exact_string"
 
 /** The four independent language axes; changing `artifact` never alters the other three (FR2, C1). */
-export type Axis = "ui_locale" | "product_i18n" | "conversational" | "artifact"
+export type Axis = "ui_locale" | "product_docs" | "conversational" | "artifact"
 
 /**
  * The advisory validation lifecycle (plan.md "State machines" → "Advisory
