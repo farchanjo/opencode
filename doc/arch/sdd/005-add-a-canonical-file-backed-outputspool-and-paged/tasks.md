@@ -454,7 +454,7 @@ sourcing its enum members from the schema modules so a single vocabulary is enfo
   occurrence owning its OutputGroup with a bounded summary/ref notification (AC1, AC12, AC13,
   AC14, AC15, AC20, AC21). Acceptance: `bun test packages/opencode`/`packages/cli`/
   `packages/tui` green under the sandbox.
-- [ ] T045 [S27] Run per-package `tsgo --noEmit` typecheck and `bun test` for
+- [x] T045 [S27] Run per-package `tsgo --noEmit` typecheck and `bun test` for
   `packages/schema`, `packages/protocol`, `packages/core`, `packages/opencode`,
   `packages/cli`, and `packages/tui`, plus a telemetry cardinality audit under
   `packages/core/test/outputspool/**` asserting content/path/OutputRef/`session_id`/
@@ -463,7 +463,7 @@ sourcing its enum members from the schema modules so a single vocabulary is enfo
   the Feature 001 spans, and OTEL-down does not block seal/read; every package must typecheck
   and test green (Observability, FR5, C9, C22, AC18). Acceptance: all six packages typecheck
   and test green.
-- [ ] T046 [S0–S27] Close-out: tick every checkbox above once its task is complete and
+- [x] T046 [S0–S27] Close-out: tick every checkbox above once its task is complete and
   verified, confirm `speckit validate` is green with only the four pre-existing waived
   hygiene findings, and mark the Feature 005 workflow phase complete (every FR1–FR50 and
   AC1–AC22 mapped to a task per the Traceability section). Acceptance: `speckit validate`
