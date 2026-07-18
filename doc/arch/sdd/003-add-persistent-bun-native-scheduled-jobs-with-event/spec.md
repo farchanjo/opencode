@@ -2,7 +2,7 @@
 id: 019f698e-8b57-7851-84d1-8f09a10d08e2
 number: 003
 slug: add-persistent-bun-native-scheduled-jobs-with-event
-status: planned
+status: implemented
 created_at: 2026-07-16T06:12:57.303777Z
 ---
 

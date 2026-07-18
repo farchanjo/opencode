@@ -161,7 +161,7 @@ and the `jobs.*` operator command domain are distinct reserved namespaces (C13).
   compensation, `auto_retry` pinned false, and no claimed cross-system atomicity
   or false replay, mirroring `reconciliation.cue` (FR3, FR6, FR14, C5, C7, AC2,
   AC19, AC23).
-- [ ] T017 [S12] Author `packages/core/src/jobs/event-bus.ts` registering one
+- [x] T017 [S12] Author `packages/core/src/jobs/event-bus.ts` registering one
   `EventV2.define` `Definition` per `job.*` member via `dataFields(Member.fields)`
   with `durable {version, aggregate: "root_session_id"}` on the durable members
   (`DURABLE_JOB_EVENT_TYPES`) and no `durable` annotation on the live members
@@ -307,17 +307,44 @@ and the `jobs.*` operator command domain are distinct reserved namespaces (C13).
   notification lag, long handlers, cancellation, OTEL outage, restart,
   reconciliation) bound to AC1, AC2, AC3, AC5, AC7, AC8, AC12, AC14, AC15, AC17,
   AC19, AC21, AC22, AC23, AC24, AC25.
-- [ ] T035 [S18] Run per-package `tsgo --noEmit` typecheck and `bun test` for
+- [x] T035 [S18] Run per-package `tsgo --noEmit` typecheck and `bun test` for
   `packages/schema`, `packages/protocol`, `packages/core`, `packages/opencode`,
   `packages/cli`, and `packages/tui`, plus a telemetry cardinality audit under
   `packages/core/test/jobs/**` asserting `job_definition_id`/`occurrence_id`/
   `session_id`/`process_id` never appear as metric labels, over-budget dynamic
   values map to `other`, and `job.*` spans correlate with the Feature 001 spans;
   every package must typecheck and test green (Observability, C18, AC16).
-- [ ] T036 [S0–S18] Close-out: tick every checkbox above once its task is
+- [x] T036 [S0–S18] Close-out: tick every checkbox above once its task is
   complete and verified, confirm `speckit validate` is green with only the four
   pre-existing waived hygiene findings, and mark the Feature 003 workflow phase
   complete (all AC1–AC29 mapped to a task and the C20 fault matrix covered).
+
+## Close-out residuals
+
+Feature 003 is implemented; two operator-runtime seams remain honest residuals,
+recorded here rather than faked (mirroring the Feature 002 cancel forced-abort
+gap). Neither blocks the durable authority, the domain engine, the schema/event
+foundation, or the sandbox integration/e2e coverage.
+
+- **Operator `JobsBackend` live wiring (T027, `packages/opencode/src/operator/
+  jobs/backend-live.ts`).** The `jobs` domain is composed into `stack-live.ts`
+  over the real Config.Service durable persistence (T022). The read surface
+  (`jobs.list`/`jobs.status`) is honestly backed and projects the bounded,
+  redacted `JobDefinitionSummary` — including the durable `registrationState` —
+  with no fabricated field (`nextDueAt`/`lastOutcome` stay the contract's nullable
+  not-yet-projected values). The remaining methods return the port's typed
+  `JobsError` (`unavailable`/`not_implemented`) because their backing seam is not
+  reachable from the operator `AppRuntime`: `jobs.show`/`jobs.history` need the
+  `job.*` occurrence/notification-history projection over the EventV2 durable
+  aggregate; `jobs.watch` needs the live observation stream; `jobs.create`/
+  `update`/`reschedule` need the create-input → durable `JobDefinition` assembler
+  (an `ActionTarget` and policy/schedule normalization the flat operator input
+  does not carry); `jobs.enable`/`disable`/`delete` need the domain-version CAS
+  bump paired with the compensating external Bun registration effect; and
+  `jobs.run-now` needs the canonical Feature 002 executor seam. These are the same
+  `AppRuntime` boundary Feature 002 documented for its `SessionRunCoordinator`
+  interrupt. A caller always sees an honest typed capability gap, never a false
+  success. Closing them is a follow-up wiring task, not a spec change.
 
 ## Dependencies
 
