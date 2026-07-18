@@ -72,6 +72,7 @@ specScopeGlobs = [
   "packages/tui/src/**/smart/**",
   "packages/tui/src/**/routing-state/**",
   "packages/tui/src/component/prompt/index.tsx",
+  "packages/tui/package.json",
   "packages/schema/src/**/routing/**",
   "packages/schema/src/**/telemetry/**",
   "packages/protocol/src/**/routing/**",

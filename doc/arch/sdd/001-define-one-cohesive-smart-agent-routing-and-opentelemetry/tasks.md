@@ -131,44 +131,44 @@ Feature 007 registry; none hold management authority of their own.
 
 ### Routing application, adapters, and session state (Phase 2)
 
-- [ ] T026 Author `packages/opencode/src/routing/application/ports.ts` from
+- [x] T026 Author `packages/opencode/src/routing/application/ports.ts` from
   `contracts/ports.ts` (RoutingPort, SmartPort, BudgetPort, PoolsPort) and
   `packages/opencode/src/routing/application/routing-service.ts` orchestrating the
   domain classifier, resolver, evaluator, budget policy, dispatcher, and decision
   store.
-- [ ] T027 Author the outbound adapters
+- [x] T027 Author the outbound adapters
   `packages/opencode/src/routing/adapters/outbound/catalog-adapter.ts` (candidate
   resolution from Catalog.Service/ModelsDev only, no hardcoded model IDs),
   `config-adapter.ts` (routing config via Config.Service), and
   `event-adapter.ts` (routing/hierarchy/capability events via EventV2).
-- [ ] T028 Author the inbound adapters under
+- [x] T028 Author the inbound adapters under
   `packages/opencode/src/routing/adapters/inbound/` registering the routing
   command handlers with the Feature 007 dispatcher, parsing and dispatching input
   locally before prompt admission.
-- [ ] T029 Add `packages/opencode/src/session/routing-state.ts` carrying the
+- [x] T029 Add `packages/opencode/src/session/routing-state.ts` carrying the
   routing decision reference, hierarchy role, and budget consumption for a
   Session, and integrate `parent_session_id == current_session_id` direct-child
   correlation.
-- [ ] T030 Extend `packages/opencode/src/session/todo.ts` with the session-owned
+- [x] T030 Extend `packages/opencode/src/session/todo.ts` with the session-owned
   aggregate, durable non-empty snapshot, read-only `TodoRef`/`TodoVersion` in
   dispatch envelopes, and the parent-cannot-edit-child invariant.
-- [ ] T031 Extend `packages/opencode/src/agent/agent.ts` for specialist-agent
+- [x] T031 Extend `packages/opencode/src/agent/agent.ts` for specialist-agent
   resolution via AgentV2 in the two-stage pipeline, and extend
   `packages/opencode/src/event-v2-bridge.ts` to bridge the new routing,
   hierarchy, and capability events onto the EventV2 bus.
 
 ### CLI and TUI surfaces (Phase 1 and Phase 2)
 
-- [ ] T032 Add the CLI commands under `packages/cli/src/telemetry/` for
+- [x] T032 Add the CLI commands under `packages/cli/src/telemetry/` for
   `telemetry status|on|off|test|show|configure`, each dispatching through the
   Feature 007 registry with zero model calls and redacted secret output.
-- [ ] T033 Add the CLI commands under `packages/cli/src/smart/` and
+- [x] T033 Add the CLI commands under `packages/cli/src/smart/` and
   `packages/cli/src/routing/` for `smart status|on|off|auto` and `routing
   status|explain|test|capability inspect`; `routing test` runs a deterministic
   local simulation reporting "no external model call was made".
-- [ ] T034 Add the TUI Smart-state surface under `packages/tui/src/smart/` and
+- [x] T034 Add the TUI Smart-state surface under `packages/tui/src/smart/` and
   `packages/tui/src/routing-state/` consuming `SmartIndicatorStateSchema`.
-- [ ] T035 Wire the Smart indicator in
+- [x] T035 Wire the Smart indicator in
   `packages/tui/src/component/prompt/index.tsx` at the
   `Locale.titlecase(agent().name)` label: render `Smart` in `theme.error` when
   brain mode and Smart Routing are both active, render the fallback text when
