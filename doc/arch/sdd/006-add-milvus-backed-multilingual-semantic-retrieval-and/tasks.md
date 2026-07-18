@@ -290,7 +290,7 @@ vocabulary is enforced (see the Traceability reconciliation note).
   C9). Acceptance: `bun test packages/core` asserts sanitization strips secrets/prompts/
   reasoning/paths, content-hash change drives upsert vs tombstone, and a malicious description
   is a ranking signal only.
-- [ ] T023 [S14] Author `packages/core/src/semantic/semantic-instruments.ts` adding the
+- [x] T023 [S14] Author `packages/core/src/semantic/semantic-instruments.ts` adding the
   `semantic.profile`/`embed.query`/`retrieve.agents`/`rerank.agents`/`retrieve.skills`/
   `rerank.skills`/`semantic.fallback`/`index.upsert`/`index.reconcile` spans linked to the
   Feature 001 session/routing/LLM/job spans, and the content-free metrics (latency buckets,
