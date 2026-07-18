@@ -58,6 +58,20 @@ const Handlers = Runtime.handlers(Commands, {
     watch: () => import("./task/watch"),
     cancel: () => import("./task/cancel"),
   },
+  jobs: {
+    list: () => import("./jobs/list"),
+    status: () => import("./jobs/status"),
+    show: () => import("./jobs/show"),
+    create: () => import("./jobs/create"),
+    update: () => import("./jobs/update"),
+    enable: () => import("./jobs/enable"),
+    disable: () => import("./jobs/disable"),
+    delete: () => import("./jobs/delete"),
+    reschedule: () => import("./jobs/reschedule"),
+    "run-now": () => import("./jobs/run-now"),
+    history: () => import("./jobs/history"),
+    watch: () => import("./jobs/watch"),
+  },
 })
 
 Runtime.run(Commands, Handlers, { version: "local" }).pipe(

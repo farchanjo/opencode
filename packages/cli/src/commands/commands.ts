@@ -3,6 +3,20 @@ import { Spec } from "../framework/spec"
 
 declare const OPENCODE_CLI_NAME: string | undefined
 
+// -- jobs (Feature 003) closed choice sets, declared before first use --------
+
+const ACTION_TYPES = [
+  "native_maintenance",
+  "operator_notification",
+  "wake_or_structured_input",
+  "smart_routing_dispatch",
+  "approved_workflow",
+] as const
+
+const OVERLAP_POLICIES = ["allow", "forbid", "queue", "replace"] as const
+
+const MISFIRE_POLICIES = ["skip", "fire_once", "bounded_catch_up", "coalesce"] as const
+
 export const Commands = Spec.make(typeof OPENCODE_CLI_NAME === "string" ? OPENCODE_CLI_NAME : "opencode", {
   description: "OpenCode 2.0 preview command line interface",
   commands: [
@@ -214,6 +228,124 @@ export const Commands = Spec.make(typeof OPENCODE_CLI_NAME === "string" ? OPENCO
         }),
       ],
     }),
+    Spec.make("jobs", {
+      description:
+        "Manage persistent Bun-native scheduled jobs (Feature 003; native operator-only, zero model calls, redacted/versioned output)",
+      commands: [
+        Spec.make("list", {
+          description: "List redacted Job Definitions with enabled and registration state",
+          params: {
+            scope: scope(),
+            enabledOnly: Flag.boolean("enabled-only").pipe(
+              Flag.withDescription("show only enabled definitions"),
+              Flag.withDefault(false),
+            ),
+            limit: jobsLimitFlag(),
+            cursor: jobsCursorFlag(),
+            json: json(),
+          },
+        }),
+        Spec.make("status", {
+          description: "Show Job Definition status: next due, last outcome, registration state",
+          params: { jobDefinitionId: jobDefinitionIdArg(), json: json() },
+        }),
+        Spec.make("show", {
+          description: "Show the full redacted Job Definition plus occurrence history",
+          params: {
+            jobDefinitionId: jobDefinitionIdArg(),
+            occurrenceLimit: Flag.integer("occurrence-limit").pipe(
+              Flag.withDescription("maximum occurrences to return"),
+              Flag.optional,
+            ),
+            json: json(),
+          },
+        }),
+        Spec.make("create", {
+          description: "Create a Job Definition (CAS, scope, audit)",
+          params: {
+            name: Argument.string("name").pipe(Argument.withDescription("Job Definition name")),
+            description: Flag.string("description").pipe(
+              Flag.withDescription("Job Definition description"),
+              Flag.optional,
+            ),
+            cron: cronFlag(),
+            timezone: timezoneFlag(),
+            actionType: actionTypeFlag(),
+            overlapPolicy: overlapPolicyFlag(),
+            misfirePolicy: misfirePolicyFlag(),
+            payloadRef: payloadRefFlag(),
+            scope: scope(),
+            json: json(),
+          },
+        }),
+        Spec.make("update", {
+          description: "Update a Job Definition (version/CAS)",
+          params: {
+            jobDefinitionId: jobDefinitionIdArg(),
+            expectedVersion: expectedVersionFlag(),
+            name: Flag.string("name").pipe(Flag.withDescription("new Job Definition name"), Flag.optional),
+            description: Flag.string("description").pipe(
+              Flag.withDescription("new Job Definition description"),
+              Flag.optional,
+            ),
+            cron: cronFlag().pipe(Flag.optional),
+            timezone: timezoneFlag().pipe(Flag.optional),
+            actionType: actionTypeFlag().pipe(Flag.optional),
+            overlapPolicy: Flag.choice("overlap-policy", OVERLAP_POLICIES).pipe(
+              Flag.withDescription("overlap policy"),
+              Flag.optional,
+            ),
+            misfirePolicy: Flag.choice("misfire-policy", MISFIRE_POLICIES).pipe(
+              Flag.withDescription("misfire policy"),
+              Flag.optional,
+            ),
+            payloadRef: payloadRefFlag().pipe(Flag.optional),
+            scope: scope(),
+            json: json(),
+          },
+        }),
+        Spec.make("enable", {
+          description: "Enable a Job Definition and register it (idempotent)",
+          params: { jobDefinitionId: jobDefinitionIdArg(), expectedVersion: expectedVersionFlag(), json: json() },
+        }),
+        Spec.make("disable", {
+          description: "Disable a Job Definition and unregister it; never a silent kill of mutating work",
+          params: { jobDefinitionId: jobDefinitionIdArg(), expectedVersion: expectedVersionFlag(), json: json() },
+        }),
+        Spec.make("delete", {
+          description: "Delete a Job Definition plus compensating unregister",
+          params: { jobDefinitionId: jobDefinitionIdArg(), expectedVersion: expectedVersionFlag(), json: json() },
+        }),
+        Spec.make("reschedule", {
+          description: "Change a Job Definition's schedule; re-register intent",
+          params: {
+            jobDefinitionId: jobDefinitionIdArg(),
+            expectedVersion: expectedVersionFlag(),
+            cron: cronFlag(),
+            timezone: timezoneFlag(),
+            json: json(),
+          },
+        }),
+        Spec.make("run-now", {
+          description: "Create a normal occurrence through admission, routing, and permissions; starts no LLM turn",
+          params: { jobDefinitionId: jobDefinitionIdArg(), json: json() },
+        }),
+        Spec.make("history", {
+          description: "Show redacted occurrence and notification history for one Job Definition",
+          params: {
+            jobDefinitionId: jobDefinitionIdArg(),
+            limit: jobsLimitFlag(),
+            cursor: jobsCursorFlag(),
+            json: json(),
+          },
+        }),
+        Spec.make("watch", {
+          description:
+            "Show the current Job Definition frame over the observation surface (bounded snapshot; live streaming is a TUI surface)",
+          params: { jobDefinitionId: jobDefinitionIdArg(), json: json() },
+        }),
+      ],
+    }),
   ],
 })
 
@@ -252,4 +384,52 @@ function pollIntervalFlag() {
 
 function maxPollsFlag() {
   return Flag.integer("max-polls").pipe(Flag.withDescription("maximum number of polls before giving up"), Flag.optional)
+}
+
+// -- jobs (Feature 003) command params ---------------------------------------
+
+function jobDefinitionIdArg() {
+  return Argument.string("jobDefinitionId").pipe(Argument.withDescription("durable Job Definition id"))
+}
+
+function expectedVersionFlag() {
+  return Flag.integer("expected-version").pipe(Flag.withDescription("expected Job Definition version (CAS)"))
+}
+
+function cronFlag() {
+  return Flag.string("cron").pipe(Flag.withDescription("5-field cron expression"))
+}
+
+function timezoneFlag() {
+  return Flag.string("timezone").pipe(Flag.withDescription("IANA timezone"))
+}
+
+function actionTypeFlag() {
+  return Flag.choice("action-type", ACTION_TYPES).pipe(Flag.withDescription("target/action category"))
+}
+
+function overlapPolicyFlag() {
+  return Flag.choice("overlap-policy", OVERLAP_POLICIES).pipe(
+    Flag.withDescription("overlap policy"),
+    Flag.withDefault("forbid"),
+  )
+}
+
+function misfirePolicyFlag() {
+  return Flag.choice("misfire-policy", MISFIRE_POLICIES).pipe(
+    Flag.withDescription("misfire policy"),
+    Flag.withDefault("skip"),
+  )
+}
+
+function payloadRefFlag() {
+  return Flag.string("payload-ref").pipe(Flag.withDescription("secure payload reference (never a raw secret)"))
+}
+
+function jobsLimitFlag() {
+  return Flag.integer("limit").pipe(Flag.withDescription("maximum rows to return"), Flag.optional)
+}
+
+function jobsCursorFlag() {
+  return Flag.string("cursor").pipe(Flag.withDescription("pagination cursor from a prior page"), Flag.optional)
 }
