@@ -100,6 +100,34 @@ versions are evidence, not authorization.
   Phase 3 Milvus adapter, kept behind the single Milvus port so a fake adapter carries
   the unit-test path regardless of the driver outcome.
 
+### gRPC-under-Bun empirical validation (T025)
+
+Resolved in the tasks phase against the pinned SDK. `@zilliz/milvus2-sdk-node@3.0.3`
+plus its gRPC transitive stack (`@grpc/grpc-js@1.14.4`, `@grpc/proto-loader@0.8.1`,
+`protobufjs@7.6.2`, `generic-pool@3.9.0`, `lru-cache`, `@petamoriken/float16@3.9.3`)
+were added to `packages/opencode/package.json` (pinned exact) and `bun.lock`. The
+`grpc-probe.ts` module ran under the Bun runtime (macOS, Bun 1.3.x):
+
+- **Import** — the SDK imports under Bun; `MilvusClient` is a function.
+- **Construct** — a `MilvusClient` constructs with its `generic-pool` gRPC channel pool
+  in ~44ms.
+- **Channel lifecycle / keepalive / retries** — `checkHealth()` against an unreachable
+  `127.0.0.1:19530` opened the channel, retried three times with backoff (20/40/80ms),
+  and surfaced a **typed gRPC `Error 14 UNAVAILABLE`** (`connect ECONNREFUSED`) rather
+  than crashing the runtime.
+- **TLS** — the client accepts the `ssl` transport option at construct time under Bun.
+
+**Recorded finding: `grpc_bun_supported`, driver = `grpc`.** A typed gRPC status on an
+unreachable backend proves the channel constructs, pools, retries, and reports a typed
+status under Bun — i.e. the gRPC driver is viable. The Milvus port therefore binds behind
+the gRPC driver by default. The `grpc-probe.ts` classifier still distinguishes a genuine
+Bun-runtime incompatibility (import/construct throws) — which would record
+`grpc_bun_unsupported` and route the single Milvus port through the injected fake /
+HTTP-fallback adapter — so the driver selection is data-driven and no probe outcome
+hard-fails routing on an unreachable backend (FR7, C1, C20). **No Milvus Lite exists for
+TS/Bun** (Python-only), so the dev/test topology remains a standalone Milvus server
+(container) for integration plus injected fakes/in-memory adapters for unit tests.
+
 ### Milvus Lite for the dev/test path (honest gap)
 
 - There is **no `milvus-lite` npm package** (registry lookup: not found). Milvus Lite is

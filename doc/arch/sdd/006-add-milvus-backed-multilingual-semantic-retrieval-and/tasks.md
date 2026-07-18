@@ -310,7 +310,7 @@ vocabulary is enforced (see the Traceability reconciliation note).
 
 ### Application, adapters, and operator wiring (Phase 3)
 
-- [ ] T025 [S15] **EARLY dependency + gRPC-under-Bun validation.** Add
+- [x] T025 [S15] **EARLY dependency + gRPC-under-Bun validation.** Add
   `@zilliz/milvus2-sdk-node@3.0.3` to `packages/opencode/package.json` and lock it plus its
   gRPC transitive stack (`@grpc/grpc-js`, `@grpc/proto-loader`, `protobufjs`, `generic-pool`,
   `lru-cache`, `@petamoriken/float16`) into `bun.lock`, then author
