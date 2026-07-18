@@ -262,13 +262,13 @@ and the `jobs.*` operator command domain are distinct reserved namespaces (C13).
 
 ### CLI and TUI surfaces (Phase 4)
 
-- [ ] T029 [S17] Author `packages/cli/src/**/jobs/**` for `opencode op jobs
+- [x] T029 [S17] Author `packages/cli/src/**/jobs/**` for `opencode op jobs
   list|status|show|create|update|enable|disable|delete|reschedule|run-now|
   history|watch`, each dispatching through the Feature 007 registry to the
   `JobsPort` with registry-generated names (no divergent hardcoded verbs),
   emitting redacted/versioned human and JSON output, and making zero
   provider/model calls (FR30, C12).
-- [ ] T030 [S17] Author `packages/tui/src/**/operator/jobs/**` rendering the jobs
+- [x] T030 [S17] Author `packages/tui/src/**/operator/jobs/**` rendering the jobs
   panel (definitions, occurrences, registration state, redacted/versioned history)
   as a thin adapter over the Feature 007 registry with registry-generated names,
   live `job.*` watch over the observation seam, and screen-reader text
