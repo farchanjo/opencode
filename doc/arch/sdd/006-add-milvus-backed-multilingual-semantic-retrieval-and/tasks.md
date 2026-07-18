@@ -279,7 +279,7 @@ vocabulary is enforced (see the Traceability reconciliation note).
   stale-index safety never relies on freshness alone, mirroring the C11 gate (FR20, FR27, FR34,
   C11). Acceptance: `bun test packages/core` covers a stale disabled agent dropped, an
   over-permission skill dropped, and a stale-confidence candidate degraded.
-- [ ] T022 [S13] Author `packages/core/src/semantic/projection.ts` projecting `AgentDoc`/
+- [x] T022 [S13] Author `packages/core/src/semantic/projection.ts` projecting `AgentDoc`/
   `SkillDoc`/`SkillChunkDoc` from live core with a content hash driving incremental upsert/
   tombstone, enforcing the sanitized-field allowlist that strips secrets, prompts, reasoning,
   and paths, indexing skill summaries first and chunking full bodies into bounded sanitized
