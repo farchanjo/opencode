@@ -189,7 +189,7 @@ sourcing its enum members from the schema modules so a single vocabulary is enfo
 
 ### Domain spool engine (Phase 2)
 
-- [ ] T015 [S5] Author `packages/core/src/outputspool/identity.ts` minting
+- [x] T015 [S5] Author `packages/core/src/outputspool/identity.ts` minting
   `OutputGroupRef`/`OutputRef` over the injected entropy port and enforcing stale-generation
   fencing so a new attempt/generation never overwrites a predecessor's committed content
   and a superseded writer's append/seal is rejected, mapping one OutputGroupRef to exactly
@@ -197,7 +197,7 @@ sourcing its enum members from the schema modules so a single vocabulary is enfo
   FR14, FR17, FR27, FR34, C18, C21, AC11). Acceptance: `bun test packages/core` covers a
   mint round-trip, a stale-generation reject, and one-subtree-per-ref with a deterministic
   entropy port and no I/O.
-- [ ] T016 [S6] Author `packages/core/src/outputspool/cursor-codec.ts` encoding and
+- [x] T016 [S6] Author `packages/core/src/outputspool/cursor-codec.ts` encoding and
   decoding the opaque `OutputCursor` with its integrity tag, binding generation and byte
   offset, so a reconnect within validity resumes without a full re-read and a stale or
   superseded token returns a stable `expired`/`invalid_cursor` code rather than rewinding
@@ -205,7 +205,7 @@ sourcing its enum members from the schema modules so a single vocabulary is enfo
   Acceptance: `bun test packages/core` covers encode/decode round-trip, integrity-tag
   tamper reject, generation-supersession invalidation, and idle-TTL expiry with a
   deterministic clock.
-- [ ] T017 [S7] Author `packages/core/src/outputspool/group-state.ts` implementing the
+- [x] T017 [S7] Author `packages/core/src/outputspool/group-state.ts` implementing the
   closed `open->sealing->sealed/aborted/corrupt/expired/unknown` machine so seal commits
   finality of committed bytes, abort stops append while preserving committed bytes, a
   persistent admission fault or failed reconciliation reaches `corrupt`, an indeterminate
@@ -214,7 +214,7 @@ sourcing its enum members from the schema modules so a single vocabulary is enfo
   state machine (FR19, FR24, FR26, FR27, C20, AC8, AC10). Acceptance: `bun test
   packages/core` asserts every legal transition, rejects illegal transitions, and confirms
   abort preserves committed bytes.
-- [ ] T018 [S8] Author `packages/core/src/outputspool/writer-queue.ts` implementing the
+- [x] T018 [S8] Author `packages/core/src/outputspool/writer-queue.ts` implementing the
   bounded producer queue and batched-writer contract: file-backed from the first observable
   chunk, producer → bounded queue → batched async writer with no filesystem write per
   token/delta, expected-offset idempotent append tolerating short and partial writes, and a
@@ -222,7 +222,7 @@ sourcing its enum members from the schema modules so a single vocabulary is enfo
   (FR6, FR7, FR8, FR9, C2, C3, AC1, AC5). Acceptance: `bun test packages/core` covers
   batched drain, expected-offset idempotent retry, short/partial-write handling, and
   bounded-queue backpressure with a deterministic port.
-- [ ] T019 [S9] Author `packages/core/src/outputspool/paging.ts` implementing
+- [x] T019 [S9] Author `packages/core/src/outputspool/paging.ts` implementing
   server-capped `read(offset, limit)` byte-offset paging that is UTF-8 safe and never
   splits a codepoint, returns page bytes, `next_offset`, `committed_bytes`, and `caught_up`,
   and reports `eof` true only when the channel is sealed or aborted and the reader has
@@ -230,7 +230,7 @@ sourcing its enum members from the schema modules so a single vocabulary is enfo
   mirroring `page.cue` (FR20, FR21, C15, AC2, AC3). Acceptance: `bun test packages/core`
   covers a codepoint straddling a page boundary, `caught_up`-without-`eof` on an open
   stream, and `eof` on a sealed consumed channel.
-- [ ] T020 [S10] Author `packages/core/src/outputspool/admission.ts` classifying ENOSPC,
+- [x] T020 [S10] Author `packages/core/src/outputspool/admission.ts` classifying ENOSPC,
   fd exhaustion, quota exceed, permission denial, and sustained disk latency as first-class
   observable admission/fault states, applying the degrade-then-fence policy so a persistent
   fault backpressures the producer and then transitions to `aborted` or `corrupt` past a
@@ -238,7 +238,7 @@ sourcing its enum members from the schema modules so a single vocabulary is enfo
   success when bytes were lost, mirroring `enums.cue` `AdmissionFault` (FR10, C4, AC5, AC6,
   AC7). Acceptance: `bun test packages/core` covers each fault class, degrade-then-fence to
   aborted/corrupt, and seal-never-lies with a deterministic fault-injecting port.
-- [ ] T021 [S11] Author `packages/core/src/outputspool/retention-graph.ts` evaluating
+- [x] T021 [S11] Author `packages/core/src/outputspool/retention-graph.ts` evaluating
   reclaim eligibility so a group is reclaimable only when its TTL has elapsed AND it holds
   no live lease, no active reader/writer, no inbound reference edge (transcript, Todo,
   handoff, NotificationEnvelope `output_ref`, Feature 002 `RowTelemetry.output_ref`), AND
@@ -246,7 +246,7 @@ sourcing its enum members from the schema modules so a single vocabulary is enfo
   selection for cleanup, mirroring `retention.cue` (FR28, FR29, FR30, C5, AC16, AC17).
   Acceptance: `bun test packages/core` covers reclaim-when-fully-unreferenced,
   referenced-blocks-reclaim, legal-hold-blocks-reclaim, and bounded-batch selection.
-- [ ] T022 [S12] Author `packages/core/src/outputspool/reconcile.ts` reconciling the
+- [x] T022 [S12] Author `packages/core/src/outputspool/reconcile.ts` reconciling the
   filesystem data extent against the control-store committed length into exactly `sealed`,
   `open`, `aborted`, `corrupt`, or `unknown`: when the extent is at least the committed
   length the group recovers as sealed/open, when it is shorter or the seal record is absent
@@ -254,7 +254,7 @@ sourcing its enum members from the schema modules so a single vocabulary is enfo
   recovery scan, never silent empty-success, mirroring the C12 reconciliation rule (FR25,
   C12, AC8, AC9). Acceptance: `bun test packages/core` covers extent≥committed→sealed,
   extent<committed→corrupt, absent-seal→unknown, and the bounded scan limit.
-- [ ] T023 [S25] Author `packages/core/src/outputspool/spool-instruments.ts` adding the
+- [x] T023 [S25] Author `packages/core/src/outputspool/spool-instruments.ts` adding the
   `output.append|read|seal|reconcile|cleanup` spans linked to the Feature 001
   session-execution/LLM/tool/process spans, and the content-free metrics (bytes
   appended/read buckets, queue-depth buckets, writer/read-latency buckets,
@@ -265,7 +265,7 @@ sourcing its enum members from the schema modules so a single vocabulary is enfo
   channel is never emitted to OTEL, and async bounded export never blocks the hot path
   (Observability, FR5, C9, C22, AC18). Acceptance: `bun test packages/core` cardinality
   audit asserts no id appears as a metric label and the reasoning channel is not exported.
-- [ ] T024 [S5–S25] Author the barrel `packages/core/src/outputspool/index.ts`
+- [x] T024 [S5–S25] Author the barrel `packages/core/src/outputspool/index.ts`
   re-exporting the identity, cursor-codec, group-state, writer-queue, paging, admission,
   retention-graph, reconcile, and spool-instruments modules. Acceptance: `tsgo --noEmit` on
   `packages/core` green and the barrel imports without a duplicate-export error.
