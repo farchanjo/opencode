@@ -46,6 +46,9 @@ import { LifecycleStackWiring } from "./lifecycle/stack-wiring"
 import { JobsStackWiring } from "./jobs/stack-wiring"
 import { JobsBackendLive } from "./jobs/backend-live"
 import { JobPersistence } from "@/jobs/persistence"
+import { LangLockStackWiring } from "./langlock/stack-wiring"
+import { LangLockBackendLive } from "./langlock/backend-live"
+import { LangLockPersistence } from "@/langlock/persistence"
 import { createDispatcher, type Dispatcher } from "./application/dispatcher"
 import type { MutationPorts } from "./application/mutation"
 import { createFlockLockPort } from "./application/ports/lock-port"
@@ -352,8 +355,27 @@ export async function createLiveOperatorStack(input: CreateLiveOperatorStackInpu
   })
   const jobsWiring = JobsStackWiring.createJobsDomainWiring({ backend: jobsBackend })
 
+  // === Feature 004 — langlock domain port composition =======================
+  // The typed `langlock.*` operator port over the real Config.Service durable
+  // persistence (T025), reusing the same ConfigPort the rest of the live stack
+  // binds. Lang Lock policy is a simple content-free document, so resolve/set/
+  // reset are honestly backed (no external assembler). The `langlock.override`
+  // gate defaults to fail-closed DENY until a real Feature 007 Permission/Policy
+  // gate is bound (Security 1). Feature 007 stays the sole command-registration
+  // authority — this override replaces the not_implemented stub and adds no ids
+  // (the reserved langlock.* ids already live in the catalog).
+  const langLockBackend = LangLockBackendLive.createLiveLangLockBackend({
+    persistence: LangLockPersistence.createLangLockPersistence({ config: store.config }),
+  })
+  const langLockWiring = LangLockStackWiring.createLangLockDomainWiring({ backend: langLockBackend })
+
   const domainPorts = wireDomainPorts(
-    { ...lifecycleWiring.ports, ...jobsWiring.ports, routing: createRoutingDomainPort(routingService) },
+    {
+      ...lifecycleWiring.ports,
+      ...jobsWiring.ports,
+      ...langLockWiring.ports,
+      routing: createRoutingDomainPort(routingService),
+    },
     { dnsResolver },
   )
   const dispatcher = createDispatcher({
