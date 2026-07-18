@@ -4,6 +4,7 @@ import { Event } from "./event"
 import { SessionEvent } from "./session-event"
 import { SessionV1 } from "./session-v1"
 import { OperatorEvent } from "./operator-event"
+import { EventDefinitions as LifecycleEventDefinitions } from "./lifecycle/event-definitions"
 
 export const SessionDurable = {
   definitions: Event.durable(SessionEvent.DurableDefinitions),
@@ -18,4 +19,6 @@ export const Durable = Event.durable([
   ...SessionV1.Event.Definitions.filter((definition) => definition.durable !== undefined),
   ...SessionEvent.DurableDefinitions,
   ...OperatorEvent.DurableDefinitions,
+  // Feature 002 / T015: the eleven durable lifecycle members (C4, C5).
+  ...LifecycleEventDefinitions.DurableDefinitions,
 ])
