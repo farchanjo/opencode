@@ -166,7 +166,7 @@ sourcing its enum members from the schema modules so a single vocabulary is enfo
   authority is introduced (C20). Acceptance: `bun test packages/schema` durable-manifest
   test green with the seven output settlement members present and the four live members
   absent.
-- [ ] T014 [S4] Author `packages/protocol/src/outputspool/ports.ts`,
+- [x] T014 [S4] Author `packages/protocol/src/outputspool/ports.ts`,
   `packages/protocol/src/outputspool/commands.ts`, and
   `packages/protocol/src/outputspool/index.ts` mirroring `contracts/ports.ts`: the
   `SpoolWriterPort` (`open`/`append`/`seal`/`abort`), `SpoolReaderPort`
