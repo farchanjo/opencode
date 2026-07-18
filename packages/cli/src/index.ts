@@ -44,6 +44,20 @@ const Handlers = Runtime.handlers(Commands, {
       inspect: () => import("./routing/capability/inspect"),
     },
   },
+  process: {
+    status: () => import("./process/status"),
+    tree: () => import("./process/tree"),
+    watch: () => import("./process/watch"),
+    cancel: () => import("./process/cancel"),
+    steer: () => import("./process/steer"),
+    handoff: () => import("./process/handoff"),
+  },
+  task: {
+    status: () => import("./task/status"),
+    tree: () => import("./task/tree"),
+    watch: () => import("./task/watch"),
+    cancel: () => import("./task/cancel"),
+  },
 })
 
 Runtime.run(Commands, Handlers, { version: "local" }).pipe(
