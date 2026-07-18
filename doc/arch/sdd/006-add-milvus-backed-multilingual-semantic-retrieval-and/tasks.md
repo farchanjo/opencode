@@ -254,7 +254,7 @@ vocabulary is enforced (see the Traceability reconciliation note).
   vectors are never mixed, mirroring the C12 lifecycle (FR12, C12, C21). Acceptance: `bun test
   packages/core` asserts select/reindex leave the alias inactive, cutover moves all aliases
   atomically, a dimension change forces a new generation, and vectors are never mixed.
-- [ ] T019 [S10] Author `packages/core/src/semantic/degradation.ts` implementing the typed
+- [x] T019 [S10] Author `packages/core/src/semantic/degradation.ts` implementing the typed
   capability-gap ladder `full_semantic → catalog_lexical → fail_closed`, dropping to
   `catalog_lexical` with a stable gap code (`milvus_unavailable`/`embedding_unavailable`/
   `reranker_unavailable`/`index_stale`/`retrieval_timeout`/`no_binding`/`cold_index`) on any
