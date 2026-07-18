@@ -43,6 +43,9 @@ import { createOtlpAdapter, createRoutingDecisionTelemetry } from "@/routing/ada
 import { resolveEffectiveTelemetryConfig } from "@/routing/application/telemetry-service"
 import { createLiveOperatorOtelRecorder } from "./adapters/outbound/otel-live"
 import { LifecycleStackWiring } from "./lifecycle/stack-wiring"
+import { JobsStackWiring } from "./jobs/stack-wiring"
+import { JobsBackendLive } from "./jobs/backend-live"
+import { JobPersistence } from "@/jobs/persistence"
 import { createDispatcher, type Dispatcher } from "./application/dispatcher"
 import type { MutationPorts } from "./application/mutation"
 import { createFlockLockPort } from "./application/ports/lock-port"
@@ -334,8 +337,23 @@ export async function createLiveOperatorStack(input: CreateLiveOperatorStackInpu
   // replace the not_implemented process/task stubs and add no ids.
   const lifecycleWiring = await LifecycleStackWiring.createLifecycleDomainWiring()
 
+  // === Feature 003 — jobs domain port composition ===========================
+  // The typed `jobs.*` operator port over the real Config.Service durable
+  // persistence (T022), reusing the same ConfigPort the rest of the live stack
+  // binds. Reads (list/status) are honestly backed; the occurrence-history,
+  // observation, create-input assembler, and Feature 002 executor seams are not
+  // reachable from the operator AppRuntime, so those methods return the port's
+  // typed capability gap rather than fabricated data (see backend-live.ts and the
+  // Feature 003 tasks.md Residuals note). Feature 007 stays the sole
+  // command-registration authority — this override replaces the not_implemented
+  // stub and adds no ids.
+  const jobsBackend = JobsBackendLive.createLiveJobsBackend({
+    persistence: JobPersistence.createJobPersistence({ config: store.config }),
+  })
+  const jobsWiring = JobsStackWiring.createJobsDomainWiring({ backend: jobsBackend })
+
   const domainPorts = wireDomainPorts(
-    { ...lifecycleWiring.ports, routing: createRoutingDomainPort(routingService) },
+    { ...lifecycleWiring.ports, ...jobsWiring.ports, routing: createRoutingDomainPort(routingService) },
     { dnsResolver },
   )
   const dispatcher = createDispatcher({
@@ -376,6 +394,7 @@ export async function createLiveOperatorStack(input: CreateLiveOperatorStackInpu
     resolveConnectivity: resolveConnectivityLive,
     dispose: () => {
       lifecycleWiring.dispose()
+      jobsWiring.dispose()
       maintenance.dispose()
     },
   }
