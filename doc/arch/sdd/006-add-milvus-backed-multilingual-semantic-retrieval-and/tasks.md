@@ -487,7 +487,7 @@ vocabulary is enforced (see the Traceability reconciliation note).
   schema modules — the 12-member vocabulary, the 8-member `DegradationGap`, the three-member
   `RerankProfile`, and the 4-member `CapabilityKind` (FR17, FR22, FR28, FR42, C7, C16, C20,
   C22, AC15). Acceptance: `bun test packages/schema` and `bun test packages/protocol` green.
-- [ ] T042 [S25] Add integration tests under `packages/opencode/test/semantic/**` through the
+- [x] T042 [S25] Add integration tests under `packages/opencode/test/semantic/**` through the
   Feature 007 sandbox for the Milvus adapter against a standalone Milvus server (container) —
   HNSW + cosine/IP dense recall, Milvus-native sparse/BM25 hybrid, mandatory scalar filters,
   cross-project isolation, the typed `milvus_unavailable` gap, upsert/tombstone/reconcile — with
