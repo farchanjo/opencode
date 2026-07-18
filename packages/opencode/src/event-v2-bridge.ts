@@ -9,6 +9,8 @@ import { Project } from "@opencode-ai/core/project"
 import { AbsolutePath } from "@opencode-ai/core/schema"
 import { Context, Effect, Layer } from "effect"
 import { Events } from "@opencode-ai/schema/routing/events"
+import { EventBus as LifecycleEventBus } from "@opencode-ai/core/lifecycle/event-bus"
+import { Events as LifecycleEvents } from "@opencode-ai/schema/lifecycle/events"
 
 // =============================================================================
 // Feature 001 / T031 — routing, hierarchy and capability EventV2 definitions
@@ -83,6 +85,19 @@ export interface Interface extends EventV2.Interface {
     event: Events.RoutingEvent,
     options?: EventV2.PublishOptions,
   ) => Effect.Effect<EventV2.Payload>
+
+  /**
+   * Feature 002 / T015 — bridge one `LifecycleEvents.LifecycleEvent` member
+   * (the closed 26-member vocabulary, `packages/schema/src/lifecycle/
+   * events.ts`, FR20) onto the EventV2 bus through the location-aware
+   * `publish` above, mirroring `publishRoutingEvent`. Each member publishes
+   * through its own wire `Definition` from `@opencode-ai/core/lifecycle/
+   * event-bus` (T014); no raw tagged union is ever wired to the bus (C2).
+   */
+  readonly publishLifecycleEvent: (
+    event: LifecycleEvents.LifecycleEvent,
+    options?: EventV2.PublishOptions,
+  ) => Effect.Effect<EventV2.Payload>
 }
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/EventV2Bridge") {}
@@ -145,6 +160,121 @@ const layer = Layer.effect(
       }
     }
 
+    // Feature 002 / T015 — one arm per lifecycle vocabulary member (FR20,
+    // FR21). Durable members (C4, C5) additionally carry a top-level
+    // `root_process_id`, projected from `envelope.process.root_process_id`,
+    // because `EventV2`'s durable-commit path reads the aggregate id from a
+    // TOP-LEVEL data key (see `@opencode-ai/schema/lifecycle/
+    // event-definitions` for the full rationale); live members omit it.
+    const publishLifecycleEvent: Interface["publishLifecycleEvent"] = (event, options) => {
+      switch (event.type) {
+        case "lifecycle.admitted": {
+          const { type: _drop, ...rest } = event
+          return publish(LifecycleEventBus.AdmittedDefinition, { ...rest, root_process_id: event.envelope.process.root_process_id }, options)
+        }
+        case "lifecycle.parent_attached": {
+          const { type: _drop, ...rest } = event
+          return publish(LifecycleEventBus.ParentAttachedDefinition, { ...rest, root_process_id: event.envelope.process.root_process_id }, options)
+        }
+        case "lifecycle.process_created": {
+          const { type: _drop, ...rest } = event
+          return publish(LifecycleEventBus.ProcessCreatedDefinition, { ...rest, root_process_id: event.envelope.process.root_process_id }, options)
+        }
+        case "lifecycle.started": {
+          const { type: _drop, ...rest } = event
+          return publish(LifecycleEventBus.StartedDefinition, { ...rest, root_process_id: event.envelope.process.root_process_id }, options)
+        }
+        case "lifecycle.handoff": {
+          const { type: _drop, ...rest } = event
+          return publish(LifecycleEventBus.HandoffDefinition, { ...rest, root_process_id: event.envelope.process.root_process_id }, options)
+        }
+        case "lifecycle.reconciled": {
+          const { type: _drop, ...rest } = event
+          return publish(LifecycleEventBus.ReconciledDefinition, { ...rest, root_process_id: event.envelope.process.root_process_id }, options)
+        }
+        case "lifecycle.completed": {
+          const { type: _drop, ...rest } = event
+          return publish(LifecycleEventBus.CompletedDefinition, { ...rest, root_process_id: event.envelope.process.root_process_id }, options)
+        }
+        case "lifecycle.failed": {
+          const { type: _drop, ...rest } = event
+          return publish(LifecycleEventBus.FailedDefinition, { ...rest, root_process_id: event.envelope.process.root_process_id }, options)
+        }
+        case "lifecycle.cancelled": {
+          const { type: _drop, ...rest } = event
+          return publish(LifecycleEventBus.CancelledDefinition, { ...rest, root_process_id: event.envelope.process.root_process_id }, options)
+        }
+        case "lifecycle.zombie_detected": {
+          const { type: _drop, ...rest } = event
+          return publish(LifecycleEventBus.ZombieDetectedDefinition, { ...rest, root_process_id: event.envelope.process.root_process_id }, options)
+        }
+        case "lifecycle.owner_lost": {
+          const { type: _drop, ...rest } = event
+          return publish(LifecycleEventBus.OwnerLostDefinition, { ...rest, root_process_id: event.envelope.process.root_process_id }, options)
+        }
+        case "lifecycle.queued": {
+          const { type: _drop, ...data } = event
+          return publish(LifecycleEventBus.QueuedDefinition, data, options)
+        }
+        case "lifecycle.waiting": {
+          const { type: _drop, ...data } = event
+          return publish(LifecycleEventBus.WaitingDefinition, data, options)
+        }
+        case "lifecycle.promoted": {
+          const { type: _drop, ...data } = event
+          return publish(LifecycleEventBus.PromotedDefinition, data, options)
+        }
+        case "lifecycle.extended": {
+          const { type: _drop, ...data } = event
+          return publish(LifecycleEventBus.ExtendedDefinition, data, options)
+        }
+        case "lifecycle.turn_started": {
+          const { type: _drop, ...data } = event
+          return publish(LifecycleEventBus.TurnStartedDefinition, data, options)
+        }
+        case "lifecycle.turn_ended": {
+          const { type: _drop, ...data } = event
+          return publish(LifecycleEventBus.TurnEndedDefinition, data, options)
+        }
+        case "lifecycle.turn_failed": {
+          const { type: _drop, ...data } = event
+          return publish(LifecycleEventBus.TurnFailedDefinition, data, options)
+        }
+        case "lifecycle.unknown": {
+          const { type: _drop, ...data } = event
+          return publish(LifecycleEventBus.UnknownDefinition, data, options)
+        }
+        case "lifecycle.steer_requested": {
+          const { type: _drop, ...data } = event
+          return publish(LifecycleEventBus.SteerRequestedDefinition, data, options)
+        }
+        case "lifecycle.steer_accepted": {
+          const { type: _drop, ...data } = event
+          return publish(LifecycleEventBus.SteerAcceptedDefinition, data, options)
+        }
+        case "lifecycle.steer_rejected": {
+          const { type: _drop, ...data } = event
+          return publish(LifecycleEventBus.SteerRejectedDefinition, data, options)
+        }
+        case "lifecycle.cancel_requested": {
+          const { type: _drop, ...data } = event
+          return publish(LifecycleEventBus.CancelRequestedDefinition, data, options)
+        }
+        case "lifecycle.cancelling": {
+          const { type: _drop, ...data } = event
+          return publish(LifecycleEventBus.CancellingDefinition, data, options)
+        }
+        case "lifecycle.tool_called": {
+          const { type: _drop, ...data } = event
+          return publish(LifecycleEventBus.ToolCalledDefinition, data, options)
+        }
+        case "lifecycle.tool_settled": {
+          const { type: _drop, ...data } = event
+          return publish(LifecycleEventBus.ToolSettledDefinition, data, options)
+        }
+      }
+    }
+
     const unsubscribe = yield* events.listen((event) =>
       Effect.gen(function* () {
         const ctx = yield* InstanceRef
@@ -175,7 +305,7 @@ const layer = Layer.effect(
     )
     yield* Effect.addFinalizer(() => unsubscribe)
 
-    return Service.of({ ...events, publish, publishRoutingEvent })
+    return Service.of({ ...events, publish, publishRoutingEvent, publishLifecycleEvent })
   }),
 )
 
