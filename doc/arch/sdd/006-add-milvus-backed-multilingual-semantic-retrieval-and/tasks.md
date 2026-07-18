@@ -361,14 +361,14 @@ vocabulary is enforced (see the Traceability reconciliation note).
   (FR33, C17). Acceptance: `bun test packages/opencode` covers a blocked metadata/link-local
   target, a rejected non-TLS remote, an allowed local-insecure profile with warning, and a
   post-redirect DNS-rebinding rejection.
-- [ ] T030 [S19] Author `packages/opencode/src/semantic/index-jobs.ts` implementing
+- [x] T030 [S19] Author `packages/opencode/src/semantic/index-jobs.ts` implementing
   content-hash upsert / tombstone / reconcile jobs on the Feature 002 lifecycle with Feature
   003 scheduled reconcile using the **current pinned** embedding binding without changing it,
   coalesced triggers, no LLM by default, and Feature 005 OutputSpool refs for large job
   outputs, mirroring C22 (FR13, FR40, C22). Acceptance: `bun test packages/opencode` asserts
   upsert/tombstone reflect core state, a scheduled reconcile keeps the pinned binding and
   coalesces triggers, and large outputs are spooled as refs with no LLM turn.
-- [ ] T031 [S20] Author `packages/opencode/src/semantic/cutover-executor.ts` implementing the
+- [x] T031 [S20] Author `packages/opencode/src/semantic/cutover-executor.ts` implementing the
   blue/green alias swap under CAS + operator confirmation so all collections in a binding
   generation cut over together, an embedding dimension change runs full reindex into a new
   generation before an explicit cutover, `select`/`reindex` alone never activate the live
