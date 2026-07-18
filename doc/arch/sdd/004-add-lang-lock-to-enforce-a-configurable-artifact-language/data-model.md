@@ -686,6 +686,19 @@ policy-mutation, override, and exception events are preserved across bounded-que
 overflow and restart by the durable aggregate, never by a projection. Live advisory,
 injection, and resolution events are not durable and carry no sequence (C8).
 
+The `EventV2.define` Definitions for every member live at the schema layer in
+`packages/schema/src/langlock/event-definitions.ts` (mirroring the Feature 002
+`lifecycle/event-definitions.ts` and Feature 003 `jobs/event-definitions.ts`
+precedent), because the six durable members must be joinable into the canonical
+`Durable` inventory in `durable-event-manifest.ts` and the schema package can never
+depend on `packages/core`. The domain `event-bus.ts` (T021) re-exports these
+Definitions; there is exactly one copy of each member's wire shape (C8). The durable
+audit members carry `durable {version: 1, aggregate: "correlation_id"}`: no policy or
+session id is present on the content-free `langlock.*` envelope, so the per-aggregate
+`Ordering.sequence` groups by `Ordering.correlation_id` — the same key EventV2 reads
+from a top-level `correlation_id` data field projected from
+`envelope.ordering.correlation_id` at publish time (no duplicated authority).
+
 ---
 
 ## Parameters

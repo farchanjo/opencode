@@ -48,6 +48,22 @@ import { Reconciliation as JobsReconciliation } from "../src/jobs/reconciliation
 import { Schedule as JobsSchedule } from "../src/jobs/schedule"
 import { TextValues as JobsTextValues } from "../src/jobs/text-values"
 import { Values as JobsValues } from "../src/jobs/values"
+import { Allowlist as LangLockAllowlist } from "../src/langlock/allowlist"
+import { Config as LangLockConfig } from "../src/langlock/config"
+import { Correlation as LangLockCorrelation } from "../src/langlock/correlation"
+import { Detection as LangLockDetection } from "../src/langlock/detection"
+import { Effective as LangLockEffective } from "../src/langlock/effective"
+import { Enums as LangLockEnums } from "../src/langlock/enums"
+import { EnumsEvent as LangLockEnumsEvent } from "../src/langlock/enums-event"
+import { Envelope as LangLockEnvelope } from "../src/langlock/envelope"
+import { Events as LangLockEvents } from "../src/langlock/events"
+import { EventTypes as LangLockEventTypes } from "../src/langlock/event-types"
+import { ExecutionEnvelope as LangLockExecution } from "../src/langlock/execution-envelope"
+import { Exception as LangLockException } from "../src/langlock/exception"
+import { Ids as LangLockIds } from "../src/langlock/ids"
+import { Policy as LangLockPolicy } from "../src/langlock/policy"
+import { TextValues as LangLockTextValues } from "../src/langlock/text-values"
+import { Values as LangLockValues } from "../src/langlock/values"
 import { optional } from "../src/schema"
 
 describe("contract hygiene", () => {
@@ -439,6 +455,96 @@ describe("contract hygiene", () => {
       JobsEvents.JobReconciledEvent,
       JobsEvents.JobUnknownEvent,
       JobsEvents.JobEvent,
+      LangLockIds.LanguageTag,
+      LangLockIds.PolicyId,
+      LangLockIds.ExceptionId,
+      LangLockIds.ExecutionId,
+      LangLockIds.EventId,
+      LangLockCorrelation.CorrelationId,
+      LangLockCorrelation.CausationId,
+      LangLockCorrelation.RootSessionId,
+      LangLockCorrelation.SessionId,
+      LangLockCorrelation.Principal,
+      LangLockCorrelation.ProjectRef,
+      LangLockCorrelation.TodoRef,
+      LangLockCorrelation.OutputRef,
+      LangLockCorrelation.ManifestRef,
+      LangLockValues.PolicyVersion,
+      LangLockValues.ConfigVersion,
+      LangLockValues.SchemaVersion,
+      LangLockValues.Sequence,
+      LangLockValues.AdvisoryCount,
+      LangLockValues.ExceptionCount,
+      LangLockTextValues.DisplayName,
+      LangLockTextValues.Reason,
+      LangLockTextValues.Timestamp,
+      LangLockTextValues.TraceId,
+      LangLockTextValues.SpanId,
+      LangLockTextValues.Enabled,
+      LangLockTextValues.OverrideAuthorized,
+      LangLockTextValues.HardFloor,
+      LangLockEnums.Scope,
+      LangLockEnums.Origin,
+      LangLockEnums.EnforcementMode,
+      LangLockEnums.Axis,
+      LangLockEnums.PathKind,
+      LangLockEnums.ConfidenceBucket,
+      LangLockEnums.DetectorProvenance,
+      LangLockEnums.RemediationStatus,
+      LangLockEnums.ExceptionCategory,
+      LangLockEnumsEvent.EventClass,
+      LangLockEnumsEvent.EventSource,
+      LangLockEnumsEvent.ActorKind,
+      LangLockEnumsEvent.AuditAction,
+      LangLockEventTypes.LangLockEventType,
+      LangLockAllowlist.AllowlistEntry,
+      LangLockPolicy.PolicyIdentity,
+      LangLockPolicy.PolicyLanguage,
+      LangLockPolicy.PolicyAuthority,
+      LangLockPolicy.LangLockPolicy,
+      LangLockEffective.EffectiveLanguage,
+      LangLockEffective.EffectiveAuthority,
+      LangLockEffective.EffectiveConfig,
+      LangLockExecution.StampLanguage,
+      LangLockExecution.StampProvenance,
+      LangLockExecution.StampTree,
+      LangLockExecution.ExecutionStamp,
+      LangLockDetection.DetectorClassification,
+      LangLockDetection.DetectorResult,
+      LangLockDetection.AdvisoryRecord,
+      LangLockException.ExceptionAuthority,
+      LangLockException.ExceptionEntry,
+      LangLockException.ExceptionManifest,
+      LangLockConfig.ConfigLanguage,
+      LangLockConfig.ConfigAuthority,
+      LangLockConfig.LangLockConfig,
+      LangLockEnvelope.EventKind,
+      LangLockEnvelope.ActorContext,
+      LangLockEnvelope.Ordering,
+      LangLockEnvelope.Delivery,
+      LangLockEnvelope.LangLockEnvelope,
+      LangLockEvents.PolicyDetail,
+      LangLockEvents.OverrideDetail,
+      LangLockEvents.ExceptionDetail,
+      LangLockEvents.InjectionDetail,
+      LangLockEvents.AdvisoryDetail,
+      LangLockEvents.ResolutionDetail,
+      LangLockEvents.LangLockPolicySetEvent,
+      LangLockEvents.LangLockPolicyResetEvent,
+      LangLockEvents.LangLockOverrideAuthorizedEvent,
+      LangLockEvents.LangLockOverrideDeniedEvent,
+      LangLockEvents.LangLockExceptionRegisteredEvent,
+      LangLockEvents.LangLockExceptionRevokedEvent,
+      LangLockEvents.LangLockPolicyInjectedEvent,
+      LangLockEvents.LangLockPolicyReappliedEvent,
+      LangLockEvents.LangLockEnvelopeStampedEvent,
+      LangLockEvents.LangLockAdvisoryFlaggedEvent,
+      LangLockEvents.LangLockAdvisoryAcknowledgedEvent,
+      LangLockEvents.LangLockAdvisorySuppressedEvent,
+      LangLockEvents.LangLockDetectorUnknownEvent,
+      LangLockEvents.LangLockResolutionRetainedEvent,
+      LangLockEvents.LangLockUnknownEvent,
+      LangLockEvents.LangLockEvent,
     ].map((schema) => schema.ast.annotations?.identifier)
 
     expect(identifiers.every((identifier) => typeof identifier === "string")).toBe(true)

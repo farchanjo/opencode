@@ -27,7 +27,7 @@ schema modules so a single vocabulary is enforced (see the Traceability note).
 
 ### Schema and protocol foundation (Phase 1)
 
-- [ ] T001 [S0] Author `packages/schema/src/langlock/ids.ts` and
+- [x] T001 [S0] Author `packages/schema/src/langlock/ids.ts` and
   `packages/schema/src/langlock/correlation.ts` with the branded identifiers from
   `data-model.md`: `LanguageTag` (canonical BCP 47 pattern), `PolicyId`,
   `ExceptionId`, `ExecutionId`, `EventId` (the EventV2 `evt_` id), plus
@@ -39,7 +39,7 @@ schema modules so a single vocabulary is enforced (see the Traceability note).
   and secrets are never embedded (FR1, FR4, FR26, Security 5, C2, C8, C9, C10, C16).
   Acceptance: `tsgo --noEmit` on `packages/schema` and the schema contract-hygiene
   test assert annotate-before-check identity is retained on every brand.
-- [ ] T002 [S0] Author `packages/schema/src/langlock/values.ts` and
+- [x] T002 [S0] Author `packages/schema/src/langlock/values.ts` and
   `packages/schema/src/langlock/text-values.ts` with the version/order/count counters
   (`PolicyVersion`, `ConfigVersion`, `SchemaVersion`, `Sequence`, `AdvisoryCount`,
   `ExceptionCount`) folding `Schema.isInt()` into the bound check, and the bounded
@@ -48,7 +48,7 @@ schema modules so a single vocabulary is enforced (see the Traceability note).
   prompts, messages, paths, and secrets, mirroring `values.cue` and `text-values.cue`
   (FR4, FR5, FR7, Security 5, NFR Privacy, AC14). Acceptance: `tsgo --noEmit` green and
   the redaction test confirms no free-form content field is exported.
-- [ ] T003 [S0] Author `packages/schema/src/langlock/enums.ts`,
+- [x] T003 [S0] Author `packages/schema/src/langlock/enums.ts`,
   `enums-event.ts`, and `event-types.ts` with the closed enums as
   `Schema.Literals([...])`: `Scope`, the 4-member `Origin`
   (`default|global|project|managed`), `EnforcementMode` (`advisory|strict_deferred`),
@@ -60,13 +60,13 @@ schema modules so a single vocabulary is enforced (see the Traceability note).
   and `event-types.cue` (FR2, FR7, FR16, FR20, FR21, FR22, C1, C5, C8). Acceptance:
   `tsgo --noEmit` green and the schema test asserts the 15-member vocabulary is closed
   and `generic_code` is present but never advisory-eligible.
-- [ ] T004 [S1] Author `packages/schema/src/langlock/allowlist.ts` with `AllowlistEntry`
+- [x] T004 [S1] Author `packages/schema/src/langlock/allowlist.ts` with `AllowlistEntry`
   (`tag`, human `display_name`, `native_name`), the `Allowlist` array carrying the eight
   initial entries (`en-US`, `en-CA`, `en-GB`, `en-AU`, `pt-BR`, `es-ES`, `es-MX`,
   `es-AR`), and `DefaultTag` fixed to `en-US`, mirroring `allowlist.cue` (FR1, FR3, FR4,
   C13, AC3, AC16). Acceptance: `tsgo --noEmit` green and the allowlist test asserts eight
   canonical entries, each with human and native names, and `en-US` as the default.
-- [ ] T005 [S1] Author `packages/schema/src/langlock/policy.ts` composing
+- [x] T005 [S1] Author `packages/schema/src/langlock/policy.ts` composing
   `PolicyIdentity`, `PolicyLanguage`, and `PolicyAuthority` (each within the
   calisthenics field bound) into the durable `LangLockPolicy` aggregate root with CAS
   `version`, enabled state, tag, display name, enforcement mode, scope, origin,
@@ -74,41 +74,41 @@ schema modules so a single vocabulary is enforced (see the Traceability note).
   `manifest_ref`, mirroring `policy.cue` and `policy-parts.cue` (FR5, FR7, C2).
   Acceptance: `tsgo --noEmit` green and the schema test constructs a global-base and a
   project-override policy value.
-- [ ] T006 [S2] Author `packages/schema/src/langlock/effective.ts` composing
+- [x] T006 [S2] Author `packages/schema/src/langlock/effective.ts` composing
   `EffectiveLanguage` and `EffectiveAuthority` into the immutable `EffectiveConfig`
   read model surfaced to the LLM — enabled state, tag, display name, enforcement mode,
   scope, origin, policy version, and `override_authorized`, with no file text, prompt,
   or path — mirroring `effective.cue` (FR7, FR35, C4, C11). Acceptance: `tsgo --noEmit`
   green and the schema test confirms the read model carries no content-bearing field.
-- [ ] T007 [S2] Author `packages/schema/src/langlock/detection.ts` composing
+- [x] T007 [S2] Author `packages/schema/src/langlock/detection.ts` composing
   `DetectorClassification` (`path_kind`, `provenance`, `confidence` bucket),
   `DetectorResult` (classification, policy version, remediation status, nullable
   `detected_tag`), and `AdvisoryRecord` (result, expected tag, opaque `execution_id`,
   bounded `reason`), all content-free, mirroring `detection.cue` (FR20, FR21, C5, C6,
   AC8, AC11, AC14). Acceptance: `tsgo --noEmit` green and the schema test asserts
   `detected_tag` is nullable and no raw confidence score is present.
-- [ ] T008 [S2] Author `packages/schema/src/langlock/execution-envelope.ts` composing
+- [x] T008 [S2] Author `packages/schema/src/langlock/execution-envelope.ts` composing
   `StampLanguage` (tag, policy version, config version captured at start, enforcement
   mode), `StampProvenance` (origin, source, `captured_at`, correlation id), and
   `StampTree` (root session id, nullable session id, nullable `todo_ref`, nullable
   `output_ref`) into the `ExecutionStamp`, mirroring `execution-envelope.cue` (FR18,
   FR19, FR26, C4, C10, C11). Acceptance: `tsgo --noEmit` green and the schema test
   confirms the start-time version fields are required and never model-supplied.
-- [ ] T009 [S3] Author `packages/schema/src/langlock/exception.ts` composing
+- [x] T009 [S3] Author `packages/schema/src/langlock/exception.ts` composing
   `ExceptionAuthority` (principal, scope, version), `ExceptionEntry` (id, bounded
   `category`, authority, bounded `reason`, `created_at`), `ExceptionEntryList`, and the
   `ExceptionManifest` (manifest ref, authority, entries, `updated_at`), mirroring
   `exception.cue` (FR14, Security 2, Security 6, C16, AC9, AC10). Acceptance:
   `tsgo --noEmit` green and the schema test asserts the seven operator-owned exemption
   categories and no content field.
-- [ ] T010 [S1] Author `packages/schema/src/langlock/config.ts` composing
+- [x] T010 [S1] Author `packages/schema/src/langlock/config.ts` composing
   `ConfigLanguage` (enabled, tag, enforcement mode), `ConfigAuthority` (scope,
   `hard_floor`, `override_authorized`, nullable `manifest_ref`), and `ConfigVersion`
   into `LangLockConfig` — the `langlock.*` Config.Service key shape that rides the
   Feature 007 authority with no parallel store — mirroring `config.cue` (FR5, FR7, C2,
   C15). Acceptance: `tsgo --noEmit` green and the schema test confirms the default scope
   is `project`.
-- [ ] T011 [S3] Author `packages/schema/src/langlock/envelope.ts` composing the bounded
+- [x] T011 [S3] Author `packages/schema/src/langlock/envelope.ts` composing the bounded
   sub-structs `EventKind` (event type, schema version, event class, source),
   `ActorContext` (`runtime|operator` actor, principal, scope), `Ordering`
   (per-aggregate `sequence` only, correlation id, nullable causation id), and `Delivery`
@@ -116,7 +116,7 @@ schema modules so a single vocabulary is enforced (see the Traceability note).
   content-free `LangLockEnvelope`, mirroring `envelope.cue` and `envelope-parts.cue`
   (Security 5, Observability, C8, AC14). Acceptance: `tsgo --noEmit` green and the schema
   test asserts `redacted_metadata` carries no prompt, path, or payload key.
-- [ ] T012 [S3] Author `packages/schema/src/langlock/events.ts`,
+- [x] T012 [S3] Author `packages/schema/src/langlock/events.ts`,
   `events-audit.ts`, and `events-advisory.ts` with the detail sub-objects
   (`PolicyDetail`, `OverrideDetail`, `ExceptionDetail`, `InjectionDetail`,
   `AdvisoryDetail`, `ResolutionDetail`) and one `Schema.Struct` per closed 15-member
@@ -128,11 +128,11 @@ schema modules so a single vocabulary is enforced (see the Traceability note).
   members and never collapsed, mirroring `events.cue`, `events-audit.cue`, and
   `events-advisory.cue` (FR27, FR34, C8). Acceptance: `tsgo --noEmit` green and the schema
   test asserts every vocabulary member has a distinct Struct and the union is exhaustive.
-- [ ] T013 [S0–S3] Author the barrel `packages/schema/src/langlock/index.ts`
+- [x] T013 [S0–S3] Author the barrel `packages/schema/src/langlock/index.ts`
   re-exporting every langlock schema module and register the barrel in
   `packages/schema/src/index.ts`. Acceptance: `tsgo --noEmit` on `packages/schema` green
   and `bun test packages/schema` imports the barrel without a duplicate-export error.
-- [ ] T014 [S3] Extend `packages/schema/src/durable-event-manifest.ts` to join the six
+- [x] T014 [S3] Extend `packages/schema/src/durable-event-manifest.ts` to join the six
   durable `langlock.*` audit definitions into the canonical `Durable` inventory through
   `Event.durable([...])`, leaving the live advisory/injection/resolution members out of
   the durable set, so no second event authority is introduced (C8). Acceptance:
