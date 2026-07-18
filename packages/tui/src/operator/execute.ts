@@ -40,6 +40,15 @@ export async function executeOperatorCommand(input: {
   version?: string
   dialog: DialogContext
   toast: OperatorToast
+  /**
+   * Optional structured command arguments (e.g. `langlock.set`'s `tag`).
+   * Embedded as strict JSON after the slash alias — the same `argsText`
+   * contract the inbound slash adapters already parse
+   * (`packages/opencode/src/operator/adapters/inbound/slash.ts`
+   * `parseSlashPayload`). Omit for argument-less commands (unchanged
+   * behavior).
+   */
+  payload?: Record<string, unknown>
 }): Promise<{ outcome?: string; cancelled?: boolean }> {
   if (!input.port) {
     input.toast.show({
@@ -59,7 +68,7 @@ export async function executeOperatorCommand(input: {
     return { outcome: "unavailable" }
   }
 
-  const text = `/op.${input.entry.id}`
+  const text = input.payload ? `/op.${input.entry.id} ${JSON.stringify(input.payload)}` : `/op.${input.entry.id}`
   const base = {
     text,
     projectId: input.projectId,
