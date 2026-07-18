@@ -302,7 +302,7 @@ vocabulary is enforced (see the Traceability reconciliation note).
   async bounded export never blocks the hot path, mirroring FR41/FR42 and C22 (FR16, FR41,
   FR42, NFR3, C22). Acceptance: `bun test packages/core` cardinality audit asserts no
   id/query/vector/path appears as a metric label and OTEL-down does not block retrieval.
-- [ ] T024 [S6–S14] Author the barrel `packages/core/src/semantic/index.ts` re-exporting the
+- [x] T024 [S6–S14] Author the barrel `packages/core/src/semantic/index.ts` re-exporting the
   pipeline, tie-break, hybrid-fusion, binding-lifecycle, index-generation, degradation,
   query-cache, freshness-gate, projection, and semantic-instruments modules. Acceptance:
   `tsgo --noEmit` on `packages/core` green and the barrel imports without a duplicate-export
