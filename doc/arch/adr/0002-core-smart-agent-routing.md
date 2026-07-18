@@ -1,6 +1,6 @@
 ---
-status: proposed
-date: 2026-07-16
+status: accepted
+date: 2026-07-18
 deciders: [project maintainers]
 ---
 
