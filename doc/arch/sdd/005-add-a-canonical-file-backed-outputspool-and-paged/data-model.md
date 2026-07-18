@@ -886,4 +886,54 @@ not re-declared here (C3, C5, C22).
 | OutputEnvelope | `outputspool/envelope.cue`, `envelope-parts.cue` | `outputspool/envelope.ts` | FR5, C20, C22 |
 | OutputEvent vocabulary | `outputspool/events.cue`, `events-settlement.cue`, `events-live.cue` | `outputspool/events.ts` + member files | FR4, C13, C20 |
 | Export / share / migration | `outputspool/admin.cue` | `outputspool/admin.ts` | FR31, FR44, C16, C17 |
+
+---
+
+## Residual seams — implementation notes (T037–T039)
+
+Feature 005 is implemented (46/46 tasks); three honest seams remain, recorded
+here rather than faked (mirroring the Feature 003 `jobs` close-out residuals
+and the Feature 004 T034/T036 TUI wiring-point note). None blocks the durable
+spool authority, the domain engine, or the schema/event foundation.
+
+1. **T038 cursor bootstrap gap — load-bearing.** `SpoolReaderPort.follow`
+   (`contracts/ports.ts`) resumes only from an opaque `Cursor` supplied by the
+   caller, but `output.read`'s `ReadOutput` and `output.stat`'s `StatOutput`
+   (`@opencode-ai/protocol/outputspool/commands`) carry no cursor field, and no
+   `output.*` command mints a bootstrap cursor from a bare `OutputRef`. A
+   cursor carries a server-side MAC a client cannot construct on its own
+   (C14, C18), so a first-time consumer that holds only an `OutputRef` — never
+   a prior `follow` response — has no way to start following. This is
+   documented inline where the gap first bites, `packages/cli/src/output/
+   follow.ts` (T038, S26): the bounded-polling reconnect loop resumes from the
+   PREVIOUS call's returned cursor, but the very first call still needs a
+   cursor from somewhere. Resolution direction: a follow-up spec change adds a
+   cursor field to `ReadOutput`/`StatOutput` (or an explicit bootstrap
+   operation minting a cursor from an authorized `OutputRef`) before the
+   `follow` surface is consumable end-to-end from a bare ref.
+
+2. **T039 TUI wiring point — display-only honest baseline.** `OutputPanel`
+   (`packages/tui/src/operator/output/index.tsx`) renders
+   `EMPTY_OUTPUT_PANEL_SIGNAL` until a live `SpoolReaderPort` query/observation
+   stream is threaded through `OperatorSlashPort` (`packages/tui/src/context/
+   operator-slash.tsx`) from the Feature 002 process panel
+   (`packages/tui/src/routes/session/process-panel/**`). `tryHandle` today
+   returns only an `OperatorSlashDisplay` (title/message/variant/outcome
+   strings), so there is no structured, redacted `OutputPanelSignal` source
+   reachable from the TUI yet — mirroring the identical, already-accepted
+   `EMPTY_LANGLOCK_PANEL_SIGNAL` wiring-point pattern from Feature 004
+   (T034/T036) and the Feature 003 `jobs` panel precedent before it.
+
+3. **T037 operator backend typed gaps.** `createLiveOutputSpoolBackend`
+   (`packages/opencode/src/operator/outputspool/backend-live.ts`) returns the
+   port's typed `unavailable` for `stat`/`read`/`follow`/`release`/`delete`/
+   `purge`/`retention.set`/`quota.set` — and deny-by-default
+   `cross_project_denied` for `export`/`share` — because the live spool
+   control store, page reader, and retention sweeper are not reachable from
+   the operator `AppRuntime` in this wave. The module exposes a per-method
+   `LiveOutputSpoolBackendDeps.override` injection point the composition root
+   fills as each real implementation is bound, mirroring the Feature 003
+   `createLiveJobsBackend` and Feature 004 `createLiveLangLockBackend`
+   precedent: every method returns an honest capability gap today, never a
+   fabricated success.
 ```
