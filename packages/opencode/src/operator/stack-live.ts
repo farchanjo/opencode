@@ -21,10 +21,26 @@ import {
 import { AppRuntime } from "@/effect/app-runtime"
 import { Config } from "@/config/config"
 import { EventV2Bridge } from "@/event-v2-bridge"
+import { Provider } from "@/provider/provider"
+import { Agent } from "@/agent/agent"
 import { InstanceRuntime } from "@/project/instance-runtime"
 import { createLiveConfigServiceLike } from "./adapters/outbound/config-live"
 import { createLiveEventV2AuditPortFromUse } from "./adapters/outbound/event-v2-live"
-import { createDomainStubs, domainHandlerFor, handlersFromDomainPorts } from "./adapters/outbound/domain-stubs"
+import { createDomainStubs, domainHandlerFor, handlersFromDomainPorts, wireDomainPorts } from "./adapters/outbound/domain-stubs"
+import { createRoutingService } from "@/routing/application/routing-service"
+import { createRoutingDomainPort } from "@/routing/adapters/inbound/routing-command-port"
+import { createConfigAdapter, toRoutingConfigSource } from "@/routing/adapters/outbound/config-adapter"
+import {
+  createCandidateSource,
+  createCatalogAdapter,
+  type AgentResolver,
+  type CatalogCandidateService,
+} from "@/routing/adapters/outbound/catalog-adapter"
+import { createDomainDecisionStore } from "@/routing/application/decision-store"
+import { createFsDecisionStorePort } from "@/routing/adapters/outbound/decision-store-fs"
+import { createTaskAnalyzer } from "@/routing/application/task-analyzer"
+import { createOtlpAdapter, createRoutingDecisionTelemetry } from "@/routing/adapters/outbound/otlp-adapter"
+import { resolveEffectiveTelemetryConfig } from "@/routing/application/telemetry-service"
 import { createLiveOperatorOtelRecorder } from "./adapters/outbound/otel-live"
 import { createDispatcher, type Dispatcher } from "./application/dispatcher"
 import type { MutationPorts } from "./application/mutation"
@@ -226,9 +242,91 @@ export async function createLiveOperatorStack(input: CreateLiveOperatorStackInpu
   const otel = createLiveOperatorOtelRecorder()
   const registry = createSeededOperatorCommandRegistry()
   const dnsResolver = input.dnsResolver ?? createProductionDnsResolver()
-  const domainPorts = createDomainStubs({
-    dnsResolver,
+
+  // === Feature 001 — routing domain port composition ========================
+  // Real dependencies, resolved through the same AppRuntime services the rest
+  // of the live stack uses. The routing domain stays framework-free behind
+  // these outbound seams; only the DomainInvoke override is registered here —
+  // Feature 007 remains the sole command-registration authority (the adapter
+  // replaces the not_implemented stub, it adds no ids).
+  const routingConfigSource = toRoutingConfigSource(createConfigAdapter({ config: store.config }))
+
+  // Catalog seam: the live provider catalog (Provider.Service) is the sole
+  // model source — never a hardcoded model id. Health/status classification is
+  // owned by createCatalogAdapter.
+  const catalogCandidates: CatalogCandidateService = {
+    listModels: () =>
+      AppRuntime.runPromise(
+        Effect.gen(function* () {
+          const provider = yield* Provider.Service
+          const providers = yield* provider.list()
+          return Object.values(providers).flatMap((p) =>
+            Object.values(p.models).map((m) => ({
+              modelId: m.id,
+              providerId: m.providerID,
+              status: m.status,
+              // A model present in the live provider catalog is enabled; the
+              // adapter demotes deprecated ones separately.
+              enabled: true,
+              tools: m.capabilities.toolcall,
+            })),
+          )
+        }),
+      ),
+  }
+
+  // Agent seam: the canonical, config-composed specialist registry (AgentV2,
+  // T031). resolveSpecialist gates hidden internal agents out; listSpecialists
+  // is that same filter over the whole pool. Routing never fabricates agent
+  // identity. Skill/effort metadata is not yet carried on Agent.Info, so the
+  // pool exposes empty skills + neutral effort defaults — hard gates + ranking
+  // still apply; documented in data-model.md.
+  const agentResolver: AgentResolver = {
+    resolveAgents: () =>
+      AppRuntime.runPromise(
+        Effect.gen(function* () {
+          const agent = yield* Agent.Service
+          const specialists = yield* agent.listSpecialists()
+          return specialists.map((a) => ({
+            agentId: a.name,
+            skills: [] as ReadonlyArray<string>,
+            effort: "medium" as const,
+            reasoningEffort: "medium" as const,
+          }))
+        }),
+      ),
+  }
+
+  const candidateSource = createCandidateSource({
+    catalog: createCatalogAdapter({ catalog: catalogCandidates }),
+    agents: agentResolver,
   })
+
+  const decisionsBaseDir = path.join(Global.Path.state, "routing-decisions")
+  await mkdir(decisionsBaseDir, { recursive: true })
+  const decisionStore = createDomainDecisionStore(createFsDecisionStorePort(), decisionsBaseDir)
+
+  // Telemetry sink: routing decisions feed the bounded OTLP export queue built
+  // from the effective telemetry config (disabled by default → signal-gated
+  // no-op). No network transport is wired here (the process-wide Flag-driven
+  // OTLP Layers own real export); the sink stays offline-safe.
+  const telemetryConfig = await resolveEffectiveTelemetryConfig(store.config)
+  const routingTelemetry = createRoutingDecisionTelemetry(
+    createOtlpAdapter({ config: telemetryConfig, secret: secrets }),
+  )
+
+  const routingService = createRoutingService({
+    config: routingConfigSource,
+    candidates: candidateSource,
+    analyzer: createTaskAnalyzer(),
+    decisions: decisionStore,
+    telemetry: routingTelemetry,
+  })
+
+  const domainPorts = wireDomainPorts(
+    { routing: createRoutingDomainPort(routingService) },
+    { dnsResolver },
+  )
   const dispatcher = createDispatcher({
     registry,
     mutationPorts,

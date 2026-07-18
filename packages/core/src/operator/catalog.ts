@@ -7,7 +7,7 @@ import type { ScopeKind } from "./scope"
 import type { DescriptorDraft } from "./descriptor"
 
 /** Catalog document version (semver). Additive bumps only. */
-export const RESERVED_CATALOG_VERSION = "1.0.0" as const
+export const RESERVED_CATALOG_VERSION = "1.1.0" as const
 
 export const OPERATOR_DOMAINS = [
   "telemetry",
@@ -76,6 +76,8 @@ const ENTRIES: readonly EntrySpec[] = [
   { id: "routing.status", mutates: false, scopesAllowed: GP, offlineCapable: true },
   { id: "routing.configure", mutates: true, scopesAllowed: GP, offlineCapable: true },
   { id: "routing.test", mutates: false, scopesAllowed: GP, offlineCapable: true },
+  { id: "routing.explain", mutates: false, scopesAllowed: GP, offlineCapable: true },
+  { id: "routing.capability.inspect", mutates: false, scopesAllowed: GP, offlineCapable: true },
 
   // budget
   { id: "budget.status", mutates: false, scopesAllowed: GP, offlineCapable: true },

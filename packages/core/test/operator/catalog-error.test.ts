@@ -18,11 +18,11 @@ import {
 
 describe("reserved catalog (T007)", () => {
   test("version field present and stable snapshot", () => {
-    expect(RESERVED_CATALOG_VERSION).toBe("1.0.0")
-    expect(catalogVersion()).toBe("1.0.0")
-    expect(RESERVED_CATALOG.version).toBe("1.0.0")
+    expect(RESERVED_CATALOG_VERSION).toBe("1.1.0")
+    expect(catalogVersion()).toBe("1.1.0")
+    expect(RESERVED_CATALOG.version).toBe("1.1.0")
     const snap = reservedCatalogSnapshot()
-    expect(snap.version).toBe("1.0.0")
+    expect(snap.version).toBe("1.1.0")
     expect(snap.domainCount).toBe(12)
     expect(snap.idCount).toBeGreaterThan(50)
   })
@@ -61,6 +61,14 @@ describe("reserved catalog (T007)", () => {
     expect(isReservedCommandId("mcp.resource.admin.policy.set")).toBe(true)
     expect(isReservedCommandId("routing.test")).toBe(true)
     expect(isReservedCommandId("langlock.status")).toBe(true)
+  })
+
+  test("routing surface ids required by RoutingPort/CLI are reserved (v1.1.0)", () => {
+    expect(isReservedCommandId("routing.explain")).toBe(true)
+    expect(isReservedCommandId("routing.capability.inspect")).toBe(true)
+    // read-only surface: neither mutates nor requires confirmation
+    expect(requiresConfirmation("routing.explain")).toBe(false)
+    expect(requiresConfirmation("routing.capability.inspect")).toBe(false)
   })
 
   test("confirmation matrix leaves marked on catalog entries", () => {
