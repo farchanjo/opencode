@@ -4,8 +4,16 @@ import { Schema } from "effect"
 import { PositiveInt, NonNegativeInt } from "../schema"
 
 // SecretRef is an opaque reference resolved via Feature 007 SecretPort.
-// Never store the actual secret value.
-export const SecretRef = Schema.String.annotate({ identifier: "Telemetry.SecretRef" })
+// Never store the actual secret value. Canonical encoding: "backend:name" or
+// "backend:name@vN" (integer version >= 1). The empty string denotes "no
+// reference configured" (e.g. an unset TLS cert while TLS is disabled).
+// Mirrors doc/arch/schemas/telemetry/config.cue #SecretRef.
+const SecretRefPattern = /^(?:[A-Za-z0-9._-]+:[^@]+(?:@v[1-9]\d*)?)?$/
+// Annotate the base String BEFORE checking so the root identifier survives
+// (annotating an already-checked schema drops it — see routing/ids.ts).
+export const SecretRef = Schema.String.annotate({ identifier: "Telemetry.SecretRef" }).check(
+  Schema.isPattern(SecretRefPattern),
+)
 export type SecretRef = typeof SecretRef.Type
 
 // Transport protocol for OTLP export.
@@ -66,8 +74,16 @@ export const TelemetryConfig = Schema.Struct({
     prompts: Schema.Boolean,
     secrets: Schema.Boolean,
     file_paths: Schema.Boolean,
+    // file_content is optional for backward compatibility with configs written
+    // before the flag existed; when absent it falls back to tool_payloads.
+    file_content: Schema.optional(Schema.Boolean),
     tool_payloads: Schema.Boolean,
   }),
   resource_attributes: Schema.Record(Schema.String, Schema.String),
-  sampling: Schema.Number.check(Schema.isBetween({ minimum: 0, maximum: 1 })),
+  // SignalShaping groups the volume/precision knobs. cardinality_budget is
+  // optional (default 128 applied by the OTLP label bounder when absent).
+  shaping: Schema.Struct({
+    sampling: Schema.Number.check(Schema.isBetween({ minimum: 0, maximum: 1 })),
+    cardinality_budget: Schema.optional(PositiveInt),
+  }),
 }).annotate({ identifier: "Telemetry.TelemetryConfig" })

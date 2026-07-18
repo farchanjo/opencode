@@ -7,8 +7,8 @@ const valid = {
   export: {
     endpoint: "https://otel.example.com:4318",
     transport: "http/protobuf",
-    headers: { authorization: "secret-ref-1" },
-    tls: { enabled: true, cert: "secret-ref-2" },
+    headers: { authorization: "keychain:secret-ref-1" },
+    tls: { enabled: true, cert: "keychain:secret-ref-2@v2" },
   },
   signals: { metrics: true, logs: true, traces: false, profiling: false },
   queue: {
@@ -21,7 +21,7 @@ const valid = {
   },
   redact: { prompts: true, secrets: true, file_paths: false, tool_payloads: true },
   resource_attributes: { "service.name": "opencode" },
-  sampling: 0.5,
+  shaping: { sampling: 0.5, cardinality_budget: 128 },
 } as const
 
 describe("Telemetry.TelemetryConfig", () => {
@@ -41,8 +41,15 @@ describe("Telemetry.TelemetryConfig", () => {
   })
 
   test("rejects sampling out of [0,1]", () => {
-    const invalid = { ...valid, sampling: 1.5 }
+    const invalid = { ...valid, shaping: { ...valid.shaping, sampling: 1.5 } }
     expect(() => Schema.decodeUnknownSync(Config.TelemetryConfig)(invalid)).toThrow()
+  })
+
+  test("rejects a malformed SecretRef and accepts the canonical forms", () => {
+    const invalid = { ...valid, export: { ...valid.export, headers: { authorization: "no-scheme" } } }
+    expect(() => Schema.decodeUnknownSync(Config.TelemetryConfig)(invalid)).toThrow()
+    expect(Schema.decodeUnknownSync(Config.SecretRef)("env-ref:OTLP_HEADER@v3")).toBe("env-ref:OTLP_HEADER@v3")
+    expect(Schema.decodeUnknownSync(Config.SecretRef)("")).toBe("")
   })
 
   test("Transport enum is closed", () => {

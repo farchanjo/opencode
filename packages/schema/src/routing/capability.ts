@@ -2,61 +2,44 @@ export * as Capability from "./capability"
 
 import { Schema } from "effect"
 import { NonNegativeInt } from "../schema"
+import { Ids } from "./ids"
 
 // Mirrors doc/arch/schemas/routing/capability.cue and descriptors.cue.
 //
-// RECONCILIATION NOTE: capability.cue imports its identity primitives from
-// "routing/ids" (#ProviderName, #ModelId, #VariantName, #ApiFamily) and
-// versions.cue (#Timestamp), while descriptors.cue owns #CapabilityDimension,
-// #Scope, #Reason, #Requirement. No packages/schema/src/routing/ids.ts exists
-// yet, so the identity/descriptor primitives this module needs are defined
-// locally below. When routing/ids.ts (and a routing/descriptors.ts) land,
-// fold these into that module and re-export/import instead of redefining.
+// capability.cue imports its identity primitives from "routing/ids"
+// (#ProviderName, #ModelId, #VariantName, #ApiFamily), versions.cue
+// (#Timestamp), and descriptors.cue (#CapabilityDimension, #Scope, #Reason,
+// #Requirement). This module re-exports those ValueObjects from routing/ids.ts
+// (their single owner) under the member names its structs and consumers use,
+// so the primitives are no longer duplicated here.
 
-// --- Identity primitives (routing.shared, from ids.cue) ---
+// --- Identity + descriptive primitives (re-exported from routing/ids.ts) ---
 
-export const ProviderName = Schema.String.check(Schema.isNonEmpty()).annotate({
-  identifier: "Capability.ProviderName",
-})
+export const ProviderName = Ids.ProviderName
 export type ProviderName = typeof ProviderName.Type
 
-export const ModelId = Schema.String.check(Schema.isNonEmpty()).annotate({
-  identifier: "Capability.ModelId",
-})
+export const ModelId = Ids.ModelId
 export type ModelId = typeof ModelId.Type
 
-export const VariantName = Schema.String.check(Schema.isNonEmpty()).annotate({
-  identifier: "Capability.VariantName",
-})
+export const VariantName = Ids.VariantName
 export type VariantName = typeof VariantName.Type
 
-export const ApiFamily = Schema.String.check(Schema.isNonEmpty()).annotate({
-  identifier: "Capability.ApiFamily",
-})
+export const ApiFamily = Ids.ApiFamily
 export type ApiFamily = typeof ApiFamily.Type
 
-// --- Shared descriptive primitives (routing.shared, from descriptors.cue) ---
-
-export const Scope = Schema.String.check(Schema.isNonEmpty()).annotate({
-  identifier: "Capability.Scope",
-})
+export const Scope = Ids.Scope
 export type Scope = typeof Scope.Type
 
-export const CapabilityDimensionName = Schema.String.check(Schema.isNonEmpty()).annotate({
-  identifier: "Capability.DimensionName",
-})
+export const CapabilityDimensionName = Ids.CapabilityDimension
 export type CapabilityDimensionName = typeof CapabilityDimensionName.Type
 
-export const Reason = Schema.String.annotate({ identifier: "Capability.Reason" })
+export const Reason = Ids.Reason
 export type Reason = typeof Reason.Type
 
-export const Requirement = Schema.String.annotate({ identifier: "Capability.Requirement" })
+export const Requirement = Ids.Requirement
 export type Requirement = typeof Requirement.Type
 
-// #Timestamp (routing.shared, from versions.cue): ISO 8601, non-empty string.
-export const Timestamp = Schema.String.check(Schema.isNonEmpty()).annotate({
-  identifier: "Capability.Timestamp",
-})
+export const Timestamp = Ids.Timestamp
 export type Timestamp = typeof Timestamp.Type
 
 // --- #ToolCapabilityValue: bool | uint | null ---

@@ -3,21 +3,15 @@ export * as Budget from "./budget"
 import { Schema } from "effect"
 import { NonNegativeInt, PositiveInt } from "../schema"
 import { HierarchyRole, RoutingProfile, TaskClass } from "./enums"
+import { Ids } from "./ids"
 
-// EscalationThreshold names a structured escalation signal.
-// Mirrors doc/arch/schemas/routing/descriptors.cue #EscalationThreshold.
-// Unbranded (plain non-empty string) to match the routing.shared primitive
-// convention established in ./capability.ts pending a shared routing/ids.ts.
-export const EscalationThreshold = Schema.String.check(Schema.isNonEmpty()).annotate({
-  identifier: "Budget.EscalationThreshold",
-})
+// EscalationThreshold (descriptors.cue #EscalationThreshold) and Timestamp
+// (versions.cue #Timestamp) are owned by routing/ids.ts; re-exported here under
+// the member names this module's structs use so they are no longer duplicated.
+export const EscalationThreshold = Ids.EscalationThreshold
 export type EscalationThreshold = typeof EscalationThreshold.Type
 
-// Timestamp is an ISO 8601 timestamp string.
-// Mirrors doc/arch/schemas/routing/versions.cue #Timestamp.
-export const Timestamp = Schema.String.check(Schema.isNonEmpty()).annotate({
-  identifier: "Budget.Timestamp",
-})
+export const Timestamp = Ids.Timestamp
 export type Timestamp = typeof Timestamp.Type
 
 const NonNegativeFloat = Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0))
@@ -93,12 +87,16 @@ export const PolicySnapshot = Schema.Struct({
 
 // --- BudgetConsumption (doc/arch/schemas/routing/budget-consumption.cue) ---
 
-// ConsumptionThroughput records turn and token spend.
+// ConsumptionThroughput records turn, token and byte spend.
+// Byte fields are optional for backward compatibility with records written
+// before they existed; enforcement prefers them over caller-supplied observations.
 export interface ConsumptionThroughput extends Schema.Schema.Type<typeof ConsumptionThroughput> {}
 export const ConsumptionThroughput = Schema.Struct({
   turns_used: NonNegativeInt,
   context_tokens_used: NonNegativeInt,
   output_tokens_used: NonNegativeInt,
+  context_bytes_used: Schema.optional(NonNegativeInt),
+  output_bytes_used: Schema.optional(NonNegativeInt),
 }).annotate({ identifier: "Budget.ConsumptionThroughput" })
 
 // ConsumptionConcurrency records worker and delegation spend.
@@ -109,10 +107,13 @@ export const ConsumptionConcurrency = Schema.Struct({
   delegation_depth_used: NonNegativeInt,
 }).annotate({ identifier: "Budget.ConsumptionConcurrency" })
 
-// ConsumptionRetrieval records retrieval and skill-context spend.
+// ConsumptionRetrieval records retrieval, rerank and skill-context spend.
+// rerank/skill-chunk fields are optional for backward compatibility.
 export interface ConsumptionRetrieval extends Schema.Schema.Type<typeof ConsumptionRetrieval> {}
 export const ConsumptionRetrieval = Schema.Struct({
   retrieval_chunks_used: NonNegativeInt,
+  rerank_chunks_used: Schema.optional(NonNegativeInt),
+  skill_chunks_used: Schema.optional(NonNegativeInt),
   skill_tokens_used: NonNegativeInt,
 }).annotate({ identifier: "Budget.ConsumptionRetrieval" })
 
