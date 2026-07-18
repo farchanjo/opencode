@@ -82,6 +82,11 @@ Acceptance criteria live as prioritized scenarios in each feature `spec.md`.
   modeled in [job-occurrence statechart](../statecharts/job-occurrence.md) (due →
   claimed → admitted → executing → terminal, with misfire/overlap/reconciliation
   branches).
+- **Lang Lock advisory validation lifecycle** — the post-write advisory
+  validation state machine is modeled in
+  [langlock-advisory statechart](../statecharts/langlock-advisory.md) (written →
+  classified → detected → compliant/advisory_flagged/unknown, with
+  acknowledge/suppress remediation branches; never a gate on the write).
 
 ## Phase 2 deferred (explicit)
 
