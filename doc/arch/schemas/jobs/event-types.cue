@@ -1,0 +1,10 @@
+// DDD role: ValueObject
+// Package: jobs.enums
+// JobEventType — the closed 30-member job.* event vocabulary (FR11). The job.*
+// prefix is the Feature 003 lifecycle event namespace on EventV2, distinct from
+// the Feature 007 jobs.* operator command domain; both are reserved (C13).
+
+package jobs.enums
+
+// JobEventType is the closed job.* vocabulary registered through EventV2.define (FR11, C8).
+#JobEventType: "job.definition_created" | "job.definition_updated" | "job.definition_enabled" | "job.definition_disabled" | "job.definition_deleted" | "job.registered" | "job.unregistered" | "job.rescheduled" | "job.trigger_due" | "job.occurrence_claimed" | "job.triggered" | "job.misfired" | "job.skipped" | "job.coalesced" | "job.queued" | "job.admitted" | "job.notification_enqueued" | "job.notification_delivered" | "job.notification_acknowledged" | "job.notification_expired" | "job.execution_started" | "job.execution_completed" | "job.execution_failed" | "job.execution_cancelled" | "job.execution_timed_out" | "job.retry_scheduled" | "job.overlap_rejected" | "job.overlap_replaced" | "job.reconciled" | "job.unknown"
