@@ -394,7 +394,7 @@ sourcing its enum members from the schema modules so a single vocabulary is enfo
 
 ### CLI and TUI paging surfaces (Phase 4)
 
-- [ ] T038 [S26] Author `packages/cli/src/**/output/**` for `opencode op output
+- [x] T038 [S26] Author `packages/cli/src/**/output/**` for `opencode op output
   stat|read|follow|release|delete|purge|export|share` plus `retention set` / `quota set`,
   each dispatching through the Feature 007 registry to the `SpoolReaderPort`/`RetentionPort`/
   `AdminPort` with registry-generated names (no divergent hardcoded verbs), emitting

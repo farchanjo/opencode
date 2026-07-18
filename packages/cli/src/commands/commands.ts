@@ -17,6 +17,10 @@ const OVERLAP_POLICIES = ["allow", "forbid", "queue", "replace"] as const
 
 const MISFIRE_POLICIES = ["skip", "fire_once", "bounded_catch_up", "coalesce"] as const
 
+// -- output (Feature 005) closed choice sets, declared before first use ------
+
+const QUOTA_SCOPES = ["global", "root", "session", "process", "channel"] as const
+
 export const Commands = Spec.make(typeof OPENCODE_CLI_NAME === "string" ? OPENCODE_CLI_NAME : "opencode", {
   description: "OpenCode 2.0 preview command line interface",
   commands: [
@@ -375,6 +379,85 @@ export const Commands = Spec.make(typeof OPENCODE_CLI_NAME === "string" ? OPENCO
         }),
       ],
     }),
+    Spec.make("output", {
+      description:
+        "Inspect and manage the canonical OutputSpool paged content plane (Feature 005; native operator-only, zero model calls, no path exposure)",
+      commands: [
+        Spec.make("stat", {
+          description: "Show the content-free read model for one OutputRef: state, committed bytes, provenance",
+          params: { outputRef: outputRefArg(), json: json() },
+        }),
+        Spec.make("read", {
+          description: "Read a UTF-8-safe bounded page at a byte offset (server-capped limit)",
+          params: {
+            outputRef: outputRefArg(),
+            offset: outputOffsetFlag(),
+            limit: outputLimitFlag(),
+            json: json(),
+          },
+        }),
+        Spec.make("follow", {
+          description: "Resume a bounded, fencing-aware follow from an opaque cursor (stable expired/invalid_cursor on a stale token)",
+          params: {
+            cursor: outputCursorArg(),
+            interval: pollIntervalFlag(),
+            maxPolls: maxPollsFlag(),
+            json: json(),
+          },
+        }),
+        Spec.make("release", {
+          description: "Drop one holder reference edge for an OutputRef (admin, audit)",
+          params: { outputRef: outputRefArg(), json: json() },
+        }),
+        Spec.make("delete", {
+          description: "Explicitly delete one OutputRef's group (admin, CAS, audit)",
+          params: { outputRef: outputRefArg(), expectedVersion: outputExpectedVersionFlag(), json: json() },
+        }),
+        Spec.make("purge", {
+          description: "Explicit legal-hold-aware purge of one OutputRef's group (admin, CAS, audit)",
+          params: { outputRef: outputRefArg(), expectedVersion: outputExpectedVersionFlag(), json: json() },
+        }),
+        Spec.make("export", {
+          description: "In-project, content-bounded export of one OutputRef; cross-project is deny-by-default",
+          params: { outputRef: outputRefArg(), expectedVersion: outputExpectedVersionFlag(), json: json() },
+        }),
+        Spec.make("share", {
+          description: "In-project share grant for one OutputRef; cross-project is deny-by-default",
+          params: { outputRef: outputRefArg(), expectedVersion: outputExpectedVersionFlag(), json: json() },
+        }),
+        Spec.make("retention", {
+          description: "Manage OutputSpool retention policy",
+          commands: [
+            Spec.make("set", {
+              description: "Set the reference-aware retention TTL and legal-hold flag for a scope (CAS, audit)",
+              params: {
+                ttlSeconds: outputTtlSecondsFlag(),
+                legalHold: outputLegalHoldFlag(),
+                expectedVersion: outputExpectedVersionFlag(),
+                scope: scope(),
+                json: json(),
+              },
+            }),
+          ],
+        }),
+        Spec.make("quota", {
+          description: "Manage OutputSpool per-scope byte and queue-depth caps",
+          commands: [
+            Spec.make("set", {
+              description: "Set the byte and queue-depth caps for a quota scope (CAS, audit)",
+              params: {
+                quotaScope: outputQuotaScopeFlag(),
+                maxBytes: outputMaxBytesFlag(),
+                maxQueueDepthBytes: outputMaxQueueDepthBytesFlag(),
+                expectedVersion: outputExpectedVersionFlag(),
+                scope: scope(),
+                json: json(),
+              },
+            }),
+          ],
+        }),
+      ],
+    }),
   ],
 })
 
@@ -467,4 +550,49 @@ function jobsLimitFlag() {
 
 function jobsCursorFlag() {
   return Flag.string("cursor").pipe(Flag.withDescription("pagination cursor from a prior page"), Flag.optional)
+}
+
+// -- output (Feature 005) command params ---------------------------------------
+
+function outputRefArg() {
+  return Argument.string("outputRef").pipe(Argument.withDescription("opaque bounded OutputRef; never a filesystem path"))
+}
+
+function outputCursorArg() {
+  return Argument.string("cursor").pipe(Argument.withDescription("opaque follow cursor from a prior stat/follow response"))
+}
+
+function outputOffsetFlag() {
+  return Flag.integer("offset").pipe(Flag.withDescription("byte offset to read from"), Flag.withDefault(0))
+}
+
+function outputLimitFlag() {
+  return Flag.integer("limit").pipe(Flag.withDescription("server-capped maximum bytes to return"))
+}
+
+function outputExpectedVersionFlag() {
+  return Flag.integer("expected-version").pipe(Flag.withDescription("expected version (CAS)"))
+}
+
+function outputTtlSecondsFlag() {
+  return Flag.integer("ttl-seconds").pipe(Flag.withDescription("retention TTL in seconds"))
+}
+
+function outputLegalHoldFlag() {
+  return Flag.boolean("legal-hold").pipe(Flag.withDescription("hold the scope's groups against reclaim"), Flag.withDefault(false))
+}
+
+function outputQuotaScopeFlag() {
+  return Flag.choice("quota-scope", QUOTA_SCOPES).pipe(
+    Flag.withDescription("quota scope"),
+    Flag.withDefault("global"),
+  )
+}
+
+function outputMaxBytesFlag() {
+  return Flag.integer("max-bytes").pipe(Flag.withDescription("byte cap for the quota scope"))
+}
+
+function outputMaxQueueDepthBytesFlag() {
+  return Flag.integer("max-queue-depth-bytes").pipe(Flag.withDescription("bounded-queue depth cap in bytes"))
 }

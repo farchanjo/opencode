@@ -78,6 +78,22 @@ const Handlers = Runtime.handlers(Commands, {
     history: () => import("./jobs/history"),
     watch: () => import("./jobs/watch"),
   },
+  output: {
+    stat: () => import("./output/stat"),
+    read: () => import("./output/read"),
+    follow: () => import("./output/follow"),
+    release: () => import("./output/release"),
+    delete: () => import("./output/delete"),
+    purge: () => import("./output/purge"),
+    export: () => import("./output/export"),
+    share: () => import("./output/share"),
+    retention: {
+      set: () => import("./output/retention-set"),
+    },
+    quota: {
+      set: () => import("./output/quota-set"),
+    },
+  },
 })
 
 Runtime.run(Commands, Handlers, { version: "local" }).pipe(
