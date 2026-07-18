@@ -28,6 +28,7 @@ import { SessionCommand } from "./cli/cmd/session"
 import { DbCommand } from "./cli/cmd/db"
 import { errorMessage } from "./util/error"
 import { PluginCommand } from "./cli/cmd/plug"
+import { OpCommand } from "./cli/cmd/op"
 import { Heap } from "./cli/heap"
 
 const args = hideBin(process.argv)
@@ -101,6 +102,7 @@ const cli = yargs(args)
   .command(SessionCommand)
   .command(PluginCommand)
   .command(DbCommand)
+  .command(OpCommand)
   .fail((msg, err) => {
     if (
       msg?.startsWith("Unknown argument") ||
@@ -126,13 +128,22 @@ try {
     await cli.parse()
   }
 } catch (e) {
+  // Preserve explicit exitCode set by FormatError(CliError) or handlers (operator taxonomy).
+  // Never overwrite a non-zero code already assigned (e.g. invalid_argument → 40).
+  const priorExit = process.exitCode
   const formatted = FormatError(e)
   if (formatted) UI.error(formatted)
   if (formatted === undefined) {
     UI.error("Unexpected error" + EOL)
     process.stderr.write(errorMessage(e) + EOL)
   }
-  process.exitCode = 1
+  if (typeof process.exitCode === "number" && process.exitCode !== 0) {
+    // keep (CliError.exitCode or handler)
+  } else if (typeof priorExit === "number" && priorExit !== 0) {
+    process.exitCode = priorExit
+  } else {
+    process.exitCode = 1
+  }
 } finally {
   // Some subprocesses don't react properly to SIGTERM and similar signals.
   // Most notably, some docker-container-based MCP servers don't handle such signals unless

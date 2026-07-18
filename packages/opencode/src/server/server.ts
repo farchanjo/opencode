@@ -6,6 +6,7 @@ import { ConfigProvider, Context, Effect, Exit, Layer, Scope } from "effect"
 import { HttpRouter, HttpServer } from "effect/unstable/http"
 import { OpenApi } from "effect/unstable/httpapi"
 import { createServer } from "node:http"
+import { installOperatorNodeHttpIntercept } from "@/operator/http/client-ip"
 import { MDNS } from "./mdns"
 import { HttpApiApp } from "./routes/instance/httpapi/server"
 import { disposeMiddleware } from "./routes/instance/httpapi/lifecycle"
@@ -56,7 +57,20 @@ class ListenerServerService extends Context.Service<ListenerServerService, Liste
 export const Default = lazy(() => {
   const handler = HttpApiApp.webHandler().handler
   const app: ServerApp = {
-    fetch: (request: Request) => handler(request, HttpApiApp.context),
+    // Operator V1 (T025): /operator/v1/* served when setOperatorFetch was called from listen()
+    // under operator_control_plane flag + loopback bind. Unmounted → falls through to 404 HttpApi.
+    fetch: async (request: Request) => {
+      const url = new URL(request.url, "http://127.0.0.1")
+      if (url.pathname.startsWith("/operator/v1")) {
+        const op = getOperatorFetch()
+        if (op) return op(request)
+        return new Response(JSON.stringify({ ok: false, error: { code: "not_found", message: "operator routes not mounted" } }), {
+          status: 404,
+          headers: { "content-type": "application/json" },
+        })
+      }
+      return handler(request, HttpApiApp.context)
+    },
     request(input, init) {
       return app.fetch(input instanceof Request ? input : new Request(new URL(input, "http://localhost"), init))
     },
@@ -64,19 +78,62 @@ export const Default = lazy(() => {
   return { app }
 })
 
+/** Process-local operator fetch — set only by listen()/tests via setOperatorFetch. */
+let operatorFetch: ((request: Request) => Promise<Response>) | undefined
+
+export function setOperatorFetch(fetch: ((request: Request) => Promise<Response>) | undefined) {
+  operatorFetch = fetch
+}
+
+export function getOperatorFetch() {
+  return operatorFetch
+}
+
 export async function openapi() {
   return OpenApi.fromApi(PublicApi)
 }
 
 export let url: URL | undefined
 
+/**
+ * Active operator fetch for Node listen intercept (request-scoped IP via ALS).
+ * Set only for the duration of Server.listen; cleared on stop.
+ */
+let activeOperatorNodeFetch: ((request: Request) => Promise<Response>) | undefined
+let clearOperatorNodeIntercept: (() => void) | undefined
+
 export async function listen(opts: ListenOptions): Promise<Listener> {
+  // Operator: mount only on loopback bind; flag evaluated per request from Config (T041/R3).
+  // Real client IP: Node IncomingMessage.socket.remoteAddress via emit intercept (R2).
+  // Production path is NodeHttpServer (not Bun.serve); Bun requestIP adapter remains for Bun hosts.
+  const { tryCreateOperatorHttpFetch } = await import("@/operator/http/mount")
+  const { setOperatorRequestIpResolver, resolveOperatorClientIp } = await import("@/operator/http/client-ip")
+  const mount = tryCreateOperatorHttpFetch({
+    hostname: opts.hostname,
+    directory: process.cwd(),
+    getClientIp: (request) => resolveOperatorClientIp(request),
+  })
+  activeOperatorNodeFetch = mount.mounted ? mount.fetch : undefined
+  if (mount.mounted) {
+    setOperatorFetch(mount.fetch)
+  } else {
+    setOperatorFetch(undefined)
+  }
+
   const listener = await Effect.runPromise(listenEffect(opts))
   return {
     hostname: listener.hostname,
     port: listener.port,
     url: listener.url,
-    stop: (close?: boolean) => Effect.runPromiseExit(listener.stop(close)).then(() => undefined),
+    stop: (close?: boolean) =>
+      Effect.runPromiseExit(listener.stop(close)).then(() => {
+        clearOperatorNodeIntercept?.()
+        clearOperatorNodeIntercept = undefined
+        activeOperatorNodeFetch = undefined
+        setOperatorFetch(undefined)
+        setOperatorRequestIpResolver(null)
+        return undefined
+      }),
   }
 }
 
@@ -198,6 +255,13 @@ function forceClose(state: ListenerState) {
 
 function serverLayer(opts: { port: number; hostname: string }) {
   const server = createServer()
+  // R2: intercept /operator/v1 before Effect HttpRouter so every request sees
+  // the real Node socket remoteAddress (request-scoped ALS). Non-operator traffic
+  // is unchanged. Intercept is cleared on listener stop.
+  if (activeOperatorNodeFetch) {
+    clearOperatorNodeIntercept?.()
+    clearOperatorNodeIntercept = installOperatorNodeHttpIntercept(server, activeOperatorNodeFetch)
+  }
   const serverRef = { closeStarted: false, forceStop: false }
   const close = server.close.bind(server)
   // Keep shutdown owned by NodeHttpServer, but honor listener.stop(true) by

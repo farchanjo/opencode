@@ -2022,6 +2022,8 @@ export type Config = {
     continue_loop_on_deny?: boolean
     mcp_timeout?: number
     policies?: Array<ConfigV2ExperimentalPolicy>
+    operator_control_plane?: boolean
+    offline?: boolean
   }
 }
 
