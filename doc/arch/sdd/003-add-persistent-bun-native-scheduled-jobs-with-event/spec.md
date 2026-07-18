@@ -2,7 +2,7 @@
 id: 019f698e-8b57-7851-84d1-8f09a10d08e2
 number: 003
 slug: add-persistent-bun-native-scheduled-jobs-with-event
-status: specified
+status: clarified
 created_at: 2026-07-16T06:12:57.303777Z
 ---
 
@@ -463,3 +463,235 @@ local authority remains usable during outage.
 | Operator management                | FR28–FR32                 | 14, 17                  | 2     |
 | OTEL and Process Table integration | NFRs, FR8–FR14, FR43–FR48 | 11–12, 15–16, 18        | 1–2   |
 | Security and privacy               | Security Requirements     | 8–10, 16–20             | 1–2   |
+
+## Clarifications
+
+### Session 2026-07-18
+
+Declarative resolutions for the Feature 003 clarify phase. Each decision closes one or
+more Clarification Questions (CQ) or inline open markers in the body above without
+reopening confirmed Feature 001 hard gates, Feature 002 lifecycle/Todo authority,
+Feature 005 content-plane ownership, or Feature 007 native-only operator authority.
+Numeric limits and algorithm internals this feature intentionally defers are resolved
+here as explicit deferrals to `plan` and to the required future ADR **Scheduled Job
+Runtime and Async Notification Channel**, each with a provisional stance and a named
+acceptance-test hook — never as open placeholders. This section fixes the decisions the
+ADR will formalize; it does not author the ADR.
+
+**C1 — Bun version, adapter capability, platform set, and unavailable behavior (CQ1).**
+The minimum runtime is Bun `1.3.14`, confirmed in `package.json` and the local runtime
+(research.md). The scheduler adapter exposes the confirmed `Bun.cron(schedule, handler)`
+in-process API and declares its capabilities separately for the in-process and OS-level
+forms — overlap, misfire, timezone, persistence, process boundary, and stop semantics
+(FR4). Where a runtime or platform does not support a requested capability, the adapter
+exposes a typed capability gap and validation fails before external registration; the
+adapter never invents an absent API (FR5, AC22). Supported-platform enumeration for the
+OS-level form is a provisional plan constant with acceptance hook AC2.
+
+**C2 — Phase 1 adapter form and the OS-level bootstrap seam (CQ2, CQ13).** Phase 1 uses
+the in-process `Bun.cron(schedule, handler)` form only, single-instance. The OS-level
+`Bun.cron(path, schedule, title)` form launches a separate script/process that does not
+share the OpenCode Session, Effect services, database pools, or in-memory runtime
+(research.md); returning its execution to the canonical core requires an explicit core
+bootstrap and IPC/API seam, which is deferred to a later phase and the future ADR. No
+OS-level execution bypasses Feature 002 admission or Feature 001 routing; a deferred
+OS-level occurrence re-enters through the same canonical TaskTool/SessionExecution seam
+(FR8, FR9). The V1/V2 phasing seam is behind a feature flag (C21).
+
+**C3 — Overlap semantics, default, and long-running handlers (CQ3).** In-process
+no-overlap is real and authoritative: the next fire waits for the handler's returned
+Promise to settle (research.md). The default overlap policy is `forbid` (no overlap).
+`allow`, `queue`, and `replace` are honored only when the selected adapter or occurrence
+layer can enforce them; an unsupported request fails validation before registration
+(FR16, AC22). A handler that remains pending beyond the next nominal due time yields the
+adapter's documented no-overlap behavior and an explicit misfire outcome
+(`job.misfired`/`job.skipped`/`job.coalesced`), never a second overlapping invocation
+(FR15, AC24). `replace` respects mutation boundaries and never silently stops or kills a
+mutating handler or process (FR16, AC25).
+
+**C4 — Timezone, DST, and calendar-edge normalization (CQ4).** The canonical stored form
+is an IANA timezone plus a 5-field cron expression. In-process parsing follows Bun's UTC
+interpretation; the requested timezone is normalized by an explicitly defined occurrence
+layer that computes due instants, and an unsupported timezone for the selected adapter is
+rejected before registration (FR7, AC22). DST duplicate-time, skipped-time, and leap
+conditions follow the configured misfire/occurrence policy and are never silently
+double-fired or dropped; schedule lag is measured from nominal due time (FR19, AC4).
+Minimum interval and clock-skew tolerance are provisional plan constants with acceptance
+hook AC4.
+
+**C5 — Durable store, registration-state model, and rehydration (CQ5).** Job Definitions
+and durable intent persist in the canonical Config.Service/persistence authority reused
+from Feature 007 (no parallel store); lifecycle and audit events use the single EventV2
+authority (Feature 002 C2, Feature 007 Q3). Registration state is exactly `pending`,
+`registered`, `unregistered`, `unknown`, and `reconciled` (FR6). Persistent
+definition/intent/state transitions are atomic within their authority; the Bun/OS
+registration is an idempotent external effect paired with compensation, and no
+cross-system transaction spanning persistence and the scheduler is promised (FR6, NFR
+Atomicity). Startup rehydration replays persisted definitions, re-registers enabled ones,
+and reconciles registration state without claiming past execution (FR3, AC2, AC23).
+Retention and compaction bounds are provisional plan constants with acceptance hook AC15.
+
+**C6 — Occurrence claim state machine, idempotency, and order authority (CQ6).** The
+occurrence progresses `due` → `claimed` → `admitted` → `executing` → terminal, with the
+branch outcomes `misfired`, `skipped`, `coalesced`, `overlap_rejected`,
+`overlap_replaced`, `reconciled`, and `unknown` (FR11). The idempotency identity is the
+tuple `(job_definition_id, schedule_id, nominal_due_time, generation)`; duplicate
+delivery for one occurrence resolves to a single execution and the duplicate outcome is
+observable (FR10, AC6). Projection is idempotent and reuses the Feature 002 posture
+(dedupe on event id plus durable `(aggregateID, seq)`); the occurrence executes as a
+Feature 002 Task Process, so sequence, attempt, and generation authority belongs to the
+canonical executor (`SessionRunCoordinator`/`SessionRunner`), never to the scheduler or a
+projection (Feature 002 C8, C9). Delivery is at-least-once for durable events and
+best-effort for live events; neither exactly-once nor global order is promised (FR10).
+
+**C7 — Single-instance ownership; distributed deferral (CQ7).** V1 is single-instance:
+multi-worker scheduling, leader election, fencing, and placement are out of scope and
+deferred to a future distributed ADR, consistent with the Out of Scope section and
+Feature 002 C13. Restart safety is expressed through the `unknown`/`reconciled`
+registration states and startup reconciliation (C5), not through distributed
+coordination. A crash between occurrence claim and dispatch yields reconciled/unknown
+state and replays no ambiguous mutation (FR14, AC19).
+
+**C8 — Notification channel authority; no second channel (CQ8).** The async notification
+channel reuses the single EventV2 authority and the Feature 002 bounded Effect
+Stream/PubSub observation seam; Feature 003 introduces no second channel authority (FR20,
+Feature 002 C2, C14). The notification lifecycle events (`job.notification_enqueued`,
+`job.notification_delivered`, `job.notification_acknowledged`,
+`job.notification_expired`) are each registered through `EventV2.define` in a
+Feature-003-owned schema module, mirroring the lifecycle-events pattern, and delivered
+over the authorized bounded observation API segmented by root/session/project (FR20,
+FR22). Enqueue, delivery, acknowledgement, and expiry are Feature 003 concerns projected
+on that single authority; data-plane observation is read-only and control-plane wake uses
+native SessionInput/SessionExecution (FR23).
+
+**C9 — Default notification action and safe-boundary rule (CQ9).** The default action is
+operator-only notification (least privilege). Manager wake, structured input queue, and
+new child session/Task creation are explicit, per-definition, authorized, bounded, and
+audited actions and are never the default; raw prompt injection is prohibited (FR24,
+FR25). A notification is delivered or acted upon only at a safe active-turn boundary; a
+busy or unsafe active turn queues, coalesces, or expires the notification per configured
+policy and never interrupts unsafe work (FR25, AC7). A busy/offline target and TTL
+produce recorded expiry with no unbounded queue growth (AC8). Delivery never depends on
+an LLM; only a configured action invokes a model, with explicit permission, budget, cost,
+and Feature 001 routing (FR26, FR27, AC11).
+
+**C10 — Permission authority and secret resolver (CQ10).** Target/action allowlists,
+native/workflow/template/shell actions, and operator commands are governed by the
+canonical Feature 007 Permission/Policy authority; secrets are OS-keychain-backed secure
+references only, never raw values in arguments, shell history, output, prompts, event
+metadata, logs, traces, or notifications (Feature 007 Q8, Security 3). Shell or mutating
+tool actions require explicit allowlist, operator principal, confirmation/policy, and
+secure secret references; arbitrary scheduling is unavailable to an untrusted LLM,
+plugin, or prompt (FR29, AC17).
+
+**C11 — Retry, timeout, cost, and mutation-safety policy (CQ11).** Every occurrence
+execution is governed by Feature 002 admission/backpressure and Feature 001 routing and
+budget authority across global, job, project, provider, agent, tool, event, OTEL, token,
+and cost limits (FR17, FR18). Mutation-safety is fixed: a failed mutating action triggers
+no blind retry or fallback absent an explicit mutation-safe policy, and auto-retry after
+ambiguous effects is out of scope until such a policy exists (FR14, AC20). Per-scope
+numeric retry, timeout, token, and cost budgets are provisional plan constants with
+acceptance hooks AC12 and AC20.
+
+**C12 — Operator command domain, surface, and permissions (CQ12).** Scheduled-job
+administration is native-only through the Feature 007 operator command registry under the
+reserved `jobs.*` domain with the canonical operations list, status, show, create,
+update, enable, disable, delete, reschedule, run-now, history, and watch; the registry
+generates palette labels, slash aliases (`/op.jobs.<op>`), and CLI verbs
+(`opencode op jobs <op>`) so clients hardcode no divergent names (FR30, Feature 007 Q5,
+research.md catalog). The default scope is `project` with `global` templates
+copy-on-write; internal automation runs under the `system` principal; read-only viewers
+use `manager-view` (Feature 007 Q1, Q2). Human and JSON output is redacted and versioned;
+mutations require operator principal, explicit scope, version/CAS, idempotency, and audit
+(FR32, Security 9). `run-now` creates a normal occurrence through admission, routing,
+permissions, and lifecycle and starts no LLM turn solely for administration (FR31, AC14).
+Final display aliases are registry-generated, resolving the FR30 marker.
+
+**C13 — Namespace separation `job.*` versus `jobs.*`.** The `job.*` prefix is the Feature
+003 lifecycle event vocabulary registered on EventV2 (FR11); the `jobs.*` prefix is the
+Feature 007 operator command domain (C12). They are distinct, both reserved namespaces;
+plugin, MCP, custom command, and PromptTemplate registration rejects collisions with
+either at register/migrate time with a structured `reserved_name` error (FR32, Feature
+007 Q9). Reserved operator IDs are versioned in the `reserved-operator-ids` catalog and
+bumped additively.
+
+**C14 — Occurrence-owned Todo aggregate (CQ6 boundary, reaffirmation).** Each executable
+scheduled occurrence owns exactly one Feature 002 session-owned Todo aggregate created
+before goal-bearing work starts; a Job Definition never shares a live Todo list with
+occurrences or other definitions, and cancelling one occurrence preserves that
+occurrence's incomplete Todo and outcome/reason without rewriting future definition state
+(FR8, NFR Occurrence-owned Todo, AC26, AC27). The Todo schema, status set, and CAS reuse
+the Feature 002 resolved model (C23 there): closed status set
+`pending | in_progress | completed | cancelled` with version/CAS.
+
+**C15 — Occurrence-owned OutputGroup and notification-ref boundary (CQ8 payload).** Each
+admitted scheduled occurrence that produces observed output owns its own Feature 005
+OutputGroup scoped to process/attempt/generation; a Job Definition never shares a mutable
+OutputGroup or spool channel with occurrences or other definitions (FR8a, AC28). Lifecycle
+terminal status remains Feature 002 execution authority and Feature 005 owns content-plane
+settlement (seal/abort/OutputRef/committed bytes). A notification envelope carries only a
+bounded summary and an opaque Feature 005 OutputRef, never full content, spool filesystem
+paths, or unbounded payloads (FR22, AC29).
+
+**C16 — Occurrence is a canonical Feature 002 process (CQ2, CQ6 integration).** A trigger
+publishes `job.trigger_due` and produces an occurrence before admission, then creates or
+associates a Feature 002 Task Process through TaskTool, BackgroundJob, SessionExecution,
+SessionRunCoordinator, SessionRunner, and EventV2 — never a second executor, runtime,
+event system, or lifecycle (FR8, FR9, AC11). `job.trigger_due`, notification delivery, and
+executor start/completion are distinct lifecycle observations; the Process Table observes
+them and never executes a job (FR13). The occurrence carries idempotency identity and
+correlation/causation to its definition, schedule, session/root tree, and resulting
+process (FR10, FR12).
+
+**C17 — Cancellation and safety boundary (Security 7, reaffirmation).** Disabling or
+deleting a definition never silently terminates a mutating active execution; native
+cancellation follows Feature 002 mutation boundaries and reports `unconfirmed`/`unknown`
+where a remote effect cannot be confirmed, never a false kill (FR16, NFR Safety, AC25).
+Cancelling an active occurrence cancels only that occurrence/process and leaves the future
+Job Definition enabled and unchanged (AC27, Feature 002 AC33).
+
+**C18 — Observability reuse (Observability section, reaffirmation).** Feature 003 adds no
+new exporter, SDK, or pipeline; it reuses the ADR-0001/Feature 001 OTLP foundation and
+Feature 002 lifecycle events. Spans `job.schedule`, `job.trigger`, `job.claim`,
+`job.notify`, `job.dispatch`, `job.execute`, `job.retry`, and `job.reconcile` link to
+`task.execute`, session execution, LLM, tool, and fallback spans. IDs appear only in
+traces/logs; metric labels use bounded enums/buckets and allowlisted catalog IDs under the
+cardinality budget; async bounded OTLP export never blocks trigger or execution and local
+authority remains usable during outage (AC15, AC16).
+
+**C19 — Boundedness and saturation posture (NFR Boundedness).** Scheduler callbacks,
+admission, event queues, notification queues, retention, catch-up, and OTLP export are
+bounded with observable overflow; saturation queues or rejects under Feature 002 policy
+and never creates unbounded queues or infinite catch-up (FR15, FR18, AC12, AC21). Missed
+triggers produce explicit `job.misfired`/`job.skipped`/`job.coalesced` outcomes rather
+than hidden retries, and schedule lag is measured from due time (FR19, AC3). Numeric queue
+capacities and catch-up ceilings are provisional plan constants with acceptance hooks AC12
+and AC21.
+
+**C20 — Fault-injection matrix (CQ14).** The quantitative test matrix covers registration
+failure, partial persistence, event storms, cron fan-out, notification lag, long-running
+handlers, cancellation, OTEL outage, restart, and reconciliation, bound to named
+acceptance hooks AC1, AC2, AC3, AC5, AC7, AC8, AC12, AC15, AC19, AC21, AC22, AC23, AC24,
+and AC25. Numeric thresholds are provisional plan constants fixed by acceptance testing,
+never open placeholders.
+
+**C21 — Migration, feature flag, and V1/V2 seam (CQ13).** Feature 003 is additive and
+gated behind a feature flag; V1 is in-process, single-instance scheduling with definitions
+persisted through the canonical Config.Service/persistence layer and events on EventV2. No
+existing SessionInput, SessionExecution, RunCoordinator, BackgroundJob, TaskTool, EventV2,
+command registry, config, or persistence behavior changes (Compatibility section). The
+OS-level form, distributed ownership, and durable-schema evolution are V2/future-ADR
+concerns (C2, C7); the durable job-definition schema is a new table under Config.Service
+authority. Rollout, flag identifiers, and schema field details are provisional plan
+constants.
+
+**C22 — Security-section completeness.** The Security Requirements section is complete for
+the clarify phase: ownership/scope authorization before registration/trigger/projection/
+delivery; schema-validated bounded cron/timezone/payload/action/quota/deadline/retry/
+filter inputs; secret references only; redaction across observer/session/project
+boundaries; native control through canonical permission and lifecycle services;
+rate/quota/overlap/notification abuse bounds; mutation-safe disable/delete; LLM/plugin/
+tool/MCP/prompt callers denied job administration; and audit events identifying operator/
+interface actor without pretending an LLM acted. No new security requirement is added; the
+permission authority and secret resolver resolve to Feature 007 Permission/Policy and OS
+keychain per C10.
