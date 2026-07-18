@@ -1,5 +1,5 @@
 ARG REGISTRY=ghcr.io/anomalyco
-FROM ${REGISTRY}/build/base:24.04
+FROM ${REGISTRY}/build/base:24.04@sha256:2233bee2f0335f24c7458143d32348f0c0093e65331943532827e2d23d9008d2
 
 SHELL ["/bin/bash", "-lc"]
 

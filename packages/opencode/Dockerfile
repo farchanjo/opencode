@@ -1,4 +1,4 @@
-FROM alpine AS base
+FROM alpine:3.22@sha256:14358309a308569c32bdc37e2e0e9694be33a9d99e68afb0f5ff33cc1f695dce AS base
 
 # Disable the runtime transpiler cache by default inside Docker containers.
 # On ephemeral containers, the cache is not useful
@@ -12,7 +12,8 @@ COPY dist/opencode-linux-x64-baseline-musl/bin/opencode /usr/local/bin/opencode
 FROM base AS build-arm64
 COPY dist/opencode-linux-arm64-musl/bin/opencode /usr/local/bin/opencode
 
+FROM base
 ARG TARGETARCH
-FROM build-${TARGETARCH}
+COPY --from=build-${TARGETARCH} /usr/local/bin/opencode /usr/local/bin/opencode
 RUN opencode --version
 ENTRYPOINT ["opencode"]
