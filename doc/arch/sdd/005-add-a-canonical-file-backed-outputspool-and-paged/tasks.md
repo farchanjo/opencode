@@ -272,7 +272,7 @@ sourcing its enum members from the schema modules so a single vocabulary is enfo
 
 ### Application, adapters, and operator wiring (Phase 3)
 
-- [ ] T025 [S13] Author `packages/opencode/src/outputspool/spool-layout.ts` establishing
+- [x] T025 [S13] Author `packages/opencode/src/outputspool/spool-layout.ts` establishing
   the managed private tree under the `Global`-rooted data directory
   (`packages/core/src/global.ts:15-39`), replacing the flat `tool-output`, keyed
   project/root-session/process-attempt/generation/channel so one OutputGroupRef maps to one
@@ -285,7 +285,7 @@ sourcing its enum members from the schema modules so a single vocabulary is enfo
   FR46, FR49, C1, C6, C8, AC14, AC22). Acceptance: `bun test packages/opencode` asserts
   private permissions, a rejected traversal/symlink escape, and no path returned to a
   consumer.
-- [ ] T026 [S14] Author `packages/opencode/src/outputspool/file-sink-writer.ts` as the Bun
+- [x] T026 [S14] Author `packages/opencode/src/outputspool/file-sink-writer.ts` as the Bun
   `FileSink` (`Bun.file(path).writer()` `write`/`flush`/`end`/`ref`/`unref`) batched-append
   adapter driving the domain writer queue, applying the tiered fsync posture over the
   verified `node:fs` `fsyncSync`/`fdatasyncSync` and `FileHandle.sync()`/`datasync()`
@@ -295,14 +295,14 @@ sourcing its enum members from the schema modules so a single vocabulary is enfo
   fsync — with no per-token filesystem write, mirroring the C2 durability tiers (FR6, FR8,
   FR24, FR26, C2, AC1, AC10). Acceptance: `bun test packages/opencode` under a sandbox spool
   tree asserts batched append with no per-token syscall and the per-tier fsync posture.
-- [ ] T027 [S15] Author `packages/opencode/src/outputspool/page-reader.ts` as the
+- [x] T027 [S15] Author `packages/opencode/src/outputspool/page-reader.ts` as the
   positional reader over the verified `node:fs/promises` `open(path,"r+")`
   `FileHandle.read(buf, off, len, pos)` and `Bun.file(path).slice(start,end)` surface,
   reading exactly the requested byte window under the domain pager, trimming to a UTF-8
   codepoint boundary, and allowing concurrent reads during append, mirroring the C15 raw
   byte-stream contract (FR9, FR20, C15, AC2). Acceptance: `bun test packages/opencode` under
   a sandbox spool tree asserts a bounded positional page and a concurrent read during append.
-- [ ] T028 [S16] Author `packages/opencode/src/outputspool/control-store.ts` as the
+- [x] T028 [S16] Author `packages/opencode/src/outputspool/control-store.ts` as the
   SQLite/control metadata store recording per channel generation the committed length (the
   recovery authority), durability tier, seal/abort fence record, and reference edges, with
   atomic commit ordering and generation records so a new attempt never overwrites a
@@ -310,14 +310,14 @@ sourcing its enum members from the schema modules so a single vocabulary is enfo
   committed-length authority (FR25, FR27, C12, C18, AC8). Acceptance: `bun test
   packages/opencode` under a sandbox store asserts committed-length monotonicity per
   generation and fence-record persistence.
-- [ ] T029 [S17] Author `packages/opencode/src/outputspool/reconciler.ts` running startup
+- [x] T029 [S17] Author `packages/opencode/src/outputspool/reconciler.ts` running startup
   recovery over open groups, applying the domain reconciliation policy against the
   control-store committed length and the filesystem extent, marking each group
   sealed/open/aborted/corrupt/unknown and emitting the `output.reconciled` durable event,
   never silent empty-success, mirroring C12 (FR25, C12, AC8, AC9). Acceptance: `bun test
   packages/opencode` under injected crash points asserts recovery into each state and a
   visible sealed ref after crash-after-seal-before-event.
-- [ ] T030 [S18] Author `packages/opencode/src/outputspool/retention-sweeper.ts` running
+- [x] T030 [S18] Author `packages/opencode/src/outputspool/retention-sweeper.ts` running
   ref-aware cleanup in bounded per-cycle batches over the domain retention evaluator so
   `release` drops one holder edge, `cleanup` reclaims only fully unreferenced expired groups,
   a still-referenced output is never deleted solely because mtime is old, and deletion/
@@ -325,7 +325,7 @@ sourcing its enum members from the schema modules so a single vocabulary is enfo
   ToolOutputStore mtime cleanup (FR28, FR29, FR30, FR37, FR50, C5, AC16, AC17). Acceptance:
   `bun test packages/opencode` asserts a referenced output survives an expired mtime and a
   bounded batch reclaims only unreferenced expired groups.
-- [ ] T031 [S19] Author `packages/opencode/src/outputspool/durable-events.ts` projecting
+- [x] T031 [S19] Author `packages/opencode/src/outputspool/durable-events.ts` projecting
   the seven durable `output.*` settlement events over the new `publishOutputEvent` boundary
   added to `packages/opencode/src/event-v2-bridge.ts` (mirroring
   `publishLifecycleEvent`/`publishJobEvent`/`publishLangLockEvent`: location attach, single
@@ -336,7 +336,7 @@ sourcing its enum members from the schema modules so a single vocabulary is enfo
   AC18). Acceptance: `bun test packages/opencode` asserts a durable settlement event reaches
   the bridge boundary once, a live signal is droppable, and no payload carries content or a
   path.
-- [ ] T032 [S20] Author `packages/opencode/src/outputspool/authorization.ts` re-evaluating
+- [x] T032 [S20] Author `packages/opencode/src/outputspool/authorization.ts` re-evaluating
   authorization per action over Feature 007 principals and PermissionV2 scopes
   (`self`/`child`/`tree`/`session`/`project`/`operator-global`) so a raw OutputRef is never
   a saved permission resource, metadata authorization is enforced before any content page is
@@ -345,7 +345,7 @@ sourcing its enum members from the schema modules so a single vocabulary is enfo
   principal, admin-plane actions denied by default), mirroring C7 (FR42, FR43, FR47, FR48,
   C7, AC15). Acceptance: `bun test packages/opencode` covers authorized consume, unauthorized
   sibling deny, admin deny-by-default, and per-action re-evaluation.
-- [ ] T033 [S21] Author `packages/opencode/src/outputspool/compat-boundary.ts` providing the
+- [x] T033 [S21] Author `packages/opencode/src/outputspool/compat-boundary.ts` providing the
   native tool/process streaming sink into OutputSpool and the bounded plugin/MCP/legacy
   compatibility boundary that spills to the spool before full LLM-facing materialization when
   the source allows, caps materialization at explicit size/time/memory limits and marks the
@@ -353,7 +353,7 @@ sourcing its enum members from the schema modules so a single vocabulary is enfo
   replacing the `tool-output-store.ts` path-in-preview (FR1, FR7, FR35, FR36, FR37, C11,
   AC13). Acceptance: `bun test packages/opencode` asserts an oversized non-streaming source
   is spilled under caps with no path in the result and a native source streams into the sink.
-- [ ] T034 [S22] Author `packages/opencode/src/outputspool/migration-bridge.ts` and migrate
+- [x] T034 [S22] Author `packages/opencode/src/outputspool/migration-bridge.ts` and migrate
   `packages/core/src/background-job.ts` and `packages/core/src/tool-output-store.ts` behind
   the C16 feature flag with a bounded dual-read window: BackgroundJob stores OutputRef/stat/
   status while still reading legacy `output`/`error` strings, ToolOutputStore consumers read
@@ -363,19 +363,19 @@ sourcing its enum members from the schema modules so a single vocabulary is enfo
   AC12). Acceptance: `bun test packages/opencode` asserts BackgroundJob writes an OutputRef
   and reads the legacy string under the flag, and no per-content-proportional string is
   retained after cutover.
-- [ ] T035 [S23] Author the Feature 005 context-slice materialization seam materializing only
+- [x] T035 [S23] Author the Feature 005 context-slice materialization seam materializing only
   budgeted byte/token ranges of a sealed channel through `read(offset, limit)`, recording the
   exact ranges used into the durable transcript reference set feeding retention, so the LLM
   never receives an entire spool file automatically and a Manager/Architect handoff carries
   summary plus OutputRef and reads bounded pages, mirroring C10 (FR32, FR33, FR34, FR38, C10,
   AC12, AC19). Acceptance: `bun test packages/opencode` asserts only selected ranges are
   materialized, the ranges used are recorded, and no full-file injection occurs.
-- [ ] T036 [S13–S23] Author the barrel `packages/opencode/src/outputspool/index.ts`
+- [x] T036 [S13–S23] Author the barrel `packages/opencode/src/outputspool/index.ts`
   re-exporting the spool-layout, file-sink-writer, page-reader, control-store, reconciler,
   retention-sweeper, durable-events, authorization, compat-boundary, and migration-bridge
   modules. Acceptance: `tsgo --noEmit` on `packages/opencode` green and the barrel imports
   without a duplicate-export error.
-- [ ] T037 [S24] Author `packages/opencode/src/operator/outputspool/**` with the typed
+- [x] T037 [S24] Author `packages/opencode/src/operator/outputspool/**` with the typed
   `SpoolReaderPort`/`RetentionPort`/`AdminPort` domain implementations for the reserved
   consume-plane `output.stat`, `output.read`, `output.follow` and admin-plane
   `output.export`, `output.share`, `output.release`, `output.delete`, `output.purge`,
