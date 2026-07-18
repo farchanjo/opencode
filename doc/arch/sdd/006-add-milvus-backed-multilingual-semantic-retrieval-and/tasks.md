@@ -237,7 +237,7 @@ vocabulary is enforced (see the Traceability reconciliation note).
   contracts (FR4, FR19, FR22, C2, C7). Acceptance: `bun test packages/core` asserts a total
   order over colliding scores down to canonical id, deterministic fusion output, and rerank
   absence falling through to dense→sparse→id.
-- [ ] T017 [S8] Author `packages/core/src/semantic/binding-lifecycle.ts` implementing the
+- [x] T017 [S8] Author `packages/core/src/semantic/binding-lifecycle.ts` implementing the
   closed `draft→staged→active→degraded→unavailable` machine with `select` staging a candidate
   version, `validate`/`reindex` moving to `staged` without activating the alias, `cutover`
   under CAS+confirmation activating `active`, a provider/model outage degrading to `degraded`
@@ -246,7 +246,7 @@ vocabulary is enforced (see the Traceability reconciliation note).
   mirroring the C12/C20 state machine (FR6, FR31, FR32, C12, C20). Acceptance: `bun test
   packages/core` asserts every legal transition, rejects illegal transitions, confirms
   in-flight version pinning across a cutover, and confirms no auto-substitution on outage.
-- [ ] T018 [S9] Author `packages/core/src/semantic/index-generation.ts` implementing the
+- [x] T018 [S9] Author `packages/core/src/semantic/index-generation.ts` implementing the
   blue/green `building→validated→live→superseded→retired` generation machine so a
   select/reindex never activates the live alias, cutover swaps all collection aliases together
   under one CAS (agents/skills/skill_chunks and the Feature 009 tools extension), rollback
