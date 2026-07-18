@@ -337,7 +337,7 @@ schema modules so a single vocabulary is enforced (see the Traceability note).
   content-free `langlock.*` audit projection over the EventV2 authority (AC4, AC7, AC12,
   AC15, AC16, AC18, AC20, AC21, AC22). Acceptance: `bun test packages/opencode` green under
   the sandbox wrapper.
-- [ ] T040 [S20] Add contract and end-to-end tests through the Feature 007 sandbox wrapper
+- [x] T040 [S20] Add contract and end-to-end tests through the Feature 007 sandbox wrapper
   covering the `langlock.*` IDs versus the existing reserved catalog (already carrying the
   domain and four IDs) with reserved-ID collision rejection, the CLI human plus JSON `op
   langlock` output with zero admin-time model calls, the TUI Lang Lock panel and Settings
