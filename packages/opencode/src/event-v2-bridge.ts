@@ -12,6 +12,8 @@ import { Events } from "@opencode-ai/schema/routing/events"
 import { EventBus as LifecycleEventBus } from "@opencode-ai/core/lifecycle/event-bus"
 import { Events as LifecycleEvents } from "@opencode-ai/schema/lifecycle/events"
 import { TodoEvents } from "@opencode-ai/schema/lifecycle/todo-events"
+import { Events as JobEvents } from "@opencode-ai/schema/jobs/events"
+import { EventDefinitions as JobEventDefinitions } from "@opencode-ai/schema/jobs/event-definitions"
 
 // =============================================================================
 // Feature 001 / T031 — routing, hierarchy and capability EventV2 definitions
@@ -167,6 +169,27 @@ export interface Interface extends EventV2.Interface {
    */
   readonly publishTodoEvent: (
     event: TodoEvents.TodoEvent,
+    options?: EventV2.PublishOptions,
+  ) => Effect.Effect<EventV2.Payload>
+
+  /**
+   * Feature 003 / T018 — bridge one `JobEvents.JobEvent` member (the closed
+   * 30-member `job.*` vocabulary, `packages/schema/src/jobs/events.ts`, FR11)
+   * onto the EventV2 bus through the location-aware `publish` above, mirroring
+   * `publishLifecycleEvent`. Each member publishes through its own wire
+   * `Definition` from `@opencode-ai/schema/jobs/event-definitions` (the single
+   * canonical copy the durable manifest also joins, T018); no raw tagged union
+   * is ever wired to the bus (C8). The twenty-three durable members (C8)
+   * additionally carry a top-level `root_session_id`, projected from
+   * `envelope.tree.root_session_id`, because `EventV2`'s durable-commit path
+   * reads the aggregate id from a TOP-LEVEL data key (`durable.aggregate =
+   * "root_session_id"`); the seven live members omit it and commit no sequence.
+   * `job.*` is the Feature 003 lifecycle event namespace; the Feature 007
+   * `jobs.*` operator command domain is distinct and this bridge never touches
+   * it (C13).
+   */
+  readonly publishJobEvent: (
+    event: JobEvents.JobEvent,
     options?: EventV2.PublishOptions,
   ) => Effect.Effect<EventV2.Payload>
 }
@@ -383,6 +406,139 @@ const layer = Layer.effect(
       }
     }
 
+    // Feature 003 / T018 — one arm per job.* vocabulary member (FR11). Durable
+    // members (C8) additionally carry a top-level `root_session_id`, projected
+    // from `envelope.tree.root_session_id`, because `EventV2`'s durable-commit
+    // path reads the aggregate id from a TOP-LEVEL data key (see
+    // `@opencode-ai/schema/jobs/event-definitions` for the full rationale); live
+    // members omit it. Definition-mutation, registration, occurrence-checkpoint,
+    // overlap, execution-terminal, notification, and reconciliation events stay
+    // distinct and are never collapsed (FR11, FR12).
+    const publishJobEvent: Interface["publishJobEvent"] = (event, options) => {
+      switch (event.type) {
+        case "job.definition_created": {
+          const { type: _drop, ...rest } = event
+          return publish(JobEventDefinitions.JobDefinitionCreatedDefinition, { ...rest, root_session_id: event.envelope.tree.root_session_id }, options)
+        }
+        case "job.definition_updated": {
+          const { type: _drop, ...rest } = event
+          return publish(JobEventDefinitions.JobDefinitionUpdatedDefinition, { ...rest, root_session_id: event.envelope.tree.root_session_id }, options)
+        }
+        case "job.definition_enabled": {
+          const { type: _drop, ...rest } = event
+          return publish(JobEventDefinitions.JobDefinitionEnabledDefinition, { ...rest, root_session_id: event.envelope.tree.root_session_id }, options)
+        }
+        case "job.definition_disabled": {
+          const { type: _drop, ...rest } = event
+          return publish(JobEventDefinitions.JobDefinitionDisabledDefinition, { ...rest, root_session_id: event.envelope.tree.root_session_id }, options)
+        }
+        case "job.definition_deleted": {
+          const { type: _drop, ...rest } = event
+          return publish(JobEventDefinitions.JobDefinitionDeletedDefinition, { ...rest, root_session_id: event.envelope.tree.root_session_id }, options)
+        }
+        case "job.registered": {
+          const { type: _drop, ...rest } = event
+          return publish(JobEventDefinitions.JobRegisteredDefinition, { ...rest, root_session_id: event.envelope.tree.root_session_id }, options)
+        }
+        case "job.unregistered": {
+          const { type: _drop, ...rest } = event
+          return publish(JobEventDefinitions.JobUnregisteredDefinition, { ...rest, root_session_id: event.envelope.tree.root_session_id }, options)
+        }
+        case "job.rescheduled": {
+          const { type: _drop, ...rest } = event
+          return publish(JobEventDefinitions.JobRescheduledDefinition, { ...rest, root_session_id: event.envelope.tree.root_session_id }, options)
+        }
+        case "job.occurrence_claimed": {
+          const { type: _drop, ...rest } = event
+          return publish(JobEventDefinitions.JobOccurrenceClaimedDefinition, { ...rest, root_session_id: event.envelope.tree.root_session_id }, options)
+        }
+        case "job.triggered": {
+          const { type: _drop, ...rest } = event
+          return publish(JobEventDefinitions.JobTriggeredDefinition, { ...rest, root_session_id: event.envelope.tree.root_session_id }, options)
+        }
+        case "job.admitted": {
+          const { type: _drop, ...rest } = event
+          return publish(JobEventDefinitions.JobAdmittedDefinition, { ...rest, root_session_id: event.envelope.tree.root_session_id }, options)
+        }
+        case "job.execution_started": {
+          const { type: _drop, ...rest } = event
+          return publish(JobEventDefinitions.JobExecutionStartedDefinition, { ...rest, root_session_id: event.envelope.tree.root_session_id }, options)
+        }
+        case "job.execution_completed": {
+          const { type: _drop, ...rest } = event
+          return publish(JobEventDefinitions.JobExecutionCompletedDefinition, { ...rest, root_session_id: event.envelope.tree.root_session_id }, options)
+        }
+        case "job.execution_failed": {
+          const { type: _drop, ...rest } = event
+          return publish(JobEventDefinitions.JobExecutionFailedDefinition, { ...rest, root_session_id: event.envelope.tree.root_session_id }, options)
+        }
+        case "job.execution_cancelled": {
+          const { type: _drop, ...rest } = event
+          return publish(JobEventDefinitions.JobExecutionCancelledDefinition, { ...rest, root_session_id: event.envelope.tree.root_session_id }, options)
+        }
+        case "job.execution_timed_out": {
+          const { type: _drop, ...rest } = event
+          return publish(JobEventDefinitions.JobExecutionTimedOutDefinition, { ...rest, root_session_id: event.envelope.tree.root_session_id }, options)
+        }
+        case "job.overlap_rejected": {
+          const { type: _drop, ...rest } = event
+          return publish(JobEventDefinitions.JobOverlapRejectedDefinition, { ...rest, root_session_id: event.envelope.tree.root_session_id }, options)
+        }
+        case "job.overlap_replaced": {
+          const { type: _drop, ...rest } = event
+          return publish(JobEventDefinitions.JobOverlapReplacedDefinition, { ...rest, root_session_id: event.envelope.tree.root_session_id }, options)
+        }
+        case "job.notification_enqueued": {
+          const { type: _drop, ...rest } = event
+          return publish(JobEventDefinitions.JobNotificationEnqueuedDefinition, { ...rest, root_session_id: event.envelope.tree.root_session_id }, options)
+        }
+        case "job.notification_acknowledged": {
+          const { type: _drop, ...rest } = event
+          return publish(JobEventDefinitions.JobNotificationAcknowledgedDefinition, { ...rest, root_session_id: event.envelope.tree.root_session_id }, options)
+        }
+        case "job.notification_expired": {
+          const { type: _drop, ...rest } = event
+          return publish(JobEventDefinitions.JobNotificationExpiredDefinition, { ...rest, root_session_id: event.envelope.tree.root_session_id }, options)
+        }
+        case "job.reconciled": {
+          const { type: _drop, ...rest } = event
+          return publish(JobEventDefinitions.JobReconciledDefinition, { ...rest, root_session_id: event.envelope.tree.root_session_id }, options)
+        }
+        case "job.unknown": {
+          const { type: _drop, ...rest } = event
+          return publish(JobEventDefinitions.JobUnknownDefinition, { ...rest, root_session_id: event.envelope.tree.root_session_id }, options)
+        }
+        case "job.trigger_due": {
+          const { type: _drop, ...data } = event
+          return publish(JobEventDefinitions.JobTriggerDueDefinition, data, options)
+        }
+        case "job.misfired": {
+          const { type: _drop, ...data } = event
+          return publish(JobEventDefinitions.JobMisfiredDefinition, data, options)
+        }
+        case "job.skipped": {
+          const { type: _drop, ...data } = event
+          return publish(JobEventDefinitions.JobSkippedDefinition, data, options)
+        }
+        case "job.coalesced": {
+          const { type: _drop, ...data } = event
+          return publish(JobEventDefinitions.JobCoalescedDefinition, data, options)
+        }
+        case "job.queued": {
+          const { type: _drop, ...data } = event
+          return publish(JobEventDefinitions.JobQueuedDefinition, data, options)
+        }
+        case "job.notification_delivered": {
+          const { type: _drop, ...data } = event
+          return publish(JobEventDefinitions.JobNotificationDeliveredDefinition, data, options)
+        }
+        case "job.retry_scheduled": {
+          const { type: _drop, ...data } = event
+          return publish(JobEventDefinitions.JobRetryScheduledDefinition, data, options)
+        }
+      }
+    }
+
     const unsubscribe = yield* events.listen((event) =>
       Effect.gen(function* () {
         const ctx = yield* InstanceRef
@@ -413,7 +569,7 @@ const layer = Layer.effect(
     )
     yield* Effect.addFinalizer(() => unsubscribe)
 
-    return Service.of({ ...events, publish, publishRoutingEvent, publishLifecycleEvent, publishTodoEvent })
+    return Service.of({ ...events, publish, publishRoutingEvent, publishLifecycleEvent, publishTodoEvent, publishJobEvent })
   }),
 )
 
