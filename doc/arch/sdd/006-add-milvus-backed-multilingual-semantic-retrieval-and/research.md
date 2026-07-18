@@ -80,6 +80,75 @@ explicit gaps. It is not an ADR and does not authorize implementation.
    do not. Embedding change → blue-green reindex then cutover; reranker change → no
    re-embed by default. V1 default unavailable → catalog+lexical with degraded reason.
 
+## Empirical evidence (plan phase)
+
+Verified from the workspace and the public npm registry on 2026-07-18. Path anchors and
+versions are evidence, not authorization.
+
+### Milvus client libraries for Bun/TypeScript
+
+- `@zilliz/milvus2-sdk-node` latest is **3.0.3** and is the official Node/TS Milvus
+  client. It is a **gRPC** client: its declared dependencies include `@grpc/grpc-js`
+  `^1.14.3`, `@grpc/proto-loader`, `protobufjs`, `generic-pool`, `lru-cache`, and
+  `@petamoriken/float16`.
+- The SDK is **not currently a workspace dependency**: no `milvus`/`zilliz` entry appears
+  in `bun.lock` or any `packages/*/package.json`, and `@grpc/grpc-js` is not installed
+  in `node_modules`. Adding the SDK introduces a gRPC transitive stack.
+- **gRPC-under-Bun implication (open risk).** `@grpc/grpc-js` targets Node; its behavior
+  under the Bun runtime must be validated empirically in the tasks phase (connection
+  lifecycle, keepalive, TLS, and pool behavior). This is a named prerequisite for the
+  Phase 3 Milvus adapter, kept behind the single Milvus port so a fake adapter carries
+  the unit-test path regardless of the driver outcome.
+
+### Milvus Lite for the dev/test path (honest gap)
+
+- There is **no `milvus-lite` npm package** (registry lookup: not found). Milvus Lite is
+  a Python-only embedded build; the TS/Node SDK has no embedded/Lite equivalent.
+- **Typed consequence.** The C1 "Lite for dev/test" allowance maps, in this ecosystem, to:
+  a **standalone Milvus server (container)** for integration tests, and **injected
+  fakes/in-memory adapters** behind the Milvus port for unit tests. The plan records this
+  as the concrete dev/test topology; no embedded Lite is available to Bun/TS.
+
+### OpenAI-compatible client transport (reuse)
+
+- `@ai-sdk/openai-compatible@2.0.41` is already a workspace dependency in both
+  `packages/opencode/package.json` and `packages/core/package.json`, and
+  `packages/core/src/plugin/provider/openai-compatible.ts` already wires base URL,
+  headers, and secret ref. The full `@ai-sdk/*` provider set plus `ai` (catalog-pinned)
+  are present.
+- The embedding probe (`/v1/embeddings`) and the reranker profiles ride this existing
+  transport (base URL + secret ref), not a new HTTP stack. The model resolver carries a
+  test/embedding seam comment only (`packages/core/src/session/runner/model.ts:80`); the
+  AI SDK's embedding-model surface for openai-compatible is verified against the pinned
+  version in the tasks phase.
+
+### Multilingual embedding precedent (independent)
+
+- speckit itself runs semantic retrieval with **`potion-multilingual-128M` at 256
+  dimensions** (`speckit status`: `semantic: on (potion-multilingual-128M, 256d)`),
+  confirming a working multilingual small-embedding precedent. This is speckit's own
+  tooling and is **independent** of opencode's product stack: Feature 006 pins its own
+  operator-selected embedding/reranker bindings and does not reuse speckit's model.
+
+### Agent and skill registry shapes to index
+
+- AgentV2 (`packages/core/src/agent.ts:1-27`) exposes `Info`/`Selection` over an
+  effect-service registry (`get`/`resolve`/`select`/`all`); agent documents project from
+  `Agent.Info`.
+- SkillV2 (`packages/core/src/skill.ts:1-60`, `:121-132`) exposes `Source`/`Info`, a
+  `list()` over discovered sources, and `available(skills, agent)` which filters by
+  `PermissionV2.evaluate("skill", ...)`. Skill summary + chunk documents project from
+  `Skill.Info`, and permission revalidation reuses `available`/PermissionV2 rather than a
+  parallel authority.
+
+### Reserved operator catalog (no bump)
+
+- `packages/core/src/operator/catalog.ts` declares exactly **30** `semantic.*` IDs at
+  `RESERVED_CATALOG_VERSION = "1.3.0"` (`semantic.provider.*` 7, `semantic.model.*` 5,
+  `semantic.embedding.*` 6, `semantic.reranker.*` 5, `semantic.binding.*` 2,
+  `semantic.index.*` 5). Feature 006 registers typed domain impls only; **no additive
+  catalog bump is required** (C15).
+
 ## Evidence boundaries
 
 - Path anchors may drift; they do not authorize implementation.

@@ -2,7 +2,7 @@
 id: 019f6f2f-d92f-7fa3-9a55-fc4b308a984d
 number: 006
 slug: add-milvus-backed-multilingual-semantic-retrieval-and
-status: clarified
+status: planned
 created_at: 2026-07-17T08:27:14.607608Z
 ---
 
@@ -561,9 +561,11 @@ queries. Feature 005 spool may hold index job logs as refs only.
 - [Feature 005 OutputSpool and ArtifactStore](../005-add-a-canonical-file-backed-outputspool-and-paged/spec.md) — context slices; large index/probe outputs file-backed
 - [Feature 007 Unified Native Operator Control Plane](../007-add-a-unified-native-operator-control-plane-for-all-opencode/spec.md) — sole management authority for profiles/models/bindings; `semantic.*` command IDs
 - [Feature 008 Complete MCP Client Tools and Resources Lifecycle](../008-add-complete-mcp-client-tools-and-resources-lifecycle-with/spec.md) — optional MCP resource semantic reindex only with opt-in + classification; Feature 006 ownership unchanged
-- [ADR-0001 OpenTelemetry telemetry foundation](../../adr/0001-opentelemetry-telemetry-foundation.md)
-- [ADR-0002 Core Smart Agent Routing](../../adr/0002-core-smart-agent-routing.md) — remains proposed; ranking authority; semantic fit separate from telemetry
-- [ADR-0003 Operator Control Plane and native command authority](../../adr/0003-operator-control-plane-and-native-command-authority.md) — proposed; operator authority and no silent substitution for semantic bindings
+- [ADR-0001 OpenTelemetry telemetry foundation](../../adr/0001-opentelemetry-telemetry-foundation.md) — accepted
+- [ADR-0002 Core Smart Agent Routing](../../adr/0002-core-smart-agent-routing.md) — accepted; ranking authority; semantic fit separate from telemetry
+- [ADR-0003 Operator Control Plane and native command authority](../../adr/0003-operator-control-plane-and-native-command-authority.md) — accepted; operator authority and no silent substitution for semantic bindings
+- [ADR-0007 Semantic Tool Search Over the Shared Feature 006 Retrieval Stack](../../adr/0007-add-semantic-embedding-and-reranker-retrieval-to-all-tool.md) — proposed; Feature 009 reuses this stack with a `tools` collection
+- [ADR-0008 Milvus-Backed Multilingual Semantic Retrieval and Reranking Stack](../../adr/0008-milvus-semantic-retrieval-stack.md) — proposed; required decision record formalizing C1–C22
 - [Feature 006 research](research.md) — evidence only
 
 ## Initial Traceability Matrix

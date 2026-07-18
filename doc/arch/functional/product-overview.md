@@ -92,6 +92,13 @@ Acceptance criteria live as prioritized scenarios in each feature `spec.md`.
   [output-group statechart](../statecharts/output-group.md) (open → sealing →
   sealed/aborted/corrupt/expired/unknown, with committed-length crash
   reconciliation and the running → settling → terminal settlement flow).
+- **Semantic model binding and index generation lifecycle** — the blue/green
+  embedding/reranker binding cutover, the paired index-generation lifecycle,
+  and the degradation-ladder overlay are modeled in
+  [semantic-binding statechart](../statecharts/semantic-binding.md)
+  (draft → staged → active → degraded/unavailable, with cutover-under-CAS
+  activation, rollback, and the full_semantic ↔ catalog_lexical ↔
+  fail_closed degradation ladder; never a silent model substitution).
 
 ## Phase 2 deferred (explicit)
 
