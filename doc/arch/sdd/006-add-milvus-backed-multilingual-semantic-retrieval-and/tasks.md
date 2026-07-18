@@ -466,7 +466,7 @@ vocabulary is enforced (see the Traceability reconciliation note).
 
 ### Tests and validation (Phase 5)
 
-- [ ] T040 [S25] Add pure deterministic unit tests under `packages/core/test/semantic/**` for
+- [x] T040 [S25] Add pure deterministic unit tests under `packages/core/test/semantic/**` for
   the nine-stage pipeline order (fixed order, no-candidate path, no invented agent), the
   tie-break total order and deterministic hybrid fusion, the binding lifecycle (legal/illegal
   transitions, in-flight version pinning, no auto-substitution), the index-generation lifecycle
