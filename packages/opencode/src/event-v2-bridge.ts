@@ -14,6 +14,8 @@ import { Events as LifecycleEvents } from "@opencode-ai/schema/lifecycle/events"
 import { TodoEvents } from "@opencode-ai/schema/lifecycle/todo-events"
 import { Events as JobEvents } from "@opencode-ai/schema/jobs/events"
 import { EventDefinitions as JobEventDefinitions } from "@opencode-ai/schema/jobs/event-definitions"
+import { Events as LangLockEvents } from "@opencode-ai/schema/langlock/events"
+import { EventDefinitions as LangLockEventDefinitions } from "@opencode-ai/schema/langlock/event-definitions"
 
 // =============================================================================
 // Feature 001 / T031 — routing, hierarchy and capability EventV2 definitions
@@ -190,6 +192,26 @@ export interface Interface extends EventV2.Interface {
    */
   readonly publishJobEvent: (
     event: JobEvents.JobEvent,
+    options?: EventV2.PublishOptions,
+  ) => Effect.Effect<EventV2.Payload>
+
+  /**
+   * Feature 004 / T022 — bridge one `LangLockEvents.LangLockEvent` member (the
+   * closed 15-member `langlock.*` vocabulary, `packages/schema/src/langlock/
+   * events.ts`, C8) onto the EventV2 bus through the location-aware `publish`
+   * above, mirroring `publishJobEvent`. Each member publishes through its own wire
+   * `Definition` from `@opencode-ai/schema/langlock/event-definitions` (the single
+   * canonical copy the durable manifest also joins, T014); no raw tagged union is
+   * ever wired to the bus (C8). The six durable audit members (C8) additionally
+   * carry a top-level `correlation_id`, projected from
+   * `envelope.ordering.correlation_id`, because `EventV2`'s durable-commit path
+   * reads the aggregate id from a TOP-LEVEL data key (`durable.aggregate =
+   * "correlation_id"`); the nine live members omit it and commit no sequence. The
+   * `langlock.*` EventV2 audit/advisory prefix is distinct from the Feature 007
+   * `langlock.*` operator command domain and this bridge never touches it (C3, C8).
+   */
+  readonly publishLangLockEvent: (
+    event: LangLockEvents.LangLockEvent,
     options?: EventV2.PublishOptions,
   ) => Effect.Effect<EventV2.Payload>
 }
@@ -539,6 +561,79 @@ const layer = Layer.effect(
       }
     }
 
+    // Feature 004 / T022 — one arm per langlock.* vocabulary member (C8). The six
+    // durable audit members additionally carry a top-level `correlation_id`,
+    // projected from `envelope.ordering.correlation_id`, because `EventV2`'s
+    // durable-commit path reads the aggregate id from a TOP-LEVEL data key (see
+    // `@opencode-ai/schema/langlock/event-definitions` for the full rationale); the
+    // nine live members omit it and commit no sequence. Policy-mutation, override,
+    // exception, injection, advisory, and resolution events stay distinct and are
+    // never collapsed (FR27, C8).
+    const publishLangLockEvent: Interface["publishLangLockEvent"] = (event, options) => {
+      switch (event.type) {
+        case "langlock.policy_set": {
+          const { type: _drop, ...rest } = event
+          return publish(LangLockEventDefinitions.PolicySetDefinition, { ...rest, correlation_id: event.envelope.ordering.correlation_id }, options)
+        }
+        case "langlock.policy_reset": {
+          const { type: _drop, ...rest } = event
+          return publish(LangLockEventDefinitions.PolicyResetDefinition, { ...rest, correlation_id: event.envelope.ordering.correlation_id }, options)
+        }
+        case "langlock.override_authorized": {
+          const { type: _drop, ...rest } = event
+          return publish(LangLockEventDefinitions.OverrideAuthorizedDefinition, { ...rest, correlation_id: event.envelope.ordering.correlation_id }, options)
+        }
+        case "langlock.override_denied": {
+          const { type: _drop, ...rest } = event
+          return publish(LangLockEventDefinitions.OverrideDeniedDefinition, { ...rest, correlation_id: event.envelope.ordering.correlation_id }, options)
+        }
+        case "langlock.exception_registered": {
+          const { type: _drop, ...rest } = event
+          return publish(LangLockEventDefinitions.ExceptionRegisteredDefinition, { ...rest, correlation_id: event.envelope.ordering.correlation_id }, options)
+        }
+        case "langlock.exception_revoked": {
+          const { type: _drop, ...rest } = event
+          return publish(LangLockEventDefinitions.ExceptionRevokedDefinition, { ...rest, correlation_id: event.envelope.ordering.correlation_id }, options)
+        }
+        case "langlock.policy_injected": {
+          const { type: _drop, ...data } = event
+          return publish(LangLockEventDefinitions.PolicyInjectedDefinition, data, options)
+        }
+        case "langlock.policy_reapplied": {
+          const { type: _drop, ...data } = event
+          return publish(LangLockEventDefinitions.PolicyReappliedDefinition, data, options)
+        }
+        case "langlock.envelope_stamped": {
+          const { type: _drop, ...data } = event
+          return publish(LangLockEventDefinitions.EnvelopeStampedDefinition, data, options)
+        }
+        case "langlock.advisory_flagged": {
+          const { type: _drop, ...data } = event
+          return publish(LangLockEventDefinitions.AdvisoryFlaggedDefinition, data, options)
+        }
+        case "langlock.advisory_acknowledged": {
+          const { type: _drop, ...data } = event
+          return publish(LangLockEventDefinitions.AdvisoryAcknowledgedDefinition, data, options)
+        }
+        case "langlock.advisory_suppressed": {
+          const { type: _drop, ...data } = event
+          return publish(LangLockEventDefinitions.AdvisorySuppressedDefinition, data, options)
+        }
+        case "langlock.detector_unknown": {
+          const { type: _drop, ...data } = event
+          return publish(LangLockEventDefinitions.DetectorUnknownDefinition, data, options)
+        }
+        case "langlock.resolution_retained": {
+          const { type: _drop, ...data } = event
+          return publish(LangLockEventDefinitions.ResolutionRetainedDefinition, data, options)
+        }
+        case "langlock.unknown": {
+          const { type: _drop, ...data } = event
+          return publish(LangLockEventDefinitions.UnknownDefinition, data, options)
+        }
+      }
+    }
+
     const unsubscribe = yield* events.listen((event) =>
       Effect.gen(function* () {
         const ctx = yield* InstanceRef
@@ -569,7 +664,7 @@ const layer = Layer.effect(
     )
     yield* Effect.addFinalizer(() => unsubscribe)
 
-    return Service.of({ ...events, publish, publishRoutingEvent, publishLifecycleEvent, publishTodoEvent, publishJobEvent })
+    return Service.of({ ...events, publish, publishRoutingEvent, publishLifecycleEvent, publishTodoEvent, publishJobEvent, publishLangLockEvent })
   }),
 )
 
