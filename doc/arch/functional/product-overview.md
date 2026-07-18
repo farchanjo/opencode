@@ -87,6 +87,11 @@ Acceptance criteria live as prioritized scenarios in each feature `spec.md`.
   [langlock-advisory statechart](../statecharts/langlock-advisory.md) (written →
   classified → detected → compliant/advisory_flagged/unknown, with
   acknowledge/suppress remediation branches; never a gate on the write).
+- **OutputGroup channel lifecycle and settlement** — the content-plane
+  channel state machine and its settlement seam to Feature 002 are modeled in
+  [output-group statechart](../statecharts/output-group.md) (open → sealing →
+  sealed/aborted/corrupt/expired/unknown, with committed-length crash
+  reconciliation and the running → settling → terminal settlement flow).
 
 ## Phase 2 deferred (explicit)
 

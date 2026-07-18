@@ -2,7 +2,7 @@
 id: 019f6f29-1288-7831-8b0b-d4fe981439d8
 number: 005
 slug: add-a-canonical-file-backed-outputspool-and-paged
-status: clarified
+status: planned
 created_at: 2026-07-17T08:19:50.536031Z
 ---
 
