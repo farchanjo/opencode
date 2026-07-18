@@ -384,7 +384,7 @@ vocabulary is enforced (see the Traceability reconciliation note).
   mirroring C19 (FR35, FR31, C19). Acceptance: `bun test packages/opencode` asserts a secret is
   resolved only through a ref, rotate-secret keeps binding identity, and no plaintext secret
   appears in any output.
-- [ ] T033 [S19] Author `packages/opencode/src/semantic/durable-events.ts` projecting the nine
+- [x] T033 [S19] Author `packages/opencode/src/semantic/durable-events.ts` projecting the nine
   durable `semantic.*` events over a new `publishSemanticEvent` boundary added to
   `packages/opencode/src/event-v2-bridge.ts` (mirroring `publishLifecycleEvent`/`publishJobEvent`/
   `publishLangLockEvent`/`publishOutputEvent`: location attach, single publish boundary),

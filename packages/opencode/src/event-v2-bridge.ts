@@ -18,6 +18,8 @@ import { Events as LangLockEvents } from "@opencode-ai/schema/langlock/events"
 import { EventDefinitions as LangLockEventDefinitions } from "@opencode-ai/schema/langlock/event-definitions"
 import { Events as OutputSpoolEvents } from "@opencode-ai/schema/outputspool/events"
 import { EventDefinitions as OutputSpoolEventDefinitions } from "@opencode-ai/schema/outputspool/event-definitions"
+import type { Events as SemanticEvents } from "@opencode-ai/schema/semantic/events"
+import { DurableEvents } from "@/semantic/durable-events"
 
 // =============================================================================
 // Feature 001 / T031 — routing, hierarchy and capability EventV2 definitions
@@ -239,6 +241,29 @@ export interface Interface extends EventV2.Interface {
    */
   readonly publishOutputEvent: (
     event: OutputSpoolEvents.OutputEvent,
+    options?: EventV2.PublishOptions,
+  ) => Effect.Effect<EventV2.Payload>
+
+  /**
+   * Feature 006 / T033 — bridge one `SemanticEvents.SemanticEvent` member (the
+   * closed 12-member `semantic.*` vocabulary, `packages/schema/src/semantic/
+   * events.ts`, C22) onto the EventV2 bus through the location-aware `publish`
+   * above, mirroring `publishOutputEvent`. Each member publishes through its own
+   * wire `Definition` from `@opencode-ai/schema/semantic/event-definitions` (the
+   * single canonical copy the durable manifest also joins, T011/T013); no raw
+   * tagged union is ever wired to the bus (C22). The nine durable settlement
+   * members additionally carry a top-level `correlation_id`, projected from
+   * `envelope.ordering.correlation_id`, because `EventV2`'s durable-commit path
+   * reads the aggregate id from a TOP-LEVEL data key (`durable.aggregate =
+   * "correlation_id"`); the three live signals omit it, commit no sequence, and
+   * MAY be dropped under `allBounded` load without affecting durable binding/
+   * index state. Every payload is content-free — opaque ids and redacted metadata
+   * only, never query text, vectors, or a path (FR12, FR13, FR41, FR42, C22). The
+   * `semantic.*` EventV2 prefix is distinct from the Feature 007 `semantic.*`
+   * operator command domain and this bridge never touches it (C15, C22).
+   */
+  readonly publishSemanticEvent: (
+    event: SemanticEvents.SemanticEvent,
     options?: EventV2.PublishOptions,
   ) => Effect.Effect<EventV2.Payload>
 }
@@ -718,6 +743,17 @@ const layer = Layer.effect(
       }
     }
 
+    // Feature 006 / T033 — one boundary for the closed 12-member semantic.*
+    // vocabulary (C22). The projection (durable-events.ts) resolves the wire
+    // Definition and, for the nine durable settlement members, carries the
+    // top-level `correlation_id` (the durable aggregate key) projected from
+    // `envelope.ordering.correlation_id`; the three live members omit it and
+    // commit no sequence. Content-free: opaque ids + redacted metadata only.
+    const publishSemanticEvent: Interface["publishSemanticEvent"] = (event, options) => {
+      const projected = DurableEvents.projectForPublish(event)
+      return publish(projected.definition, projected.data, options)
+    }
+
     const unsubscribe = yield* events.listen((event) =>
       Effect.gen(function* () {
         const ctx = yield* InstanceRef
@@ -748,7 +784,7 @@ const layer = Layer.effect(
     )
     yield* Effect.addFinalizer(() => unsubscribe)
 
-    return Service.of({ ...events, publish, publishRoutingEvent, publishLifecycleEvent, publishTodoEvent, publishJobEvent, publishLangLockEvent, publishOutputEvent })
+    return Service.of({ ...events, publish, publishRoutingEvent, publishLifecycleEvent, publishTodoEvent, publishJobEvent, publishLangLockEvent, publishOutputEvent, publishSemanticEvent })
   }),
 )
 
