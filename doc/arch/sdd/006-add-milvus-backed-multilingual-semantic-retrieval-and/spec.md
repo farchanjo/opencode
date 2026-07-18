@@ -2,7 +2,7 @@
 id: 019f6f2f-d92f-7fa3-9a55-fc4b308a984d
 number: 006
 slug: add-milvus-backed-multilingual-semantic-retrieval-and
-status: specified
+status: clarified
 created_at: 2026-07-17T08:27:14.607608Z
 ---
 
@@ -580,3 +580,241 @@ queries. Feature 005 spool may hold index job logs as refs only.
 | Budget integration                  | FR38–FR40       | 12, 17                   | 1–2   |
 | OTEL / evaluation                   | FR41–FR43       | 15, 40                   | 2     |
 | Cutover / rotate-secret / profile C | FR12, FR30–FR32 | 31–36, 41                | 1–2   |
+
+## Clarifications
+
+### Session 2026-07-18
+
+Declarative resolutions for the Feature 006 clarify phase. Each decision closes one or
+more Clarification Questions (CQ1–CQ26 above) or an inline open marker in the body
+without reopening confirmed Feature 001 hard-gate/ranking authority and Context, Turn
+and Delegation Budget ownership, Feature 002 lifecycle authority, Feature 003
+occurrence/reconcile ownership, Feature 004 Lang Lock provenance ownership, Feature 005
+content-plane ownership, or Feature 007 native-only operator authority and reserved
+catalog. Topology constants, numeric limits, model identities, index internals, and
+evaluation thresholds this feature intentionally defers are resolved here as explicit
+deferrals to `plan` and to the future ADR **Milvus-Backed Multilingual Semantic
+Retrieval and Reranking**, each with a provisional stance and a named acceptance-test
+hook (AC = Acceptance Scenario above), never as open placeholders. This section fixes
+the decisions the ADR will formalize; it does not author the ADR. Feature 006 owns the
+single semantic stack and the `agents` / `skills` / `skill_chunks` collections;
+[Feature 009](../009-add-semantic-embedding-and-reranker-retrieval-to-all-tool/spec.md)
+extends the same stack with the `tools` collection and MUST NOT diverge from the
+contracts fixed here.
+
+**C1 — Milvus deployment mode and adapter boundary (CQ1).** V1 default is a **Milvus
+standalone (single-node) server** reached through the native adapter/port behind FR7;
+**Milvus Lite / embedded** is allowed only for dev, test, and CI (fake/in-memory
+adapters remain the unit-test path); **Zilliz Cloud** is a valid remote endpoint under
+the same adapter with the FR33 SSRF/TLS posture. Milvus is never a hard runtime
+dependency: when the configured backend is unreachable the binding surfaces a typed
+capability gap (`milvus_unavailable`) and routing degrades per C14/C20. The exact
+adapter surface, driver, and pool sizing are provisional plan constants with acceptance
+hooks AC7/AC41; the fixed requirement is one adapter, one configurable backend, and a
+non-mandatory dependency.
+
+**C2 — Retrieval pipeline order and deterministic tie-break (FR3, FR19, FR22).** The
+nine-stage pipeline in FR3 is normative and immutable: profile → hard scalar filters →
+hybrid dense+sparse recall (`retrieval_top_k`) → reduced candidate set → rerank
+(`rerank_top_k`) → deterministic routing score / Feature 001 policy → selected Agent →
+constrained Skill retrieval/rerank → post-retrieval revalidation against live core.
+Ties break by a stable documented total order: rerank score, then dense score, then
+sparse/lexical score, then canonical ID/version — so identical inputs yield identical
+ordering, matching the Feature 009 tie-break contract. The exact score-fusion weights
+are provisional plan constants with acceptance hooks AC2/AC3/AC8.
+
+**C3 — Embedding and reranker model defaults are examples, not hardcoded (CQ2).** No
+product model ID is hardcoded as the sole option (Out of Scope). The effective models
+are always the operator-pinned `SemanticModelBinding` slots (FR6, FR28). V1 documents a
+provisional **recommended multilingual example** — a multilingual dense embedding model
+(for example `bge-m3`-class, normalized, cosine/inner-product metric) and a
+cross-encoder reranker (for example `bge-reranker-v2-m3`-class) covering pt-BR/es/en —
+as guidance only; the panel still requires native probe/eval before either becomes
+eligible (FR30). Dimension, normalization, and distance metric are stored per collection
+with the binding (FR12) and never inferred. Acceptance hooks AC19–AC24, AC40, AC41.
+
+**C4 — Local vs remote embedding and data residency (CQ3, Privacy 1–3).** V1 supports
+both local OpenAI-compatible endpoints (localhost/LAN, optionally key-free) and remote
+endpoints under one privacy policy: embedding/rerank providers receive only sanitized
+index/query fields (FR17, FR37), never secrets, prompts, reasoning, or paths. A
+**local/offline-only residency profile** is a first-class operator option that blocks
+egress to remote hosts; it is not the mandatory default. The per-field sanitization
+allowlist and the residency-profile enforcement point are provisional plan constants
+with acceptance hooks AC15, AC19, AC20.
+
+**C5 — OpenAI-compatible provider adapter reuse (CQ15).** Provider profiles reuse the
+existing core OpenAI-compatible client transport (base URL, headers, secret ref) rather
+than a new HTTP stack; the embedding probe calls `/v1/embeddings` and the reranker
+follows the explicit profile of FR30 (A native `/v1/rerank`, B structured chat, C
+embedding-similarity labeled distinctly). Rerank capability is NEVER inferred from a
+model name (FR30). The exact reused client module and probe fixtures are provisional
+plan constants with acceptance hooks AC21, AC24, AC25, AC26.
+
+**C6 — Collection schema, partitioning, and consistency level (CQ1, CQ7).** The three
+conceptual collections `agents`, `skills`, `skill_chunks` are separate (FR9); the
+namespace is extensible for Feature 009's `tools` collection under the same binding
+generation (C21). Tenant/project/scope/visibility/role are scalar metadata with
+**mandatory filters on every search** (FR9, FR34); per-project isolation uses a
+**scalar project key (partition key)**, never per-project collections, so multi-root
+workspaces never trigger collection explosion. Consistency level is **Bounded staleness**
+by default (the index is a derived projection and every candidate is revalidated against
+core per FR20/FR27), with Strong reserved for admin verification reads. Exact partition
+grammar, the scalar field set, and the bounded-staleness window are provisional plan
+constants with acceptance hooks AC5, AC6, AC41.
+
+**C7 — Index type, metric, and hybrid recall implementation (CQ1, CQ5).** Dense vectors
+use an **HNSW** index with the binding's stored metric (**cosine / inner-product on
+normalized vectors**); IVF variants remain a plan-tunable alternative for large corpora
+but HNSW is the V1 default. Sparse recall uses **Milvus-native sparse/BM25 full-text
+search** (Milvus 2.5+) as the preferred hybrid path, with an external lexical index
+allowed behind the same adapter when the backend lacks native BM25; dense and sparse are
+fused deterministically (weighted / RRF) before the C2 tie-break. Index build/search
+parameters (`M`, `efConstruction`, `ef`, fusion weights) are provisional plan constants
+with acceptance hooks AC1, AC17.
+
+**C8 — Retrieval top_k, rerank window, latency budget, and probe batch limits (CQ4,
+CQ26).** `retrieval_top_k`, `rerank_top_k`, `max_skill_chunks`, and skill token budgets
+are consumed from the Feature 001 Context, Turn and Delegation Budget (FR38) and never
+free-form; exceeding them fails closed or degrades with an explicit reason (FR38).
+Provisional V1 defaults (plan-owned): `retrieval_top_k` 64, `rerank_top_k` 16,
+`max_skill_chunks` 8, retrieval latency budget in the low hundreds of milliseconds with
+timeout → C20 fallback. Embedding-probe batch size and per-request vector count are
+server-capped and schema-bounded (Security Input validation). Exact numbers are
+provisional plan constants with acceptance hooks AC12, AC17.
+
+**C9 — Skill chunking strategy (CQ6).** Skills are lazy (FR39): summary metadata
+(`skills` collection) is indexed first; full body is chunked into the `skill_chunks`
+collection only within bounded, sanitized token windows with fixed overlap, carrying
+`parent_skill_id`/`chunk_id` (FR11). Chunking strips secrets, prompts, reasoning, and
+paths (FR17). Selected chunks are injected only after Agent/role selection under the C8
+budget (FR38–FR40), spooled via Feature 005 refs (FR40). Exact chunk size, overlap, and
+sanitization rules are provisional plan constants with acceptance hooks AC12.
+
+**C10 — Query-embedding cache and last-known-metadata cache (CQ8).** The query embedding
+is derived once per logical Task from the structured profile and cached by task
+fingerprint/version (FR18), reused across the agent and skill passes and — per Feature
+009 — across the tool pass while valid. A local bounded cache holds last-known index
+metadata (FR25). Caches invalidate by **binding version and config hash** (FR25); there
+is no per-token/per-turn remote query loop (NFR4). TTLs are provisional plan constants
+with acceptance hooks AC16.
+
+**C11 — Index freshness SLA and stale-confidence gate (CQ9).** Freshness/version/
+confidence gates apply (FR27); stale candidates ALWAYS revalidate against live
+AgentV2/SkillV2/Permission before injection (FR20, FR27) — stale-index safety never
+relies on freshness alone. A freshness bucket and a stale-confidence threshold gate
+whether semantic scores contribute or the result degrades to C20. Thresholds and bucket
+edges are provisional plan constants with acceptance hooks AC4, AC5.
+
+**C12 — Blue/green alias naming, cutover UX, and in-flight retention (CQ10, CQ22).**
+Embedding binding/dimension changes use blue/green **collection generations** under one
+binding generation and an operator-confirmed atomic alias swap via
+`semantic.embedding.cutover` (FR12, FR32); `select` and `reindex` alone NEVER activate
+the live alias, and `semantic.embedding.rollback` reverses under policy. Cutover swaps
+the aliases of all collections in the binding generation together under one CAS so the
+`tools` collection (Feature 009) never splits from `agents`/`skills`/`skill_chunks`.
+In-flight Tasks retain the binding versions captured at Task start; new Tasks use the
+post-cutover versions; there is no mid-task switch (FR32). Alias grammar, the dual-write
+window, and the in-flight retention horizon are provisional plan constants with
+acceptance hooks AC9, AC31, AC32, AC33, AC41.
+
+**C13 — Skill-coverage feedback loop is out of V1 (CQ12).** The default is strict
+two-pass Agent-then-Skill retrieval (FR21). An optional skill-coverage feedback loop
+(re-query for uncovered capabilities) is deferred beyond V1; V1 does not add an online
+self-optimizing loop (Out of Scope). Acceptance hook AC2, AC3.
+
+**C14 — Cold-start and no-binding-pinned policy (CQ14, CQ24).** When the index is empty/
+cold or **no binding is pinned**, the semantic path is inactive and routing uses the
+deterministic catalog + lexical/rules fallback with binding state `unavailable` and an
+explicit degraded reason (FR24) — the default is **degrade, not force-configure**;
+existing AgentV2/SkillV2 remain authoritative. An operator MAY opt into fail-closed for
+semantic retrieval (FR24). This mirrors the Feature 009 "no binding, no crash" floor.
+Acceptance hooks AC7, AC8, AC18, AC29.
+
+**C15 — Reserved operator surface, scope, and confirmation matrix (CQ13, CQ21, CQ23).**
+All setup/config/management flows exclusively through the Feature 007 reserved
+`semantic.*` catalog in `packages/core/src/operator/catalog.ts`, version read live from
+`RESERVED_CATALOG_VERSION` (**`1.3.0`**). The reserved semantic IDs at this version are
+exactly the **30** entries: `semantic.provider.list|add|update|test|disable|delete|
+rotate-secret`; `semantic.model.list|discover|register|validate|disable`;
+`semantic.embedding.show|select|validate|reindex|cutover|rollback`;
+`semantic.reranker.show|select|validate|cutover|rollback`;
+`semantic.binding.status|history`; `semantic.index.status|test|reindex|reconcile|
+show-collections`. Binding mutation happens only via `embedding.select`/`cutover` and
+`reranker.select`/`cutover` (the `semantic.binding.*` pair is read-only status/history);
+`semantic.index.*` operate per collection (agents/skills/skill_chunks and, for Feature
+009, tools), so no new IDs are needed. Default scope for provider/model/binding
+mutations is `project` (`P`); status/show/list are global-or-project (`GP`). `cutover`,
+`rollback`, `delete`/`disable`-when-bound, and `rotate-secret` always require
+interactive confirmation (Feature 007 confirmation matrix). Adding IDs requires an
+additive catalog bump, never a second SDK list; plugin/MCP/custom registries MUST NOT
+register these reserved IDs (FR33, FR36). Acceptance hooks AC14, AC28, AC37, AC39.
+
+**C16 — Rerank profiles, probe fixtures, and manual-declaration trust window (CQ16,
+CQ17, CQ19, CQ25).** Profile A is a native `/v1/rerank`-compatible request/response
+adapter contract; Profile B is a structured chat/completions reranker with deterministic
+schema, fixed temperature, tool-free behavior, and explicit token/cost budget; Profile C
+(embedding-similarity) is a **distinct** capability, never badged cross-encoder/reranker
+and never eligible for the reranker slot (FR30). A manually registered model is
+**untrusted until native probe/eval passes** — there is no trust window; it cannot be
+selected before validation (FR30, AC22). Exact `/v1/rerank` schemas, the chat-rerank
+prompt/schema/temperature contract, probe fixtures, and pass thresholds are provisional
+plan constants with acceptance hooks AC22, AC24, AC25, AC26, AC34.
+
+**C17 — Local network policy and SSRF denylist defaults (CQ18).** SSRF-safe URL parsing,
+scheme/host/port policy, and **post-resolution + post-redirect DNS revalidation** are
+mandatory (FR33). Metadata, link-local, and private ranges are blocked unless an
+explicit local-profile allowance is set; remote endpoints require TLS by default;
+insecure HTTP is permitted only for an explicit local profile with a visible warning.
+The exact denylist CIDRs and allowed localhost/LAN ranges are provisional plan constants
+with acceptance hooks AC36, AC38.
+
+**C18 — Offline evaluation acceptance thresholds (CQ11).** Offline golden evaluation
+covers task→agent/skill relevance, recall/ranking metrics, multilingual pt/es/en tests,
+permission-leakage tests, and drift/model-migration checks (FR43); online
+self-optimizing policy is out of scope for V1. Evaluation never mutates bindings (FR43,
+AC40). Recall@k, ranking (nDCG/MRR), and zero-leakage acceptance thresholds are
+provisional plan constants with acceptance hooks AC40; leakage tolerance is fixed at
+zero cross-project/over-permission hits (AC4, AC6, AC11).
+
+**C19 — Secret backend for provider secret_ref and Milvus credentials (CQ20).** All
+provider secrets and Milvus URI/token credentials are stored only as secret refs through
+the Feature 007 secret backend: **OS keychain is mandatory** for stored secrets,
+**env-ref is allowed for CI only** (reference, not value), and **vault/multi-user are
+deferred beyond V1**. Plaintext secrets are forbidden in args, history, output, config
+JSON, and audit (FR35, Security). `semantic.provider.rotate-secret` changes
+secret_ref/version only, never endpoint/model/binding identity (FR31). Acceptance hooks
+AC20, AC30, AC35.
+
+**C20 — Typed degradation ladder and no silent substitution (FR24–FR27).** Degradation
+is an explicit typed capability ladder with a stable capability-gap code at each rung,
+matching the Feature 009 ladder structure: **full semantic** (hybrid recall + rerank
+when binding + Milvus healthy) → **catalog + lexical/rules fallback** (embedding,
+reranker, or Milvus/index unavailable/stale/timeout) with binding state `degraded` |
+`unavailable` and an explicit degraded reason. The routing floor for agents/skills is
+the deterministic catalog + lexical/rules path (not a "full tool set" — that floor is
+Feature 009's tool-search concern). The system NEVER auto-selects another embedding or
+reranker model and has no automatic fallback pool for these two slots in V1 (FR24, FR31,
+Out of Scope). Fail-closed is operator opt-in only. Capability-gap enum values are
+provisional plan constants with acceptance hooks AC7, AC8, AC29.
+
+**C21 — Cross-feature ownership of the semantic stack and collections.** Feature 006
+owns the single embedding/reranker stack, the Milvus backend/adapter, the
+`SemanticProviderProfile` / `SemanticModelDescriptor` / `SemanticModelBinding` SSOT
+(FR28), and the `agents` / `skills` / `skill_chunks` collections. Feature 009 owns only
+the `tools` collection and the tool-scoped retrieval seam and reuses this stack, the
+pinned bindings, the C20 ladder, the multilingual posture, and the content-free
+telemetry verbatim. Feature 008 owns the optional MCP **resource** semantic-index
+opt-in; Feature 006 ownership of the stack is unchanged by it. All collections share one
+embedding binding generation and cut over together (C12). Acceptance hooks AC41.
+
+**C22 — Content-free telemetry, resource bounds, and backpressure (FR41–FR43, NFR1–5).**
+Spans use stable enum names (FR41); metrics are bounded buckets whose labels NEVER
+include query text, vectors, entity IDs, session IDs, or paths (FR42, ADR-0001).
+Candidate-set memory is bounded by `retrieval_top_k`/`rerank_top_k`/chunk budgets
+(NFR3); the hot path never embeds or searches per token/delta (NFR4); circuit breaker
+and retries are bounded, target the same pinned binding only, and never exceed the C8
+retrieval budget (FR26). Startup/background index jobs run under Feature 002 lifecycle
+with Feature 005 OutputSpool for large outputs and Feature 003 scheduled reconcile using
+the current pinned binding without changing it (FR13). Exact bucket edges, breaker
+thresholds, and batch sizes are provisional plan constants with acceptance hooks AC13,
+AC15, AC17.
