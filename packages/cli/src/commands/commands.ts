@@ -48,5 +48,96 @@ export const Commands = Spec.make(typeof OPENCODE_CLI_NAME === "string" ? OPENCO
         register: Flag.boolean("register").pipe(Flag.withDefault(false)),
       },
     }),
+    Spec.make("telemetry", {
+      description: "Manage OpenTelemetry export (zero model calls; secrets stay redacted)",
+      commands: [
+        Spec.make("status", { description: "Show telemetry export status", params: { json: json() } }),
+        Spec.make("show", {
+          description: "Show the effective, redacted telemetry configuration",
+          params: { json: json() },
+        }),
+        Spec.make("on", { description: "Enable telemetry export", params: { scope: scope(), json: json() } }),
+        Spec.make("off", { description: "Disable telemetry export", params: { scope: scope(), json: json() } }),
+        Spec.make("test", {
+          description: "Emit a redacted test signal or check exporter connectivity",
+          params: {
+            mode: Flag.choice("mode", ["signal", "connectivity"]).pipe(
+              Flag.withDescription("test mode: emit a signal or check connectivity"),
+              Flag.withDefault("signal"),
+            ),
+            json: json(),
+          },
+        }),
+        Spec.make("configure", {
+          description: "Open the persistent telemetry configuration flow",
+          params: { scope: scope(), json: json() },
+        }),
+      ],
+    }),
+    Spec.make("smart", {
+      description: "Manage Smart Agent Routing activation",
+      commands: [
+        Spec.make("status", { description: "Show the Smart Routing indicator state", params: { json: json() } }),
+        Spec.make("on", { description: "Enable Smart Routing", params: { scope: scope(), json: json() } }),
+        Spec.make("off", { description: "Disable Smart Routing", params: { scope: scope(), json: json() } }),
+        Spec.make("auto", {
+          description: "Set Smart Routing to policy-driven auto",
+          params: { scope: scope(), json: json() },
+        }),
+      ],
+    }),
+    Spec.make("routing", {
+      description: "Inspect the deterministic routing engine (zero model calls)",
+      commands: [
+        Spec.make("status", {
+          description: "Show effective routing configuration and health",
+          params: { json: json() },
+        }),
+        Spec.make("explain", {
+          description: "Explain a persisted routing decision by id",
+          params: {
+            decisionId: Argument.string("decisionId").pipe(Argument.withDescription("persisted routing decision id")),
+            json: json(),
+          },
+        }),
+        Spec.make("test", {
+          description: "Run a deterministic local routing simulation (no external model call)",
+          params: {
+            task: Argument.string("task").pipe(Argument.withDescription("task description to simulate")),
+            scope: scope(),
+            json: json(),
+          },
+        }),
+        Spec.make("capability", {
+          description: "Inspect tool-call capability metadata",
+          commands: [
+            Spec.make("inspect", {
+              description: "Inspect redacted capability records for one or all candidates",
+              params: {
+                modelId: Argument.string("modelId").pipe(
+                  Argument.withDescription("model id to inspect; omit for all candidates"),
+                  Argument.optional,
+                ),
+                json: json(),
+              },
+            }),
+          ],
+        }),
+      ],
+    }),
   ],
 })
+
+function json() {
+  return Flag.boolean("json").pipe(
+    Flag.withDescription("emit the typed operator envelope as JSON on stdout only"),
+    Flag.withDefault(false),
+  )
+}
+
+function scope() {
+  return Flag.choice("scope", ["global", "project"]).pipe(
+    Flag.withDescription("configuration scope: global or the current project"),
+    Flag.withDefault("global"),
+  )
+}

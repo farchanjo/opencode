@@ -22,6 +22,28 @@ const Handlers = Runtime.handlers(Commands, {
     password: () => import("./commands/handlers/service/password"),
   },
   serve: () => import("./commands/handlers/serve"),
+  telemetry: {
+    status: () => import("./telemetry/status"),
+    show: () => import("./telemetry/show"),
+    on: () => import("./telemetry/on"),
+    off: () => import("./telemetry/off"),
+    test: () => import("./telemetry/test"),
+    configure: () => import("./telemetry/configure"),
+  },
+  smart: {
+    status: () => import("./smart/status"),
+    on: () => import("./smart/on"),
+    off: () => import("./smart/off"),
+    auto: () => import("./smart/auto"),
+  },
+  routing: {
+    status: () => import("./routing/status"),
+    explain: () => import("./routing/explain"),
+    test: () => import("./routing/test"),
+    capability: {
+      inspect: () => import("./routing/capability/inspect"),
+    },
+  },
 })
 
 Runtime.run(Commands, Handlers, { version: "local" }).pipe(
