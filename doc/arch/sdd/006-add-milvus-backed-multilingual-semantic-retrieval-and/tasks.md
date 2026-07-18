@@ -507,7 +507,7 @@ vocabulary is enforced (see the Traceability reconciliation note).
   rejection) through injected ports (FR12, FR24, FR31, FR32, FR33, C12, C17, C20, AC7, AC8, AC9,
   AC29, AC31, AC32, AC33, AC36, AC38, AC41). Acceptance: `bun test packages/opencode` green with
   every degradation, cutover, and SSRF/DNS point asserted.
-- [ ] T044 [S25] Add contract and end-to-end tests through the Feature 007 sandbox covering the
+- [x] T044 [S25] Add contract and end-to-end tests through the Feature 007 sandbox covering the
   30 `semantic.*` IDs versus the existing reserved catalog (already at 1.3.0) with reserved-ID
   collision rejection, surface parity (same binding select/validate from Settings/palette/slash/
   CLI yields the same effective binding/version/audit with zero admin transcript injection and
