@@ -70,9 +70,10 @@ Checkbox backlog (details under each group below). All Phase 1 items start unche
 - [x] T051 — Commit unit: persistence + secrets + audit
 - [x] T052 — Commit unit: API SDK CLI TUI
 - [x] T053 — Commit unit: flags migration security
-- [ ] T090 — App Settings parity
-- [ ] T091 — Desktop Settings parity
-- [ ] T092 — Multi-user / vault / non-loopback API
+- **DEFERRED/CANCELLED for V1 (Phase 2 backlog — not open Phase 1 work):**
+  - T090 — App Settings parity
+  - T091 — Desktop Settings parity
+  - T092 — Multi-user / vault / non-loopback API
 
 ---
 
@@ -581,22 +582,29 @@ Checkbox backlog (details under each group below). All Phase 1 items start unche
 
 ---
 
-## Group O — Phase 2 deferred (explicit; do not start in Phase 1)
+## Group O — Phase 2 deferred/cancelled for V1 (explicit; do not start in Phase 1)
 
-- [ ] **T090 — App Settings parity**
+These are **not** open Phase 1 checkboxes. Per approved V1 (spec Out of Scope, ADR-0003,
+reserved-catalog-v1 Phase 2 table), they are **deferred/cancelled for Feature 007 V1**
+and remain Phase 2 backlog only.
+
+- **T090 — App Settings parity** — status: **deferred/cancelled for V1**
 - **Depends:** Phase 1 complete (T037+)
 - **Deliverable:** App invokes same command IDs
-- **Acceptance:** deferred
+- **Acceptance:** deferred/cancelled for V1 (Phase 2)
+- **Evidence (2026-07-17 FINAL):** not Phase 1 incomplete; reserved-catalog-v1.md + ADR-0003 + spec Out of Scope
 
-- [ ] **T091 — Desktop Settings parity**
+- **T091 — Desktop Settings parity** — status: **deferred/cancelled for V1**
 - **Depends:** T090
 - **Deliverable:** Desktop parity
-- **Acceptance:** deferred
+- **Acceptance:** deferred/cancelled for V1 (Phase 2)
+- **Evidence (2026-07-17 FINAL):** depends on T090; not Phase 1 surface
 
-- [ ] **T092 — Multi-user / vault / non-loopback API**
+- **T092 — Multi-user / vault / non-loopback API** — status: **deferred/cancelled for V1**
 - **Depends:** new ADR
 - **Deliverable:** out of Feature 007 V1
-- **Acceptance:** deferred
+- **Acceptance:** deferred/cancelled for V1 (Phase 2 + future ADR)
+- **Evidence (2026-07-17 FINAL):** multi-user/vault/non-loopback require new ADR; V1 local single-user + loopback only
 
 ---
 
