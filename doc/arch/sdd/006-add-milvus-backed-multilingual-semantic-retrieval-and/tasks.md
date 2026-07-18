@@ -196,7 +196,7 @@ vocabulary is enforced (see the Traceability reconciliation note).
   `binding_state_changed` members out of the durable set, so no second event authority is
   introduced (C22). Acceptance: `bun test packages/schema` durable-manifest test green with
   the nine durable semantic members present and the three live members absent.
-- [ ] T014 [S5] Author `packages/protocol/src/semantic/ports.ts`,
+- [x] T014 [S5] Author `packages/protocol/src/semantic/ports.ts`,
   `packages/protocol/src/semantic/commands.ts`, and `packages/protocol/src/semantic/index.ts`
   mirroring `contracts/ports.ts`: the `ProviderPort`, `ModelPort`, `BindingPort`, `IndexPort`,
   `RetrievalPort`, and `EvalPort` interfaces, the provider/model/binding/index-generation/
