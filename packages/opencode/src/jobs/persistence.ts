@@ -114,6 +114,25 @@ const asDecodeFailed = (error: unknown): JobPersistenceError => ({
   reason: error instanceof Error ? error.message : String(error),
 })
 
+/**
+ * Scan an encoded `JobDefinition` for plaintext secrets while tolerating the
+ * schema's own structural `authorization` sub-struct. The canonical Feature 007
+ * scanner treats a field literally named `authorization` as sensitive
+ * (`SECRET_FIELD_NAMES`), which mis-fires on the definition's `authorization`
+ * object and would reject every valid definition. We scan the rest of the
+ * document whole and the `authorization` sub-tree by its CONTENTS (so a plaintext
+ * secret smuggled inside is still caught), never on the container's name.
+ */
+function scanForPlaintext(encoded: unknown): string[] {
+  if (encoded === null || typeof encoded !== "object" || Array.isArray(encoded)) {
+    return findPlaintextSecretFields(encoded)
+  }
+  const rest: Record<string, unknown> = { ...(encoded as Record<string, unknown>) }
+  const authorization = rest["authorization"]
+  delete rest["authorization"]
+  return [...findPlaintextSecretFields(rest), ...findPlaintextSecretFields(authorization, "authorization")]
+}
+
 // =============================================================================
 // Factory
 // =============================================================================
@@ -204,7 +223,7 @@ export function createJobPersistence(deps: JobPersistenceDeps): JobPersistence {
       const encoded = yield* encodeDefinition(definition).pipe(Effect.mapError(asDecodeFailed))
       // Never-plaintext invariant: only opaque SecretRef/PayloadRef handles may be
       // persisted; a plaintext secret field aborts the write (Security 3, C10).
-      const leaks = findPlaintextSecretFields(encoded)
+      const leaks = scanForPlaintext(encoded)
       if (leaks.length > 0) return yield* Effect.fail<JobPersistenceError>({ type: "plaintext_secret", fields: leaks })
 
       const nowMs = clock()
