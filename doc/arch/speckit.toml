@@ -156,6 +156,39 @@ specScopeGlobs = [
   "packages/cli/src/**/jobs/**",
   "packages/core/test/jobs/**",
   "packages/opencode/test/jobs/**",
+
+  # Feature 004 implement-phase paths (T001-T042): langlock schema/protocol
+  # modules, the framework-free domain policy/detection engine, application
+  # enforcement seams, operator langlock.* command impls, CLI op-langlock verbs,
+  # the TUI Lang Lock panel, and the langlock test suites. Narrow, file-exact
+  # globs. Shared seams already in scope and NOT duplicated:
+  #   packages/opencode/src/event-v2-bridge.ts (Feature 001) — publishLangLockEvent;
+  #   packages/opencode/src/agent/agent.ts (Feature 001) — reapply injection after transform;
+  #   packages/schema/src/durable-event-manifest.ts + packages/core/src/event.ts
+  #     + packages/core/src/operator/** + packages/core/test/operator/**
+  #     + packages/opencode/src/operator/** + packages/opencode/test/operator/**
+  #     (Feature 007) — durable manifest, EventV2 authority, reserved langlock.*
+  #     catalog (already present at RESERVED_CATALOG_VERSION; no bump), and the
+  #     operator/langlock command impls;
+  #   packages/tui/src/**/operator/** + packages/tui/src/**/settings/** (Feature 007)
+  #     — Lang Lock panel and Settings row;
+  #   packages/schema/src/index.ts + packages/schema/test/** (Feature 001),
+  #   packages/protocol/test/** (Feature 001) — schema barrel + schema/protocol tests.
+  "packages/schema/src/langlock/**",
+  "packages/protocol/src/langlock/**",
+  "packages/core/src/langlock/**",
+  "packages/opencode/src/langlock/**",
+  "packages/opencode/src/operator/langlock/**",
+  "packages/cli/src/**/langlock/**",
+  "packages/tui/src/**/operator/langlock/**",
+  "packages/schema/test/langlock/**",
+  "packages/protocol/test/langlock/**",
+  "packages/core/test/langlock/**",
+  "packages/opencode/test/langlock/**",
+  # Existing shared seams extended (already in scope; listed for traceability):
+  # "packages/opencode/src/session/llm/request.ts",   # reapply injection after transform
+  # "packages/opencode/src/agent/agent.ts",           # reapply injection after transform
+  # "packages/opencode/src/event-v2-bridge.ts",       # publishLangLockEvent
 ]
 
 # Waivers for intentional near-empty files (warnings only; errors are never
