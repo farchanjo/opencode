@@ -155,14 +155,14 @@ schema modules so a single vocabulary is enforced (see the Traceability note).
 
 ### Domain policy and detection engine (Phase 2)
 
-- [ ] T016 [S5] Author `packages/core/src/langlock/tag-validation.ts` validating a
+- [x] T016 [S5] Author `packages/core/src/langlock/tag-validation.ts` validating a
   candidate tag through `Intl.getCanonicalLocales` plus the allowlist over the injected
   `AllowlistPort`, rejecting a non-canonical or non-allowlisted tag, and mapping a
   canonical tag to its human/native `DisplayName` without ever surfacing the tag as the
   primary picker label, mirroring `allowlist.cue`/`tag-validation` semantics (FR4,
   Security 2, C13, AC3, AC16). Acceptance: `bun test packages/core` covers canonical
   accept, non-allowlisted reject, and display-name mapping with no I/O.
-- [ ] T017 [S6] Author `packages/core/src/langlock/policy-resolution.ts` resolving the
+- [x] T017 [S6] Author `packages/core/src/langlock/policy-resolution.ts` resolving the
   global base then a project override over the injected policy port, applying the
   hard-policy-floor guard so a project override is `applied` only when authorized and
   the floor is not relaxed and otherwise the global value is `retained`, and emitting a
@@ -170,7 +170,7 @@ schema modules so a single vocabulary is enforced (see the Traceability note).
   the `policy.cue` resolution statechart (FR5, FR24, C2, AC5, AC6). Acceptance:
   `bun test packages/core` covers authorized-apply, unauthorized-retain, and
   floor-violation-retain with a deterministic port.
-- [ ] T018 [S7] Author `packages/core/src/langlock/path-kind.ts` classifying a write
+- [x] T018 [S7] Author `packages/core/src/langlock/path-kind.ts` classifying a write
   target as prose (`prose_markdown`/`docs`/`instruction_file`/`commit_text`),
   `generic_code`, or `exempt`, exposing the advisory-eligibility rule so generic code
   and identifiers/filenames/quoted content are never advisory targets and only
@@ -178,21 +178,21 @@ schema modules so a single vocabulary is enforced (see the Traceability note).
   semantics (FR8, FR10, FR13, FR20, C5, C12, AC11, AC20). Acceptance:
   `bun test packages/core` asserts prose kinds are eligible, `generic_code` is never
   eligible, and exempt paths are excluded.
-- [ ] T019 [S8] Author `packages/core/src/langlock/advisory-detector.ts` implementing the
+- [x] T019 [S8] Author `packages/core/src/langlock/advisory-detector.ts` implementing the
   deterministic language-signal contract over the injected `DetectorPort`: it produces a
   `ConfidenceBucket` plus `DetectorProvenance` for an eligible prose kind, records an
   `unknown` outcome on detector failure that never blocks the prompt/execution/tool hot
   path, and never issues a translation-model call, mirroring `detection.cue` (FR16, FR21,
   C5, C6, AC8, AC11). Acceptance: `bun test packages/core` covers flag-on-mismatch,
   compliant-on-match, and unknown-on-failure without blocking.
-- [ ] T020 [S9] Author `packages/core/src/langlock/exception-matcher.ts` matching a write
+- [x] T020 [S9] Author `packages/core/src/langlock/exception-matcher.ts` matching a write
   target against the operator-owned `ExceptionManifest`
   (i18n/vendor/lockfile/legal/external-contract/golden/exact) over the injected manifest
   port, returning a bounded `matched`/`denied` result, and rejecting any untrusted
   LLM/plugin/prompt attempt to create an exemption, mirroring `exception.cue` (FR14, FR15,
   Security 6, C16, AC9, AC10, AC18). Acceptance: `bun test packages/core` covers a manifest
   match, a non-match deny, and an untrusted-create rejection.
-- [ ] T021 [S15] Author `packages/core/src/langlock/event-bus.ts` registering one
+- [x] T021 [S15] Author `packages/core/src/langlock/event-bus.ts` registering one
   `EventV2.define` `Definition` per `langlock.*` member via `dataFields(Member.fields)`
   with `durable {version, aggregate}` on the six durable audit members and no `durable`
   annotation on the live advisory/injection/resolution members, exposing no raw tagged
@@ -200,12 +200,12 @@ schema modules so a single vocabulary is enforced (see the Traceability note).
   sequence)` reusing the Feature 002 dedupe posture so audit and advisory events are
   never coalesced or dropped (FR27, C8, AC14). Acceptance: `bun test packages/core`
   asserts the durable-versus-live split and idempotent projection.
-- [ ] T022 [S15] Extend `packages/opencode/src/event-v2-bridge.ts` with
+- [x] T022 [S15] Extend `packages/opencode/src/event-v2-bridge.ts` with
   `publishLangLockEvent` mirroring `publishLifecycleEvent`/`publishJobEvent` (location
   attach, single publish boundary) so `langlock.*` events ride the existing bridge and
   no second channel exists (C8). Acceptance: `bun test packages/opencode` asserts a
   published langlock audit event reaches the bridge boundary once.
-- [ ] T023 [S17] Author `packages/core/src/langlock/langlock-instruments.ts` adding the
+- [x] T023 [S17] Author `packages/core/src/langlock/langlock-instruments.ts` adding the
   `langlock.resolve|inject|stamp|detect|audit` spans linked to the Feature 001
   session-execution/LLM/tool spans, the enabled-state / effective-tag (allowlisted enum)
   / scope / origin / enforcement-mode / path-kind / advisory-count / confidence-bucket /
@@ -214,7 +214,7 @@ schema modules so a single vocabulary is enforced (see the Traceability note).
   over-budget values map to `other`; async bounded export never blocks the hot path)
   (Observability, FR27, C8, AC14). Acceptance: `bun test packages/core` cardinality audit
   asserts no id appears as a metric label.
-- [ ] T024 [S5–S17] Author the barrel `packages/core/src/langlock/index.ts` re-exporting
+- [x] T024 [S5–S17] Author the barrel `packages/core/src/langlock/index.ts` re-exporting
   the tag-validation, policy-resolution, path-kind, advisory-detector, exception-matcher,
   event-bus, and instruments modules. Acceptance: `tsgo --noEmit` on `packages/core` green
   and the barrel imports without a duplicate-export error.
