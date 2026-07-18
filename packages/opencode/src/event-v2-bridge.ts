@@ -11,6 +11,7 @@ import { Context, Effect, Layer } from "effect"
 import { Events } from "@opencode-ai/schema/routing/events"
 import { EventBus as LifecycleEventBus } from "@opencode-ai/core/lifecycle/event-bus"
 import { Events as LifecycleEvents } from "@opencode-ai/schema/lifecycle/events"
+import { TodoEvents } from "@opencode-ai/schema/lifecycle/todo-events"
 
 // =============================================================================
 // Feature 001 / T031 — routing, hierarchy and capability EventV2 definitions
@@ -73,6 +74,62 @@ export const RoutingEventDefinitions = {
   "todo.completion_blocked": TodoCompletionBlockedDefinition,
 } as const
 
+// =============================================================================
+// Feature 002 / T032 — session-owned `todo.*` EventV2 definitions
+// =============================================================================
+//
+// The seven session-owned Todo lifecycle members (`@opencode-ai/schema/
+// lifecycle/todo-events`, T011, FR58m, C23-C25) are DISTINCT from the Feature
+// 001 `todo.initialized` / `todo.completion_blocked` events (which Feature 002
+// consumes read-only above). They follow the flat Feature 001 todo event shape
+// (`{ pointer, counts }`) rather than the 26-member lifecycle envelope union,
+// and — like the Feature 001 todo members — carry NO durable annotation: the
+// schema `TodoEvents` module never joins the durable-event-manifest, so every
+// member is a LIVE signal, published without a committed sequence (C4). Each
+// gets its own `EventV2.define` Definition reusing the schema owner's field
+// shapes (`.fields`, minus the redundant `type` literal) so the wire shape can
+// never drift from the schema.
+
+const TodoUpdatedDefinition = EventV2.define({
+  type: "todo.updated",
+  schema: dataFields(TodoEvents.TodoUpdatedEvent.fields),
+})
+const TodoCompletedDefinition = EventV2.define({
+  type: "todo.completed",
+  schema: dataFields(TodoEvents.TodoCompletedEvent.fields),
+})
+const TodoFailedDefinition = EventV2.define({
+  type: "todo.failed",
+  schema: dataFields(TodoEvents.TodoFailedEvent.fields),
+})
+const TodoCancelledDefinition = EventV2.define({
+  type: "todo.cancelled",
+  schema: dataFields(TodoEvents.TodoCancelledEvent.fields),
+})
+const TodoStaleDefinition = EventV2.define({
+  type: "todo.stale",
+  schema: dataFields(TodoEvents.TodoStaleEvent.fields),
+})
+const TodoRehydratedDefinition = EventV2.define({
+  type: "todo.rehydrated",
+  schema: dataFields(TodoEvents.TodoRehydratedEvent.fields),
+})
+const TodoHandoffAttachedDefinition = EventV2.define({
+  type: "todo.handoff_attached",
+  schema: dataFields(TodoEvents.TodoHandoffAttachedEvent.fields),
+})
+
+/** Public Definitions for the Feature 002 session-owned `todo.*` members, keyed by `type`. */
+export const TodoEventDefinitions = {
+  "todo.updated": TodoUpdatedDefinition,
+  "todo.completed": TodoCompletedDefinition,
+  "todo.failed": TodoFailedDefinition,
+  "todo.cancelled": TodoCancelledDefinition,
+  "todo.stale": TodoStaleDefinition,
+  "todo.rehydrated": TodoRehydratedDefinition,
+  "todo.handoff_attached": TodoHandoffAttachedDefinition,
+} as const
+
 export interface Interface extends EventV2.Interface {
   /**
    * Feature 001 / T031 — bridge one `Events.RoutingEvent` member onto the
@@ -96,6 +153,20 @@ export interface Interface extends EventV2.Interface {
    */
   readonly publishLifecycleEvent: (
     event: LifecycleEvents.LifecycleEvent,
+    options?: EventV2.PublishOptions,
+  ) => Effect.Effect<EventV2.Payload>
+
+  /**
+   * Feature 002 / T032 — bridge one `TodoEvents.TodoEvent` member (the closed
+   * seven-member session-owned Todo vocabulary, `packages/schema/src/lifecycle/
+   * todo-events.ts`, FR58m) onto the EventV2 bus through the location-aware
+   * `publish` above, mirroring `publishLifecycleEvent`. Each member publishes
+   * through its own live wire `Definition`; no raw tagged union is ever wired to
+   * the bus (C2). These members carry no durable annotation (C4), so none commits
+   * a sequence.
+   */
+  readonly publishTodoEvent: (
+    event: TodoEvents.TodoEvent,
     options?: EventV2.PublishOptions,
   ) => Effect.Effect<EventV2.Payload>
 }
@@ -275,6 +346,43 @@ const layer = Layer.effect(
       }
     }
 
+    // Feature 002 / T032 — one arm per session-owned Todo member (FR58m). All
+    // seven are live (C4): none carries a durable annotation, so none commits a
+    // sequence. The pointer/counts payload never carries objective/item/handoff
+    // text (Feature 004 Lang Lock governs text; it is projected elsewhere).
+    const publishTodoEvent: Interface["publishTodoEvent"] = (event, options) => {
+      switch (event.type) {
+        case "todo.updated": {
+          const { type: _drop, ...data } = event
+          return publish(TodoUpdatedDefinition, data, options)
+        }
+        case "todo.completed": {
+          const { type: _drop, ...data } = event
+          return publish(TodoCompletedDefinition, data, options)
+        }
+        case "todo.failed": {
+          const { type: _drop, ...data } = event
+          return publish(TodoFailedDefinition, data, options)
+        }
+        case "todo.cancelled": {
+          const { type: _drop, ...data } = event
+          return publish(TodoCancelledDefinition, data, options)
+        }
+        case "todo.stale": {
+          const { type: _drop, ...data } = event
+          return publish(TodoStaleDefinition, data, options)
+        }
+        case "todo.rehydrated": {
+          const { type: _drop, ...data } = event
+          return publish(TodoRehydratedDefinition, data, options)
+        }
+        case "todo.handoff_attached": {
+          const { type: _drop, ...data } = event
+          return publish(TodoHandoffAttachedDefinition, data, options)
+        }
+      }
+    }
+
     const unsubscribe = yield* events.listen((event) =>
       Effect.gen(function* () {
         const ctx = yield* InstanceRef
@@ -305,7 +413,7 @@ const layer = Layer.effect(
     )
     yield* Effect.addFinalizer(() => unsubscribe)
 
-    return Service.of({ ...events, publish, publishRoutingEvent, publishLifecycleEvent })
+    return Service.of({ ...events, publish, publishRoutingEvent, publishLifecycleEvent, publishTodoEvent })
   }),
 )
 

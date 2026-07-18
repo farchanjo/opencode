@@ -42,6 +42,7 @@ import { createTaskAnalyzer } from "@/routing/application/task-analyzer"
 import { createOtlpAdapter, createRoutingDecisionTelemetry } from "@/routing/adapters/outbound/otlp-adapter"
 import { resolveEffectiveTelemetryConfig } from "@/routing/application/telemetry-service"
 import { createLiveOperatorOtelRecorder } from "./adapters/outbound/otel-live"
+import { LifecycleStackWiring } from "./lifecycle/stack-wiring"
 import { createDispatcher, type Dispatcher } from "./application/dispatcher"
 import type { MutationPorts } from "./application/mutation"
 import { createFlockLockPort } from "./application/ports/lock-port"
@@ -323,8 +324,18 @@ export async function createLiveOperatorStack(input: CreateLiveOperatorStackInpu
     telemetry: routingTelemetry,
   })
 
+  // === Feature 002 — lifecycle domain port composition ======================
+  // Real seams over the single EventV2 authority: a live runtime ProcessTable
+  // fed by a bounded EventBus.subscribeBounded subscription + EventV2 durable
+  // read/prune, the real AdmissionController and shared Watchdog cadence, native
+  // root cancel over the canonical Session.Service.interrupt seam (C17), handoff
+  // over the emit seam (C16), and observation over the live subscription (C14).
+  // Feature 007 stays the sole command-registration authority — these overrides
+  // replace the not_implemented process/task stubs and add no ids.
+  const lifecycleWiring = await LifecycleStackWiring.createLifecycleDomainWiring()
+
   const domainPorts = wireDomainPorts(
-    { routing: createRoutingDomainPort(routingService) },
+    { ...lifecycleWiring.ports, routing: createRoutingDomainPort(routingService) },
     { dnsResolver },
   )
   const dispatcher = createDispatcher({
@@ -363,7 +374,10 @@ export async function createLiveOperatorStack(input: CreateLiveOperatorStackInpu
     config,
     resolveFeatureEnabled,
     resolveConnectivity: resolveConnectivityLive,
-    dispose: () => maintenance.dispose(),
+    dispose: () => {
+      lifecycleWiring.dispose()
+      maintenance.dispose()
+    },
   }
 }
 
