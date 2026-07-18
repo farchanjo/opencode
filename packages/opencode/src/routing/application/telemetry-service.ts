@@ -340,6 +340,27 @@ export function parseTelemetrySecretRef(raw: string): { backend: SecretBackend; 
   return { backend: "env-ref", name: trimmed }
 }
 
+/**
+ * Resolve the effective telemetry configuration outside the service closure —
+ * project scope shadows global scope shadows the safe disabled default — so the
+ * composition root can build the OTLP sink from the same source of truth the
+ * TelemetryPort uses. Offline-capable, zero-cost, never throws on a malformed
+ * entry (falls through to the next scope / default).
+ */
+export async function resolveEffectiveTelemetryConfig(config: ConfigPort): Promise<TelemetryConfig> {
+  for (const scope of ["project", "global"] as const) {
+    let parsed: TelemetryConfig | null = null
+    try {
+      const entry = await config.get(AUTHORITY[scope])
+      parsed = entry ? parseConfig(entry.payload) : null
+    } catch {
+      parsed = null
+    }
+    if (parsed) return parsed
+  }
+  return DEFAULT_TELEMETRY_CONFIG
+}
+
 export function createTelemetryService(deps: TelemetryServiceDeps): TelemetryPort {
   const now = deps.now ?? Date.now
 

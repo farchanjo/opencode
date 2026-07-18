@@ -25,6 +25,7 @@ import type { QueueSignal } from "@opencode-ai/core/observability/otlp"
 import type { TelemetryConfig } from "@opencode-ai/schema/telemetry/config"
 import type { ExportHealth } from "@opencode-ai/protocol/telemetry/index"
 import type { SecretPort } from "@/operator/application/ports/secret-port"
+import type { RoutingTelemetry } from "@/routing/application/ports"
 import {
   redactAttributes,
   redactionPolicyFromConfig,
@@ -184,6 +185,38 @@ export function createOtlpAdapter(options: OtlpAdapterOptions): OtlpAdapter {
       return transport.probe()
     },
     flush,
+  }
+}
+
+/**
+ * Bridge the routing service's non-blocking `RoutingTelemetry` sink onto the
+ * OTLP adapter's `offer`. Each committed decision becomes one redacted,
+ * structured `routing.decision` metrics signal — never a prompt, secret, file
+ * path or tool payload. `recordDecision` MUST never throw into the routing hot
+ * path (plan.md "hot paths never block on telemetry"), so the offer is wrapped
+ * defensively; when telemetry is disabled the offer is a signal-gated no-op.
+ */
+export function createRoutingDecisionTelemetry(sink: Pick<OtlpAdapter, "offer">): RoutingTelemetry {
+  return {
+    recordDecision(event) {
+      try {
+        sink.offer({
+          kind: "metrics",
+          name: "routing.decision",
+          attributes: {
+            "routing.decision.id": event.decisionId,
+            "routing.task_class": event.taskClass,
+            "routing.routing_profile": event.routingProfile,
+            "routing.authorized_count": event.authorizedCount,
+            "routing.decision_model_called": event.decisionModelCalled,
+            "routing.latency_ms": event.latencyMs,
+            "routing.offline": event.offline,
+          },
+        })
+      } catch {
+        /* telemetry never blocks or breaks the routing hot path */
+      }
+    },
   }
 }
 
