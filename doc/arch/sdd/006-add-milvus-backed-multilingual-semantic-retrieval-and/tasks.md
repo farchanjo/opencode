@@ -264,14 +264,14 @@ vocabulary is enforced (see the Traceability reconciliation note).
   mirroring the C14/C20 ladder (FR7, FR24, FR25, FR26, FR38, C14, C20). Acceptance: `bun test
   packages/core` covers each gap code, catalog+lexical floor without model substitution,
   fail-closed opt-in, and bounded retry on the same binding.
-- [ ] T020 [S11] Author `packages/core/src/semantic/query-cache.ts` deriving the query
+- [x] T020 [S11] Author `packages/core/src/semantic/query-cache.ts` deriving the query
   embedding once per logical Task from the structured profile, keying it by task
   fingerprint/version, reusing it across the agent and skill passes while valid, and
   invalidating by binding version and config hash with no per-token/per-turn remote loop,
   mirroring `profile.cue` and the C10 contract (FR18, FR25, NFR4, C10). Acceptance: `bun test
   packages/core` asserts one embed per fingerprint reused across passes, invalidation on
   binding-version or config-hash change, and no re-embed per token.
-- [ ] T021 [S12] Author `packages/core/src/semantic/freshness-gate.ts` implementing the
+- [x] T021 [S12] Author `packages/core/src/semantic/freshness-gate.ts` implementing the
   freshness/stale-confidence gate and the post-retrieval revalidation contract so every
   candidate is revalidated against live AgentV2/SkillV2/Permission before injection — a
   disabled agent or a removed/over-permission skill from a stale index is dropped, a
