@@ -402,7 +402,7 @@ sourcing its enum members from the schema modules so a single vocabulary is enfo
   reconnect, working offline, and making zero provider/model calls with no path exposure
   (FR41, FR42, C19, C23, AC13). Acceptance: `bun test packages/cli` asserts human and JSON
   output, cursor-resumed follow, and no model call or path in output.
-- [ ] T039 [S26] Author `packages/tui/src/**/operator/output/**` rendering the paged
+- [x] T039 [S26] Author `packages/tui/src/**/operator/output/**` rendering the paged
   read/follow/tail panel over `output.stat`/`output.read`/`output.follow` as a thin adapter
   over the Feature 007 registry with registry-generated names, loading content only on
   authorized expand/read (never the complete output by default), resuming from an opaque
