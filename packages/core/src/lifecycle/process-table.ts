@@ -80,11 +80,31 @@ export interface RowOwnership {
   readonly actor_kind: ActorKind
 }
 
-/** State/reason/settlement plus lifecycle timestamps (FR26, C20). */
+/**
+ * A bounded output reference (Feature 002 / T030, C20, FR64). Feature 005 owns
+ * the content plane (seal/abort/committed-byte/settlement); this row carries only
+ * the opaque `OutputRef` and an optional resume `cursor` — complete output bytes
+ * are NEVER loaded into the row by default (FR58). Feature 002 never resolves the
+ * ref to content.
+ */
+export interface BoundedOutputRef {
+  readonly ref: string
+  readonly cursor: string | null
+}
+
+/** State/reason/settlement plus lifecycle timestamps and the bounded output ref (FR26, C20). */
 export interface RowStatus {
   readonly state: ProcessState
   readonly reason: TerminalReason | null
+  /**
+   * Terminal-versus-settlement sub-state (C20, FR64). A `completed` row enters
+   * `settling` and is NEVER marked terminal-as-successfully-settled until
+   * Feature 005 reports settlement via `applySettlement` (which alone may set
+   * `settled`/`unknown`/`corrupt`). Non-success terminals leave this `null`.
+   */
   readonly settlement: SettlementState | null
+  /** Bounded Feature 005 output reference/cursor, projected only via `applySettlement` (C20). */
+  readonly output_ref: BoundedOutputRef | null
   readonly created_at: RowTimestamp
   readonly updated_at: RowTimestamp
   readonly terminal_at: RowTimestamp | null
@@ -97,6 +117,29 @@ export interface RowHierarchy {
   readonly route_path: ReadonlyArray<SessionId>
   readonly fanout: { readonly requested: FanoutCount; readonly granted: FanoutCount }
   readonly validation_outcome: ValidationOutcome | null
+}
+
+/** Todo-projection consistency observed on the row (Feature 002 / T032, C23-C25). */
+export type TodoConsistency = "consistent" | "blocked" | "stale"
+
+/** Aggregate Todo outcome projected onto the row; distinct from item status (C23). */
+export type TodoOutcome = "completed" | "failed" | "cancelled"
+
+/**
+ * Read-only Todo projection on the row (T032, FR58k, C23-C25). The Process Table
+ * OBSERVES the Session-owned Todo pointer/version/counts and never mutates any
+ * Todo. It carries the bounded ref/version, bounded counts, the completion-gate
+ * consistency, and the aggregate outcome only — never objective/item/handoff
+ * text, which follows Feature 004 Lang Lock and is projected elsewhere (FR58m).
+ */
+export interface RowTodo {
+  readonly todo_ref: string
+  readonly todo_version: string
+  readonly item_count: number
+  readonly completed_count: number
+  readonly pending_count: number
+  readonly consistency: TodoConsistency
+  readonly outcome: TodoOutcome | null
 }
 
 /**
@@ -113,6 +156,8 @@ export interface ProcessTableRow {
   readonly ownership: RowOwnership
   readonly status: RowStatus
   readonly hierarchy: RowHierarchy | null
+  /** Read-only observed Todo projection, present only after a Todo event is projected (T032). */
+  readonly todo: RowTodo | null
   /** Anomalies surfaced while projecting events onto this row, never invented state (C9). */
   readonly anomalies: ReadonlyArray<AnomalyRecord>
   /** Monotonic order in which the row became terminal; used for bounded retention only. */
@@ -168,6 +213,36 @@ export interface RebuildAudit {
 }
 
 /**
+ * A settlement report from Feature 005 (T030, C20, FR64). Feature 005 is the
+ * SOLE authority that may move a terminal-`completed` row out of `settling` into
+ * `settled`/`unknown`/`corrupt`; Feature 002 never fabricates a settled verdict.
+ * The bounded `output_ref` carries only the opaque ref + resume cursor.
+ */
+export interface SettlementReport {
+  readonly process_id: ProcessId
+  readonly settlement: SettlementState
+  readonly output_ref?: BoundedOutputRef | null
+}
+
+/**
+ * A read-only Todo projection patch (T032, FR58k, C23-C25). Every field except
+ * `session_id` is optional so a partial signal (e.g. Feature 001
+ * `todo.completion_blocked`, which carries no ref) merges onto the existing row
+ * Todo without inventing a pointer. Projection is confined to `session_id`'s
+ * rows — sibling Sessions are never touched (sibling isolation).
+ */
+export interface TodoProjectionPatch {
+  readonly session_id: SessionId
+  readonly todo_ref?: string
+  readonly todo_version?: string
+  readonly item_count?: number
+  readonly completed_count?: number
+  readonly pending_count?: number
+  readonly consistency?: TodoConsistency
+  readonly outcome?: TodoOutcome | null
+}
+
+/**
  * The Process Table: a stateful in-memory projection. Read access is `get`,
  * `rootProcesses`, and `sessionProcesses`; write access is only the event fold
  * (`applyEvent`/`rebuild`) plus restart reconciliation and retention. It never
@@ -193,6 +268,25 @@ export interface ProcessTable {
   readonly reconcileRestart: (
     resolve: (row: ProcessTableRow) => Pick<ReconciliationInput, "owner_present" | "from_version" | "durable_version">,
   ) => ReadonlyArray<ReconcileRecord>
+  /**
+   * Project a Feature 005 settlement report onto a terminal row (T030, C20,
+   * FR64). Applies only to an existing TERMINAL row; a missing or non-terminal
+   * row is a no-op (`applied: false`) — a settlement verdict is never invented
+   * for a still-running Task. Projects the bounded `output_ref` (ref + cursor)
+   * only; complete output bytes are never loaded (FR58).
+   */
+  readonly applySettlement: (report: SettlementReport) => {
+    readonly applied: boolean
+    readonly row: ProcessTableRow | undefined
+  }
+  /**
+   * Project a read-only Todo pointer/version/counts/consistency/outcome onto the
+   * rows of ONE Session (T032, FR58k, C23-C25). Merges the patch onto each
+   * matching row's existing Todo projection; no Todo aggregate is ever mutated,
+   * and only `session_id`'s rows are touched (sibling isolation). Returns how
+   * many rows were updated.
+   */
+  readonly applyTodoProjection: (patch: TodoProjectionPatch) => { readonly updated: number }
   /** Plan bounded retention for a root without mutating the table (FR27). */
   readonly planRetention: (rootId: RootProcessId, policy?: RetentionPolicy) => RetentionAudit
   /** Drop the planned rows from memory; the adapter prunes the durable aggregate separately. */
@@ -245,11 +339,13 @@ export const createProcessTable = (projector: Projector = createProjector()): Pr
       state: "created",
       reason: null,
       settlement: null,
+      output_ref: null,
       created_at: envelope.delivery.timestamp,
       updated_at: envelope.delivery.timestamp,
       terminal_at: null,
     },
     hierarchy: mapHierarchy(envelope),
+    todo: null,
     anomalies: [],
     terminal_order: null,
   })
@@ -260,6 +356,10 @@ export const createProcessTable = (projector: Projector = createProjector()): Pr
     nextState: ProcessState,
   ): ProcessTableRow => {
     const becameTerminal = StateMachine.isTerminal(nextState) && !StateMachine.isTerminal(row.status.state)
+    // C20/FR64: a row becoming terminal-`completed` is NOT settled — it enters
+    // `settling` and waits for Feature 005 to report settlement via
+    // `applySettlement`. Non-success terminals make no settlement claim (null).
+    const settlement = becameTerminal && nextState === "completed" ? "settling" : row.status.settlement
     return {
       ...row,
       hierarchy: mapHierarchy(envelope) ?? row.hierarchy,
@@ -267,6 +367,7 @@ export const createProcessTable = (projector: Projector = createProjector()): Pr
         ...row.status,
         state: nextState,
         reason: StateMachine.isTerminal(nextState) ? (TERMINAL_REASON[nextState] ?? row.status.reason) : row.status.reason,
+        settlement,
         updated_at: envelope.delivery.timestamp,
         terminal_at: becameTerminal ? envelope.delivery.timestamp : row.status.terminal_at,
       },
@@ -367,6 +468,46 @@ export const createProcessTable = (projector: Projector = createProjector()): Pr
     return records
   }
 
+  const applySettlement = (report: SettlementReport) => {
+    const row = rows.get(report.process_id)
+    // No row, or a non-terminal row: never invent a settlement verdict (C20).
+    if (!row || !StateMachine.isTerminal(row.status.state)) return { applied: false, row }
+    const settled: ProcessTableRow = {
+      ...row,
+      status: {
+        ...row.status,
+        settlement: report.settlement,
+        output_ref: report.output_ref ?? row.status.output_ref,
+      },
+    }
+    store(settled)
+    return { applied: true, row: settled }
+  }
+
+  const mergeTodo = (current: RowTodo | null, patch: TodoProjectionPatch): RowTodo => ({
+    todo_ref: patch.todo_ref ?? current?.todo_ref ?? "",
+    todo_version: patch.todo_version ?? current?.todo_version ?? "",
+    item_count: patch.item_count ?? current?.item_count ?? 0,
+    completed_count: patch.completed_count ?? current?.completed_count ?? 0,
+    pending_count: patch.pending_count ?? current?.pending_count ?? 0,
+    consistency: patch.consistency ?? current?.consistency ?? "consistent",
+    outcome: patch.outcome !== undefined ? patch.outcome : (current?.outcome ?? null),
+  })
+
+  const applyTodoProjection = (patch: TodoProjectionPatch) => {
+    // Sibling isolation: only rows indexed under this Session are ever touched.
+    const ids = bySession.get(patch.session_id)
+    if (!ids) return { updated: 0 }
+    let updated = 0
+    for (const id of ids) {
+      const row = rows.get(id)
+      if (!row) continue
+      store({ ...row, todo: mergeTodo(row.todo, patch) })
+      updated++
+    }
+    return { updated }
+  }
+
   const planRetention = (rootId: RootProcessId, policy: RetentionPolicy = DEFAULT_RETENTION): RetentionAudit => {
     const terminal = rowsForRoot(rootId)
       .filter((row) => StateMachine.isTerminal(row.status.state) && row.terminal_order !== null)
@@ -413,6 +554,8 @@ export const createProcessTable = (projector: Projector = createProjector()): Pr
       return out
     },
     reconcileRestart,
+    applySettlement,
+    applyTodoProjection,
     planRetention,
     applyRetention,
     snapshot,

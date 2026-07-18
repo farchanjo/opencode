@@ -70,7 +70,7 @@ describe("T037 registry ID parity + palette registration", () => {
   })
 
   test("scope missing session → forbidden_scope", () => {
-    const r = resolveScopeForCommandId("process.pause", { projectId: "p1" })
+    const r = resolveScopeForCommandId("process.cancel", { projectId: "p1" })
     expect(r.ok).toBe(false)
     if (r.ok) return
     expect(r.code).toBe("forbidden_scope")

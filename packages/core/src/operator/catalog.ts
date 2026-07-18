@@ -7,7 +7,7 @@ import type { ScopeKind } from "./scope"
 import type { DescriptorDraft } from "./descriptor"
 
 /** Catalog document version (semver). Additive bumps only. */
-export const RESERVED_CATALOG_VERSION = "1.1.0" as const
+export const RESERVED_CATALOG_VERSION = "1.2.0" as const
 
 export const OPERATOR_DOMAINS = [
   "telemetry",
@@ -93,16 +93,18 @@ const ENTRIES: readonly EntrySpec[] = [
   { id: "pools.reset", mutates: true, scopesAllowed: GP, offlineCapable: true },
   { id: "pools.validate", mutates: false, scopesAllowed: GP, offlineCapable: true },
 
-  // process (session-bound mutate)
+  // process (Feature 002 canonical vocabulary, session scope; C19)
   { id: "process.status", mutates: false, scopesAllowed: SP, offlineCapable: true },
-  { id: "process.list", mutates: false, scopesAllowed: SP, offlineCapable: true },
-  { id: "process.pause", mutates: true, scopesAllowed: S, offlineCapable: true },
-  { id: "process.resume", mutates: true, scopesAllowed: S, offlineCapable: true },
-  { id: "process.kill", mutates: true, scopesAllowed: S, offlineCapable: true },
+  { id: "process.tree", mutates: false, scopesAllowed: SP, offlineCapable: true },
+  { id: "process.watch", mutates: false, scopesAllowed: SP, offlineCapable: true },
+  { id: "process.cancel", mutates: true, scopesAllowed: S, offlineCapable: true },
+  { id: "process.steer", mutates: true, scopesAllowed: S, offlineCapable: true },
+  { id: "process.handoff", mutates: true, scopesAllowed: S, offlineCapable: true },
 
-  // task
+  // task (Feature 002 canonical vocabulary, session scope; C19)
   { id: "task.status", mutates: false, scopesAllowed: SP, offlineCapable: true },
-  { id: "task.list", mutates: false, scopesAllowed: SP, offlineCapable: true },
+  { id: "task.tree", mutates: false, scopesAllowed: SP, offlineCapable: true },
+  { id: "task.watch", mutates: false, scopesAllowed: SP, offlineCapable: true },
   { id: "task.cancel", mutates: true, scopesAllowed: S, offlineCapable: true },
 
   // jobs

@@ -6,7 +6,7 @@ import {
 
 describe("resolveOperatorScope", () => {
   test("session-only descriptor uses session when present", () => {
-    const scope = resolveScopeForCommandId("process.pause", {
+    const scope = resolveScopeForCommandId("process.cancel", {
       projectId: "p1",
       sessionId: "s1",
     })
@@ -16,7 +16,7 @@ describe("resolveOperatorScope", () => {
   })
 
   test("session-only missing sessionId → forbidden_scope (never local)", () => {
-    const scope = resolveScopeForCommandId("process.pause", {
+    const scope = resolveScopeForCommandId("process.cancel", {
       projectId: "p1",
     })
     expect(scope.ok).toBe(false)

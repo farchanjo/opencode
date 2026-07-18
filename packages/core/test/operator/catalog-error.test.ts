@@ -18,11 +18,11 @@ import {
 
 describe("reserved catalog (T007)", () => {
   test("version field present and stable snapshot", () => {
-    expect(RESERVED_CATALOG_VERSION).toBe("1.1.0")
-    expect(catalogVersion()).toBe("1.1.0")
-    expect(RESERVED_CATALOG.version).toBe("1.1.0")
+    expect(RESERVED_CATALOG_VERSION).toBe("1.2.0")
+    expect(catalogVersion()).toBe("1.2.0")
+    expect(RESERVED_CATALOG.version).toBe("1.2.0")
     const snap = reservedCatalogSnapshot()
-    expect(snap.version).toBe("1.1.0")
+    expect(snap.version).toBe("1.2.0")
     expect(snap.domainCount).toBe(12)
     expect(snap.idCount).toBeGreaterThan(50)
   })
