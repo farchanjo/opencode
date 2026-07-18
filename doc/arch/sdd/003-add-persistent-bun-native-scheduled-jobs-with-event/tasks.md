@@ -20,7 +20,7 @@ and the `jobs.*` operator command domain are distinct reserved namespaces (C13).
 
 ### Schema and protocol foundation (Phase 1)
 
-- [ ] T001 [S0] Author `packages/schema/src/jobs/ids.ts` and
+- [x] T001 [S0] Author `packages/schema/src/jobs/ids.ts` and
   `packages/schema/src/jobs/correlation.ts` with the branded identifiers from
   `data-model.md`: `JobDefinitionId`, `ScheduleId`, `OccurrenceId`, `ProcessId`
   (the Feature 002 Task Process id, never an OS PID), `RootProcessId`,
@@ -31,7 +31,7 @@ and the `jobs.*` operator command domain are distinct reserved namespaces (C13).
   .pipe(Schema.brand("Jobs.*"))`), mirroring `ids.cue` and `correlation.cue`
   one-to-one with no cross-feature import; secrets are opaque references only
   (FR1, FR12, Security 3, C1, C6, C10, C16).
-- [ ] T002 [S0] Author `packages/schema/src/jobs/values.ts` and
+- [x] T002 [S0] Author `packages/schema/src/jobs/values.ts` and
   `packages/schema/src/jobs/text-values.ts` with the ordering/version/budget/lag
   counters (`Sequence`, `Attempt`, `Generation`, `SchemaVersion`, `Version`,
   `DeadlineMs`, `TimeoutMs`, `RetryBudget`, `Priority`, `ScheduleLagMs`) and the
@@ -40,14 +40,14 @@ and the `jobs.*` operator command domain are distinct reserved namespaces (C13).
   `SpanId`, `Enabled`, `PermissionSet`), folding `Schema.isInt()` into integer
   checks and excluding raw prompts/results/spool paths/secrets, mirroring
   `values.cue` and `text-values.cue` (FR2, FR19, FR22, FR32, C6, Privacy).
-- [ ] T003 [S1] Author `packages/schema/src/jobs/schedule.ts` with
+- [x] T003 [S1] Author `packages/schema/src/jobs/schedule.ts` with
   `CronExpression` (5-field or supported nickname), `IanaTimezone`,
   `MinimumIntervalMs`, the branded `NominalDueTime` string key (never a decoded
   `DateTime`, so the idempotency tuple has stable identity), and the composite
   `CronSchedule`; the canonical stored form is an IANA timezone plus a 5-field
   cron expression normalized by the occurrence layer, and an unsupported zone is
   rejected before registration, mirroring `schedule.cue` (FR7, C4, AC22).
-- [ ] T004 [S0] Author `packages/schema/src/jobs/enums.ts`,
+- [x] T004 [S0] Author `packages/schema/src/jobs/enums.ts`,
   `enums-event.ts`, `enums-notification.ts`, and `event-types.ts` with the
   closed enums as `Schema.Literals([...])`: `RegistrationState`
   (`pending|registered|unregistered|unknown|reconciled`), `RegistrationIntent`,
@@ -59,14 +59,14 @@ and the `jobs.*` operator command domain are distinct reserved namespaces (C13).
   `job.*` vocabulary, mirroring `enums.cue`, `enums-event.cue`,
   `enums-notification.cue`, and `event-types.cue` (FR6, FR11, FR15, FR16, FR28,
   C3, C5, C9, C13, C19).
-- [ ] T005 [S3] Author `packages/schema/src/jobs/envelope.ts` composing the
+- [x] T005 [S3] Author `packages/schema/src/jobs/envelope.ts` composing the
   bounded sub-structs `EventKind`, `OccurrenceIdentity` (with `process_id` as
   `Schema.NullOr` until the Task Process associates), `TreeIdentity`, `Ordering`
   (per-aggregate `sequence` only; no global order), and `Delivery` (bounded
   `redacted_metadata` record, no prompts/results/payloads/paths/secrets) into
   `JobEnvelope`, mirroring `envelope.cue` and `envelope-parts.cue` (FR12, FR32,
   C6, C16).
-- [ ] T006 [S1] Author `packages/schema/src/jobs/definition.ts` composing
+- [x] T006 [S1] Author `packages/schema/src/jobs/definition.ts` composing
   `DefinitionIdentity`, `DefinitionSchedule`, `DefinitionPolicy`,
   `DefinitionExecution`, and `DefinitionAuthorization` (each within the
   calisthenics field bound) into the durable `JobDefinition` aggregate root with
@@ -75,7 +75,7 @@ and the `jobs.*` operator command domain are distinct reserved namespaces (C13).
   project/root policy, permissions, `SecretRefList` (secure references only), and
   a nullable `payload_ref`, mirroring `definition.cue` and `definition-parts.cue`
   (FR2, FR6, FR28, FR29, FR32, C5, C10).
-- [ ] T007 [S2] Author `packages/schema/src/jobs/occurrence.ts` composing
+- [x] T007 [S2] Author `packages/schema/src/jobs/occurrence.ts` composing
   `IdempotencyKey` (the tuple `(job_definition_id, schedule_id, nominal_due_time,
   generation)`), `OccurrenceLineage` (correlation/causation, session/root,
   `Schema.NullOr` `process_id` until association), `OccurrenceExecution`
@@ -84,14 +84,14 @@ and the `jobs.*` operator command domain are distinct reserved namespaces (C13).
   `schedule_lag_ms` from nominal due, nullable `duplicate_of`) into the
   `JobOccurrence` aggregate root, mirroring `occurrence.cue` and
   `occurrence-parts.cue` (FR8, FR8a, FR10, FR19, C6, C14, C15, AC6).
-- [ ] T008 [S8] Author `packages/schema/src/jobs/reconciliation.ts` with
+- [x] T008 [S8] Author `packages/schema/src/jobs/reconciliation.ts` with
   `AutoRetryDisabled` (`Schema.Literal(false)`), `ScheduleRegistration` (durable
   intent + registration state + capability surface), `OccurrenceReconcile`, and
   `RegistrationReconcile`, each carrying `auto_retry` pinned false so
   reconciliation never re-executes an ambiguous mutating effect and no
   cross-system atomic commit is claimed, mirroring `reconciliation.cue` (FR6,
   FR14, C5, C11, AC19, AC23).
-- [ ] T009 [S4] Author `packages/schema/src/jobs/notification.ts` composing
+- [x] T009 [S4] Author `packages/schema/src/jobs/notification.ts` composing
   `NotificationRouting`, `NotificationDescriptor` (operator-only default
   `action`), `NotificationTiming` (created/expiry TTL, correlation/causation),
   `NotificationContent` (bounded `summary` + opaque Feature 005 `output_ref`,
@@ -99,7 +99,7 @@ and the `jobs.*` operator command domain are distinct reserved namespaces (C13).
   state, `safe_boundary`) into the `NotificationEnvelope` value object, mirroring
   `notification.cue` and `notification-parts.cue` (FR22, FR24, FR25, C9, C15,
   AC7, AC8, AC29).
-- [ ] T010 [S3] Author `packages/schema/src/jobs/events.ts` with the detail
+- [x] T010 [S3] Author `packages/schema/src/jobs/events.ts` with the detail
   sub-objects (`DefinitionDetail`, `RegistrationDetail`, `TriggerDetail`,
   `MisfireDetail`, `OverlapDetail`, `ExecutionDetail`, `RetryDetail`,
   `NotificationDetail`, `ReconcileDetail`) and, across `events-definition.ts`,
@@ -111,10 +111,10 @@ and the `jobs.*` operator command domain are distinct reserved namespaces (C13).
   reconciliation distinct and never collapsed, mirroring `events.cue`,
   `events-definition.cue`, `events-occurrence.cue`, `events-execution.cue`, and
   `events-notification.cue` (FR11, FR12, C8).
-- [ ] T011 [S0–S4] Author the barrel `packages/schema/src/jobs/index.ts`
+- [x] T011 [S0–S4] Author the barrel `packages/schema/src/jobs/index.ts`
   re-exporting every jobs schema module and register the barrel in
   `packages/schema/src/index.ts`.
-- [ ] T012 [S4] Author `packages/protocol/src/jobs/ports.ts`,
+- [x] T012 [S4] Author `packages/protocol/src/jobs/ports.ts`,
   `packages/protocol/src/jobs/commands.ts`, and
   `packages/protocol/src/jobs/index.ts` mirroring `contracts/ports.ts`: the
   `SchedulerPort`, `NotificationPort`, and `JobsPort` interfaces, the `jobs.*`
