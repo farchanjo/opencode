@@ -189,6 +189,36 @@ specScopeGlobs = [
   # "packages/opencode/src/session/llm/request.ts",   # reapply injection after transform
   # "packages/opencode/src/agent/agent.ts",           # reapply injection after transform
   # "packages/opencode/src/event-v2-bridge.ts",       # publishLangLockEvent
+
+  # Feature 005 implement-phase paths (T001-T046): outputspool schema/protocol
+  # modules, the framework-free domain spool engine, application adapters, the
+  # operator output.* command impls, CLI op-output verbs, the TUI paging panel,
+  # and the outputspool test suites. Narrow, file-exact globs.
+  # Shared seams already in scope and NOT duplicated:
+  #   packages/opencode/src/event-v2-bridge.ts (Feature 001) — publishOutputEvent;
+  #   packages/schema/src/durable-event-manifest.ts + packages/core/src/event.ts
+  #     + packages/core/src/operator/** + packages/core/test/operator/**
+  #     + packages/opencode/src/operator/** + packages/opencode/test/operator/**
+  #     (Feature 007) — durable manifest, EventV2 authority, reserved output.*
+  #     catalog (already at RESERVED_CATALOG_VERSION 1.3.0; no bump), and the
+  #     operator/output command impls;
+  #   packages/tui/src/**/operator/** (Feature 007) — output paging panel host;
+  #   packages/schema/src/index.ts + packages/schema/test/** (Feature 001),
+  #   packages/protocol/test/** (Feature 001) — schema barrel + schema/protocol tests.
+  "packages/schema/src/outputspool/**",
+  "packages/protocol/src/outputspool/**",
+  "packages/core/src/outputspool/**",
+  "packages/opencode/src/outputspool/**",
+  "packages/opencode/src/operator/outputspool/**",
+  "packages/cli/src/**/output/**",
+  "packages/tui/src/**/operator/output/**",
+  "packages/schema/test/outputspool/**",
+  "packages/protocol/test/outputspool/**",
+  "packages/core/test/outputspool/**",
+  "packages/opencode/test/outputspool/**",
+  # C16 migration seams (real globs — not covered by any existing glob; T034 writes these):
+  "packages/core/src/background-job.ts",
+  "packages/core/src/tool-output-store.ts",
 ]
 
 # Waivers for intentional near-empty files (warnings only; errors are never
