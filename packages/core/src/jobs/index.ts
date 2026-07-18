@@ -7,14 +7,15 @@
  * `export * as X from "./x"` self-export. This file defines no domain logic of
  * its own.
  *
- * Scope note: the `job.*` EventV2 bus (`event-bus.ts`, T017) is an
- * Effect/EventV2-bound module owned by the wave-3 event worker; when it lands it
- * adds its own `export * as EventBus from "./event-bus"` line here. The pure
- * domain modules (T013–T016) and the already-landed telemetry instruments
- * (`jobs-instruments.ts`, T019) are re-exported below.
+ * The `job.*` EventV2 bus and idempotent projector (`event-bus.ts`, T017) is the
+ * EventV2-bound module that re-exports the schema-layer `job.*` Definitions and
+ * classifies event records for idempotent projection; it is re-exported below
+ * alongside the pure domain modules (T013–T016) and the telemetry instruments
+ * (`jobs-instruments.ts`, T019).
  */
 
 export * as Cron from "./cron"
+export * as EventBus from "./event-bus"
 export * as JobsInstruments from "./jobs-instruments"
 export * as Misfire from "./misfire"
 export * as OccurrenceStateMachine from "./occurrence-state-machine"
