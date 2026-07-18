@@ -2,7 +2,7 @@
 id: 019f6f29-1288-7831-8b0b-d4fe981439d8
 number: 005
 slug: add-a-canonical-file-backed-outputspool-and-paged
-status: specified
+status: clarified
 created_at: 2026-07-17T08:19:50.536031Z
 ---
 
@@ -500,3 +500,255 @@ without content.
 | Feature 002/003/004 integration | FR38–FR40       | 10, 20–22            | 1–2   |
 | Native API/UI/actions           | FR41–FR44       | 12, 15, 19–20        | 1–2   |
 | Security/privacy/observability  | FR45–FR50, NFRs | 6–7, 14–18           | 1–2   |
+
+## Clarifications
+
+### Session 2026-07-18
+
+Declarative resolutions for the Feature 005 clarify phase. Each decision closes one or
+more Clarification Questions (CQ1–CQ18 above) or an inline open marker in the body
+without reopening confirmed Feature 001 bounded-context gates, Feature 002 lifecycle/Todo
+execution authority, Feature 003 occurrence/notification ownership, Feature 004 Lang Lock
+provenance ownership, or Feature 007 native-only operator authority and reserved catalog.
+Numeric limits, storage layout details, and reconciliation algorithm internals this
+feature intentionally defers are resolved here as explicit deferrals to `plan` and to the
+required future ADR **OutputSpool Content Plane and Paged ArtifactStore**, each with a
+provisional stance and a named acceptance-test hook (AC = Acceptance Scenario above),
+never as open placeholders. This section fixes the decisions the ADR will formalize; it
+does not author the ADR.
+
+**C1 — Managed spool path layout and naming (CQ1).** The canonical authority for recovery
+is a managed private tree under the OpenCode global data directory (the same
+`Global`-rooted data path that today hosts `tool-output`, research.md
+`packages/core/src/global.ts:15-39`), replacing the flat `tool-output` directory. The
+layout keys by project, root session, process/attempt, generation, and channel so that
+one OutputGroupRef maps to exactly one generation subtree and stale generations never
+share a file with their successor (FR11, FR14). OS-tmp is used only for channels marked
+disposable (FR11, NFR Durability 4). The exact directory-segment grammar, opaque
+group/segment naming, and shard/fan-out factor are provisional plan constants with
+acceptance hook AC1/AC14; the fixed requirement is a private managed tree with recovery
+semantics and no public path exposure (FR12).
+
+**C2 — Durability and fsync posture per channel class (CQ2).** Durability is tiered by
+channel class, not global. Durable channels (`assistant-text`, `reasoning`,
+`tool-result`, `error`, `artifact`) fsync the data extent and its control commit at
+`seal`/`abort` and additionally at a bounded batched interval during long appends;
+high-rate console channels (`stdout`, `stderr`) fsync at `seal` only and rely on batched
+async writes between; disposable OS-tmp outputs are never fsynced and need not survive
+restart (FR8, NFR Durability 4). A batched async writer (FR8) is mandatory in every tier;
+per-token fsync is prohibited (Out of Scope). Exactly-once FS+DB commit remains out of
+scope (FR25); the durability contract is "committed-bytes-or-corrupt," never silent
+empty-success (AC6, AC8). The batched fsync interval and per-class overrides are
+provisional plan constants with acceptance hook AC1.
+
+**C3 — Page size, queue depth, and quota numeric defaults (CQ3).** `limit` is mandatory
+on every read and server-capped (FR20); the provisional server page cap is 1 MiB with a
+64 KiB interactive default, the provisional per-writer bounded queue is depth- and
+byte-capped, and quotas apply at global, root, session, process, and channel scopes
+(FR10). Exact byte values for page cap, queue depth, and each quota scope are provisional
+plan constants owned by `plan` and Config.Service (Feature 007), with acceptance hooks
+AC1 (bounded memory), AC5 (backpressure), and AC7 (quota fault). Unbounded page size,
+queue depth, or retention is prohibited (Out of Scope).
+
+**C4 — ENOSPC/fd/quota admission policy (CQ4).** ENOSPC, fd exhaustion, quota exceed,
+permission denial, and sustained disk latency are first-class observable admission/fault
+states (FR10), never swallowed. The default policy is degrade-then-fence: the affected
+channel moves to a degraded admission state, backpressures the producer, and — if the
+fault persists past a bounded window — transitions to `aborted` or `corrupt` per state
+machine (C20) while preserving already-committed bytes (FR24, AC6, AC7). Seal MUST NOT be
+reported as success when bytes were lost (AC6). Operator-prompt and hard-cancel variants
+are configuration options through Feature 007, not the default; the persistence window
+and per-fault mapping are provisional plan constants with acceptance hooks AC6/AC7.
+
+**C5 — Ref-aware retention: TTL, lease, and reference graph (CQ5).** Retention is
+reference-aware, never mtime-only (FR28, replacing ToolOutputStore mtime cleanup,
+research.md `tool-output-store.ts:176-188`). A group is reclaimable only when its TTL has
+elapsed AND it holds no live lease, no active reader/writer, and no inbound edge in the
+reference graph (transcript ref, Todo evidence, handoff envelope, NotificationEnvelope
+`output_ref`, Feature 002 `RowTelemetry.output_ref`) AND no legal/privacy hold applies
+(FR28–FR30, AC16). `release` drops one holder edge; `cleanup` reclaims only fully
+unreferenced expired groups in bounded batches (FR29, FR30, AC17). Per-channel TTL
+defaults (reasoning stricter per C9) are provisional plan constants with acceptance hooks
+AC16/AC17.
+
+**C6 — Encryption-at-rest and cross-platform ACL model (CQ6, CQ16).** V1 mandates private
+filesystem permissions on the managed tree — POSIX `0700` directories / `0600` files on
+Unix and the equivalent owner-only ACL on Windows and macOS (FR45) — as the baseline
+confidentiality control; encryption-at-rest and key management are optional configuration
+hooks whose absence never relaxes path privacy or authorization (FR49, Security
+Cryptography). Traversal, symlink-escape, and TOCTOU protection on open/read/write/delete
+is mandatory on every platform (FR46, AC14). The exact per-OS ACL API and the optional
+encryption key-policy surface are provisional plan constants with acceptance hooks
+AC14/AC15; the fixed requirement is owner-only private storage with no public path
+exposure.
+
+**C7 — Authorization principal and root-tree auth via Feature 007 (CQ7).** Output actions
+authorize through Feature 007 operator principals and PermissionV2 scopes; this feature
+invents no parallel permission system (FR43, Security Authentication). Scope enumeration
+is `self`, `child`, `tree`, `session`, `project`, `operator-global` (FR43), re-evaluated
+per action — a raw OutputRef is never a saved permission resource (FR48, AC15). Until the
+Feature 007 principal/root-tree model lands, the interim gap is closed conservatively:
+consume-plane reads are authorized by the owning session/tree principal and admin-plane
+actions are denied by default rather than granted (research.md policy gap 1; Feature 002
+clarification #22). The interim-to-final migration is a provisional plan step with
+acceptance hook AC15.
+
+**C8 — Bounded preview policy for events, UI, and notifications (CQ8).** Previews are
+bounded and content-classified, never a path and never a full channel. The provisional
+default is a byte-and-line-capped, redacted head slice (secret-material stripped to
+SecretRef, per C22) attached to EventV2 payloads, UI cards, and NotificationEnvelope
+summaries alongside the opaque OutputRef only (FR4, FR33, Feature 003
+NotificationContent.summary/output_ref). Terminal EventV2 payloads never carry full
+content chunks or paths (FR4). Exact preview byte/line caps and the redaction ruleset are
+provisional plan constants with acceptance hooks AC12/AC19; the fixed requirement is
+bounded, path-free, secret-free previews.
+
+**C9 — Reasoning channel privacy and retention (CQ9).** The `reasoning` channel is
+stricter than `assistant-text` by default: it is never emitted to OTEL, never surfaced in
+unauthorized previews, carries a shorter default TTL, and requires an explicit authorized
+principal before any content page is returned (FR16, Privacy 2). It remains a first-class
+spool channel (FR15) so bounded memory and paged read still apply, but redaction and
+authorization are tightened. The precise reasoning TTL and the authorized-viewer principal
+set are provisional plan constants with acceptance hook AC22.
+
+**C10 — Context slice selection and range recording (CQ10).** Context builders materialize
+only selected byte/token-budgeted ranges of a sealed channel and record the exact ranges
+used; the LLM never receives an entire spool file automatically (FR33, AC19). Selection
+operates on sealed channels through the same `read(offset, limit)` contract (FR18, FR20)
+under an explicit byte/token budget, and the recorded ranges become part of the durable
+transcript reference set feeding C5 retention. The selection heuristic (head/tail/
+relevance windows) and the budget accounting format are provisional plan constants with
+acceptance hook AC19.
+
+**C11 — Plugin/MCP/legacy adapter explicit limits (CQ11).** Non-streaming plugin, MCP, and
+legacy tool adapters use a bounded compatibility boundary that spills to the spool before
+full LLM-facing materialization when the source allows, and enforces explicit size, time,
+and memory limits with no public path embedded in the result (FR36, FR37, AC13, replacing
+`tool-output-store.ts` path-in-preview). When a source cannot stream, the adapter caps
+materialization at the configured bound and marks the channel truncated/degraded rather
+than growing unbounded memory (FR7, FR36). The numeric size/time/memory caps are
+provisional plan constants owned by Config.Service with acceptance hook AC13. Feature 008
+MCP call/read outputs each create an OutputGroup and cross the boundary as
+preview+OutputRef (Feature 008 spec reference).
+
+**C12 — FS↔SQLite crash reconciliation algorithm (CQ12).** Recovery reconciles the
+filesystem data extent against the control/SQLite metadata into exactly the state-machine
+states `sealed`, `open`, `aborted`, `corrupt`, or `unknown` (FR25, C20). The provisional
+rule: committed length recorded in control metadata is the authority; when the data extent
+is at least that length the group recovers as sealed/open, when it is shorter or the seal
+record is absent after committed appends the group recovers as `corrupt` or `unknown` with
+bounded recovery, never silent empty-success (AC8, AC9). Exactly-once FS+DB is out of
+scope (FR25). The precise fence-record format and bounded recovery-scan limit are
+provisional plan/ADR constants with acceptance hooks AC8/AC9.
+
+**C13 — Terminal settlement ordering with Feature 002 (CQ13).** Feature 002 owns lifecycle
+terminal status; Feature 005 owns content-plane settlement (seal/abort/OutputRef/committed
+bytes). A Task terminal status never precedes output settlement without an intermediate
+`settling` (or `unknown`/`corrupt`) reconciliation state — the exact seam already reserved
+by Feature 002 C20 and `RowTelemetry.output_ref` (FR23, research.md policy gap 4). Parents
+observe either sealed/aborted refs or an explicit settling/unknown/corrupt condition
+(FR23, AC9). This decision fixes only ordering and crash reconciliation; it does not move
+the ownership boundary. Acceptance hooks AC8/AC9.
+
+**C14 — Cursor expiry and invalidation (CQ14).** A follow cursor is an opaque token whose
+validity is bound to the group generation and byte offset (C18). It is invalidated by
+generation supersession (fencing, FR27), by group `release`/`cleanup`/expiry, and by an
+absolute idle-TTL after seal; a reconnect with a stale or superseded cursor returns a
+stable `expired`/`invalid_cursor` code rather than silently rewinding or leaking a later
+generation (FR22, AC4, Security error codes). Reconnect within validity resumes from the
+cursor without full re-read (FR22, AC4). The absolute cursor idle-TTL is a provisional plan
+constant with acceptance hook AC4.
+
+**C15 — Compression and dedup scope for V1 (CQ15).** Compression and content dedup are out
+of scope for V1: the canonical offset unit is uncompressed bytes (FR20) and paged read/
+UTF-8 boundary safety operate on the raw byte stream (AC2, AC3). Optional transparent
+compression and dedup are deferred to a post-V1 configuration hook so they never change
+the byte-offset cursor contract; V1 optimizes memory via bounded queues and batched writes
+(FR7, FR8), not compression. Deferred with acceptance hook AC1.
+
+**C16 — Rollout, migration flags, and dual-read window (CQ17).** Migration is phased behind
+a feature flag with a bounded dual-read window: BackgroundJob keeps reading legacy
+`output`/`error` strings (research.md `background-job.ts:9-32`) while writing OutputRef,
+and ToolOutputStore consumers read either path-preview or OutputRef during cutover, then
+the legacy fields are retired (FR31, Compatibility). V1 and V2 share one canonical seam
+with no second executor or store authority (FR3). The flag names, dual-read window
+duration, and cutover order are provisional plan constants with acceptance hooks AC1/AC12.
+
+**C17 — Export/share policy within versus across projects (CQ18).** Share and export are
+deny-by-default across projects (Privacy 3, FR44). Within a project, `output.export` and
+`output.share` are admin-plane operations requiring an operator principal, `project`
+scope, version/CAS, idempotency, and audit (Feature 007; reserved catalog entries
+`output.export`/`output.share`, both `mutates:true`, `scopesAllowed:["project"]`). Raw
+arbitrary cross-project sharing and public filesystem path share are out of scope; a
+cross-project transfer requires explicit operator authorization and a content-bounded
+export, never a raw path (FR44, Out of Scope). The allowed export encodings are a
+provisional plan constant with acceptance hook AC13.
+
+**C18 — OutputGroupRef, OutputRef, and cursor opaque encoding (identity and fencing).**
+Identity is `OutputGroupRef` scoped to process/attempt/generation (FR14); `OutputRef`
+identifies a sealed or open channel/artifact within a group for read/follow/stat and is a
+bounded opaque token, never a filesystem path and never a saved permission resource (FR12,
+FR17, FR48). The opaque `cursor` encodes at minimum group id, generation, channel, and
+byte offset plus an integrity tag, exposing no client-visible internals beyond the opaque
+contract (FR17). This matches the existing consumers that already treat OutputRef as
+opaque: Feature 002 `Lifecycle.OutputRef`/`BoundedOutputRef`, Feature 003
+`ids.#OutputRef`, and Feature 004 `langlock/correlation.cue #OutputRef`. The exact token
+codec and integrity-tag algorithm are provisional plan constants with acceptance hooks
+AC4/AC11/AC14.
+
+**C19 — Reserved operator catalog surface and version.** All OutputSpool management flows
+exclusively through Feature 007 reserved catalog dotted IDs already registered in
+`@opencode-ai/core/operator` (`packages/core/src/operator/catalog.ts`): consume plane
+`output.stat`, `output.read`, `output.follow` (`mutates:false`, `scopesAllowed:["session","project"]`)
+and admin plane `output.export`, `output.share`, `output.release`, `output.delete`,
+`output.purge`, `output.retention.set`, `output.quota.set`, read live from
+`RESERVED_CATALOG_VERSION` (currently `1.3.0`) with additive-only bumps, never a second
+SDK list (FR41–FR43). Consume actions re-evaluate authorization per call; admin actions
+require operator principal and explicit scope (FR42). Plugin/MCP/custom registries MUST
+NOT register these reserved IDs and no new operator bus is created (FR normative
+transversal rule).
+
+**C20 — Native contract state machine and event vocabulary durable/live split.** The native
+contract operations are exactly `begin`, `append(expected_offset)`, `read(offset, limit)`,
+`follow(cursor)`, `seal`, `abort`, `stat`, `release`, `cleanup` (FR18) over states `open`,
+`sealing`, `sealed`, `aborted`, `corrupt`, `expired`, `unknown` (FR19). Durable settlement
+events (seal, abort, settlement, corrupt/unknown reconciliation) register via
+`EventV2.define` into `packages/schema/src/durable-event-manifest.ts` through the single
+EventV2 authority, mirroring Feature 002 C2 / Feature 003 C5 / Feature 004 C8; live append/
+progress/backpressure signals use the bounded live channel and MAY be dropped under
+`allBounded` load without affecting durable seal/read (research.md `event.ts:152-164`).
+`eof` is true only when a channel is sealed (or aborted with no further append) and the
+reader has consumed through committed end (FR21). Content is never an event payload
+(FR4, FR5). Acceptance hooks AC2/AC8/AC18.
+
+**C21 — Cross-feature spool ownership: who writes the spool.** The producer that owns a
+Feature 002 Process writes its own OutputGroup; Feature 002 remains execution authority
+and supplies pages only, never bytes (FR2, FR38). A Feature 003 scheduled occurrence owns
+the OutputGroup for that occurrence's execution (FR39, schema
+`jobs/occurrence-parts.cue output_ref`), main context / agents / subagents / background
+jobs / tools / processes each own a group scoped to process/attempt/generation (FR1,
+FR14). No producer shares a generation subtree with a stale generation (C1, FR14), and no
+second executor or store authority is introduced (FR3). Direct-child Session hierarchy
+stays Feature 002 ownership; the content plane supplies authorized pages on expand (FR38,
+AC20).
+
+**C22 — Secret and redaction posture: content-free events, SecretRef only.** Events,
+telemetry, audit records, and previews are content-free and secret-free: no file text,
+diff, prompt, message, path, snippet, reasoning, or tool payload leaves the content plane
+except as an authorized paged read (FR5, FR33, Observability, Security Logging). Secret
+material detected in a preview or notification is represented as a Feature 007 SecretPort
+`SecretRef`, never inline plaintext (schema `telemetry/config.cue #SecretRef`, Feature 003
+SecretRefList posture). OTEL labels are bounded enums/buckets only and never content,
+path, OutputRef, session id, process id, or user id (FR5, NFR Cardinality 5,
+Observability). Audit is content-free with stable error codes (`not_found`, `denied`,
+`quota`, `enospc`, `corrupt`, `expired`, `invalid_cursor`) (Security error handling).
+
+**C23 — TUI/App/CLI paging UX contract.** Native TUI, App, and CLI consume `output.stat`,
+`output.read`, `output.follow`, pagination, and tail against OutputRef with authorization
+and no path exposure (FR41), rendering bounded pages and a follow/tail mode that resumes
+from an opaque cursor on reconnect (C14, C18). The paged UX loads content only on
+authorized expand/read, never the complete output by default, and shows direct children
+only for the Feature 002 hierarchy (FR38, AC20). Native slash/menu/palette entry points
+are intercepted before prompt admission with zero provider tokens (FR normative
+transversal rule). The concrete key bindings, page-size affordances, and tail-follow
+indicators are a plan/UX contract with acceptance hooks AC19/AC20.
