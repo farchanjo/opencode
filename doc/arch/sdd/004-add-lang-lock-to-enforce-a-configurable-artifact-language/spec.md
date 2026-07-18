@@ -2,7 +2,7 @@
 id: 019f6d98-1380-7213-b3e5-9e742d5824a5
 number: 004
 slug: add-lang-lock-to-enforce-a-configurable-artifact-language
-status: specified
+status: clarified
 created_at: 2026-07-17T01:01:50.848332Z
 ---
 
@@ -176,16 +176,20 @@ instructions as management authority. Native slash is intercepted before prompt
 admission/transcript; zero provider/model calls/tokens/cost by default; output not
 added to Message/Part/context by default. Mutations require operator principal,
 explicit scope, version/CAS, idempotency, and audit; secret refs only. Canonical
-langlock IDs: status, set, reset, show-effective. Plugin/MCP/custom registries MUST
+reserved dotted IDs are `langlock.status`, `langlock.show`, `langlock.set`, and
+`langlock.reset` from Feature 007 reserved catalog v1 (`RESERVED_CATALOG_VERSION`,
+`@opencode-ai/core/operator`); the descriptive **show-effective** label denotes the
+reserved `langlock.show` operation (C3). Plugin/MCP/custom registries MUST
 NOT register reserved operator IDs. LLM receives effective read-only Lang Lock in the
 trusted execution envelope; it MUST NOT call admin commands to query or set.
 
 31. Settings MUST expose a row separate from UI Language, labeled **Lang Lock** with
     **Artifact language**, using human/native language names, wired through Feature 007
     adapters.
-32. Native palette/slash/CLI operations MUST provide Feature 007 canonical langlock
-    operations: status, set, reset, and show-effective; final display aliases remain
-    clarification while reserved IDs are Feature 007 authority.
+32. Native palette/slash/CLI operations MUST provide the Feature 007 reserved catalog v1
+    langlock operations `langlock.status`, `langlock.show`, `langlock.set`, and
+    `langlock.reset`; the **show-effective** display alias maps to `langlock.show`, and
+    the reserved dotted IDs and catalog version are the Feature 007 authority (C3).
 33. Administrative operations MUST parse/dispatch locally via the Feature 007 operator
     command registry, remain outside transcript, ToolRegistry, MCP, tools, and prompts,
     make zero LLM calls, and work offline without a configured provider.
@@ -377,3 +381,138 @@ failure/unknown and policy-reapply outcomes are observable without blocking hot 
 | Replay and feature inheritance         | FR24–FR30                     | 4, 7, 12, 15, 17–19  | 1–2   |
 | Native operator management             | FR31–FR35                     | 3, 5–6, 13           | 1–2   |
 | Security/privacy/observability         | NFRs, security, observability | 7, 9–10, 13–14, 18   | 1–2   |
+
+## Clarifications
+
+### Session 2026-07-18
+
+Declarative resolutions for the Feature 004 clarify phase. Each decision closes one or
+more Clarification Questions (CQ) or brief scope items above without reopening confirmed
+Feature 001 immutable-envelope gates, Feature 002 lifecycle/Todo authority, Feature 005
+content-plane ownership, or Feature 007 native-only operator authority and reserved
+catalog. Numeric thresholds, classifier internals, and UX details that this feature
+intentionally defers are resolved here as explicit deferrals to `plan` and to the future
+ADR **Lang Lock Artifact-Language Policy and Progressive Enforcement**, each with a
+provisional stance and a named acceptance-test hook — never as open placeholders. This
+section fixes the decisions the ADR will formalize; it does not author the ADR.
+
+**C1 — Artifact-language scope boundary (CQ3).** "Artifact language" governs only
+model-created or modified prose surfaces enumerated in FR8–FR9: source-code prose,
+comments, docstrings, generated explanations, docs, instruction files, Task/subagent
+prompts and internal returns, Todo objective/item/progress/result/failure/handoff text,
+commit/PR/release prose, and code fences/patch previews shown in chat (FR12). It NEVER
+governs identifiers, filenames, API names, syntax, symbols, or quoted user content
+(FR13), and NEVER the other three axes — UI locale/chrome, product/docs i18n pipeline,
+or conversational main-chat prose (FR2, FR11). Exact product strings outside an explicit
+i18n target follow Lang Lock; strings owned by the i18n pipeline use the product target
+(FR15). Acceptance hooks AC1–AC2, AC12.
+
+**C2 — Config authority and scope model (CQ6, part CQ12).** Lang Lock policy/config rides
+the canonical Feature 007 Config.Service authority that already merges global and
+project sources (research.md `config.ts`); no parallel store is introduced. Per the
+Feature 007 scope matrix the `langlock.*` default scope is `project`, global is a
+copy-on-write template, and a project override cannot relax the global hard-policy floor
+(FR5). Override is gated by the `langlock.override` Permission/Policy authorization and is
+denied unless native operator policy allows it (Security 1, AC5–AC6). Session, user, LLM,
+agent, plugin, MCP, and custom-command mutation is prohibited (FR6).
+
+**C3 — Reserved operator command surface and catalog version.** All Lang Lock management
+flows exclusively through Feature 007 reserved catalog v1 dotted IDs `langlock.status`,
+`langlock.show`, `langlock.set`, and `langlock.reset`, with the version read live from
+`RESERVED_CATALOG_VERSION` (`1.0.0`) in `@opencode-ai/core/operator`; adding IDs requires
+an additive catalog bump, never a second SDK list. The spec's descriptive
+**show-effective** label denotes the reserved `langlock.show` operation. Plugin/MCP/custom
+registries MUST NOT register these reserved IDs, and no new operator bus or registry is
+created (FR31–FR35, AC13).
+
+**C4 — Enforcement points and immutable injection (CQ5).** Enforcement is native and
+immutable at the seams named in research.md: effective language is injected into V1/V2
+system prompts and reapplied after `experimental.chat.system.transform`
+(`request.ts`, `agent.ts`) so a plugin transform cannot strip it (FR17, FR25, AC7);
+Task/subagent envelopes carry tag/version/source/mode (FR18, AC4); write/edit/apply_patch/
+shell-commit contexts receive immutable metadata that is never a model-controlled tool
+argument (FR19). Shell heredoc/redirect, non-streaming tools, legacy plugin output, and
+MCP output have explicit capability boundaries; no enforcement is promised before
+generated bytes cross an OpenCode-observable boundary (FR23, AC18).
+
+**C5 — Detection mechanics: progressive hybrid, advisory-only in V1 (CQ1, part CQ7).**
+V1 splits hard from advisory: immutable policy/config and prompt/envelope metadata are
+hard requirements; post-write language detection is advisory and confined to confidently
+classified prose kinds (Markdown, docs, instruction files, generated commit text)
+(FR16, FR20). The path-kind classifier, confidence buckets, detector provenance, and
+fallback rules are a plan-owned contract with acceptance hook AC11; generic source code
+is never blocked by a detector in V1 (FR20, Out of Scope). Detector unknown/failure never
+blocks prompt, execution, or tool hot paths (FR21, NFR Availability).
+
+**C6 — Violation handling: advisory record, never block or autotranslate (CQ2).** V1 never
+auto-blocks and never issues a separate translation-model call to enforce the lock (Out of
+Scope); advisory detection records only detector provenance, confidence bucket, path kind,
+policy version, and remediation status without content (FR21). The TUI/App/CLI advisory
+surfacing, acknowledgement, and repeat-warning-suppression flow is a plan-owned bounded,
+content-free contract with acceptance hook AC8; it never gates the write. Strict blocking
+is deferred (C14).
+
+**C7 — Interplay with the repository en-US mandate.** Existing AGENTS/CLAUDE/GROK English
+rules (research.md) become soft guidance under Lang Lock policy — readable and never
+auto-rewritten (Compatibility). Lang Lock is the hard authority; a nested AGENTS MAY add
+style but MUST NOT replace the effective tag (FR24, AC17). An unconfigured project resolves
+to the enabled en-US default, matching the repository mandate, without translating
+untouched content (FR1, AC16).
+
+**C8 — Event and telemetry emission over the single EventV2 authority (CQ10, part CQ11).**
+Lang Lock introduces no new channel: audit and advisory-violation events register via
+`EventV2.define` in a Feature-004-owned schema module and project over the single EventV2
+authority, mirroring Feature 002 C2 and Feature 003. Audit projects to EventV2 only and is
+secret-free (Feature 007). Telemetry is content-free per ADR-0001 — bounded enums/buckets/
+counts and opaque execution IDs only, never file text, diff, prompt, message, path,
+snippet, reasoning, or tool payload (NFR Privacy, Observability, AC14).
+
+**C9 — Feature 005 provenance contract (CQ11).** Textual OutputSpool/ArtifactStore channels
+SHOULD attach the Lang Lock tag/version/provenance defined by Feature 005 FR40 without
+exporting raw content; the metadata is Feature-005-owned and read from the trusted
+execution envelope, not recomputed by Lang Lock (FR30, AC14).
+
+**C10 — Feature 002 Todo and envelope inheritance.** Session-owned Todo objective, item,
+progress, result, failure, and handoff summary text follow Lang Lock while Todo UI chrome
+stays on the UI-locale axis (FR28, AC21–AC22). TodoRef/version and Task envelopes carry
+the Lang Lock tag/version, preserved across cancel/retry/resume/handoff without a
+translation call (FR26, FR28, AC4, AC22).
+
+**C11 — Long-running policy-change capture (CQ4).** A lock change captures the effective
+tag and policy version into the execution envelope at start; background, resumed, replayed,
+parent/child, and scheduled executions preserve the start-time version so effective policy
+is immutable for a running execution, and the change applies to subsequent executions
+(FR26, NFR Policy integrity). The precise mid-flight re-resolution policy is deferred to
+`plan` with acceptance hook AC12.
+
+**C12 — Mixed-language file remediation (CQ9).** Enforcement applies only to model-created
+or modified portions; there is no retrotranslation and no whole-file rewrite to satisfy
+the lock (FR10, AC20). File-by-file classification and remediation of mixed content is
+advisory-only in V1 under C5; deferred strict handling follows the strict-mode roadmap
+(C14). Acceptance hook AC11.
+
+**C13 — Picker label localization (CQ8).** UI pickers show human/native language names
+only; canonical BCP 47 tags validated via `Intl.getCanonicalLocales` plus the allowlist
+are stored and never surfaced as the primary label (FR4, AC3). Label-localization details
+that preserve the native/human-name policy are a plan/UX contract with acceptance hook
+AC3.
+
+**C14 — Strict-mode roadmap ownership (part CQ7).** Strict language blocking, path
+coverage, rollback, and false-positive thresholds are deferred to a separately approved
+policy and the future ADR, never shipped in V1 (FR22, Out of Scope). V1 delivers immutable
+metadata plus advisory detection only (C5), keeping generic code unblocked (AC11).
+
+**C15 — Rollout flags and legacy migration (part CQ12).** Staged enablement, rollout/
+feature flags, legacy config migration, and compatibility rollback are plan-owned with
+acceptance hook AC16, introducing no parallel config or permission authority beyond
+Feature 007. Existing installations resolve to enabled en-US without translating untouched
+files or changing UI/product/conversational settings (Compatibility).
+
+**C16 — Exception manifest ownership and lifecycle (CQ10).** The exemptions manifest and
+allowlist (i18n resources, vendor/generated files, lockfiles, legal text, external
+schemas/contracts, golden/exact fixtures) are operator-owned and schema-validated and
+allowlisted before use (FR14, Security 2, Security 6). Untrusted LLM, plugin, or prompt
+requests cannot create exemptions; exception use records bounded type, authority, scope,
+and result without content (Security 6, AC9–AC10). The review/audit lifecycle rides the
+Feature 007 audit authority.
+
