@@ -219,6 +219,37 @@ specScopeGlobs = [
   # C16 migration seams (real globs — not covered by any existing glob; T034 writes these):
   "packages/core/src/background-job.ts",
   "packages/core/src/tool-output-store.ts",
+
+  # Feature 006 implement-phase paths (T001-T045): semantic schema/protocol
+  # modules, the framework-free domain retrieval engine, application adapters
+  # (Milvus client + embedding/rerank clients over the reused OpenAI-compatible
+  # transport), the operator semantic.* command impls, CLI op-semantic verbs, the
+  # TUI Semantic Search / Models panel, and the semantic test suites. Narrow,
+  # file-exact globs. Shared seams already in scope and NOT duplicated:
+  #   packages/opencode/src/event-v2-bridge.ts (Feature 001) — publishSemanticEvent;
+  #   packages/schema/src/durable-event-manifest.ts + packages/core/src/event.ts
+  #     + packages/core/src/operator/** + packages/core/test/operator/**
+  #     + packages/opencode/src/operator/** + packages/opencode/test/operator/**
+  #     (Feature 007) — durable manifest, EventV2 authority, reserved semantic.*
+  #     catalog (already at RESERVED_CATALOG_VERSION 1.3.0 with all 30 IDs; no bump),
+  #     and the operator/semantic command impls;
+  #   packages/tui/src/**/operator/** + packages/tui/src/**/settings/** (Feature 007)
+  #     — Semantic Search / Models panel host and Settings row;
+  #   packages/schema/src/index.ts + packages/schema/test/** (Feature 001),
+  #   packages/protocol/test/** (Feature 001) — schema barrel + schema/protocol tests;
+  #   package.json + bun.lock (repository-health block above) — T025 adds the
+  #     @zilliz/milvus2-sdk-node gRPC SDK there; no new glob required.
+  "packages/schema/src/semantic/**",
+  "packages/protocol/src/semantic/**",
+  "packages/core/src/semantic/**",
+  "packages/opencode/src/semantic/**",
+  "packages/opencode/src/operator/semantic/**",
+  "packages/cli/src/**/semantic/**",
+  "packages/tui/src/**/operator/semantic/**",
+  "packages/schema/test/semantic/**",
+  "packages/protocol/test/semantic/**",
+  "packages/core/test/semantic/**",
+  "packages/opencode/test/semantic/**",
 ]
 
 # Waivers for intentional near-empty files (warnings only; errors are never
