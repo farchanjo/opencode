@@ -25,6 +25,14 @@ export interface BoundInput {
 export interface BoundResult {
   readonly output: ToolOutput
   readonly outputPaths: ReadonlyArray<string>
+  /**
+   * Feature 005 / T034 (C16) — optional OutputSpool handle. Under the C16
+   * migration flag a bounded consumer reads this OutputRef (+ bounded preview
+   * via `outputspool/migration-bridge.ts`) instead of the path-in-preview;
+   * additive and legacy-compatible — absent pre-migration, so the existing
+   * `outputPaths` dual-read window is unchanged (FR37, C16, AC12).
+   */
+  readonly outputRef?: string
 }
 
 export class StorageError extends Schema.TaggedErrorClass<StorageError>()("ToolOutputStore.StorageError", {

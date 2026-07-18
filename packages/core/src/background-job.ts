@@ -16,6 +16,14 @@ export type Info = {
   output?: string
   error?: string
   metadata?: Record<string, unknown>
+  /**
+   * Feature 005 / T034 (C16) — optional OutputSpool handle. Under the C16
+   * migration flag the job records an OutputRef (+ bounded preview via
+   * `outputspool/migration-bridge.ts`) instead of the per-content `output`
+   * string; additive and legacy-compatible — the field is absent pre-migration
+   * so the existing shape and dual-read window are unchanged (FR31, C16, AC12).
+   */
+  output_ref?: string
 }
 
 type Active = {
