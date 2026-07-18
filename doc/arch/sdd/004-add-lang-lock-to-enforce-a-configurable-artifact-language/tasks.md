@@ -315,7 +315,7 @@ schema modules so a single vocabulary is enforced (see the Traceability note).
 
 ### Tests and validation (Phase 5)
 
-- [ ] T037 [S20] Add pure deterministic unit tests under `packages/core/test/langlock/**`
+- [x] T037 [S20] Add pure deterministic unit tests under `packages/core/test/langlock/**`
   for tag validation (canonical/allowlist/reject/display-name), policy resolution with the
   hard-policy-floor guard (authorized-apply/unauthorized-retain/floor-violation), path-kind
   classification (prose eligible, generic code never eligible, exempt excluded), the
