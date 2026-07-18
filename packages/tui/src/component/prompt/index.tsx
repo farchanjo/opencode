@@ -60,7 +60,7 @@ import { usePromptMove } from "./move"
 import { readLocalAttachment } from "./local-attachment"
 import { useLocation } from "../../context/location"
 import { useOperatorSlash } from "../../context/operator-slash"
-import { INACTIVE_SMART_ROUTING_SIGNAL, useSmartIndicator } from "../../smart"
+import { INACTIVE_SMART_ROUTING_SIGNAL, useSmartIndicator, type SmartRoutingSignal } from "../../smart"
 
 registerOpencodeSpinner()
 
@@ -1406,11 +1406,19 @@ export function Prompt(props: PromptProps) {
   const smartFallbackText = createMemo(() =>
     store.mode === "shell" ? "Shell" : Locale.titlecase(local.agent.current()?.name ?? ""),
   )
-  // No live brain-mode/Smart-Routing signal is wired into the TUI yet
-  // (that lands with the SmartPort adapter integration); the constant
-  // inactive signal keeps the indicator honest — fallback label only —
-  // until that wiring exists.
-  const smartLabel = useSmartIndicator(() => INACTIVE_SMART_ROUTING_SIGNAL, smartFallbackText)
+  // TODO(Feature-001): source this from a live SmartIndicatorState push. The
+  // sync payload (context/sync.tsx) carries session_status, config, agents,
+  // messages, etc. — but NO brain-mode / Smart-Routing / hierarchy-role signal,
+  // and no smart.*/routing.* server event exists to derive one from. The Smart
+  // indicator is a per-turn, server-side routing computation, so a genuine live
+  // signal must wait for a server-push feature (a routing-state projection
+  // pushed the same way session_status is). Until then this reactive accessor
+  // folds the honest inactive baseline (fallback label only). See
+  // doc/arch/sdd/001-.../data-model.md "Resolved Parameters (implement phase)"
+  // → "TUI Smart indicator signal source". This memo is the single wiring point:
+  // when the push lands, only its body changes.
+  const smartRoutingSignal = createMemo<SmartRoutingSignal>(() => INACTIVE_SMART_ROUTING_SIGNAL)
+  const smartLabel = useSmartIndicator(smartRoutingSignal, smartFallbackText)
 
   const agentMetaAlpha = createFadeIn(() => !!local.agent.current(), animationsEnabled)
   const modelMetaAlpha = createFadeIn(() => !!local.agent.current() && store.mode === "normal", animationsEnabled)
