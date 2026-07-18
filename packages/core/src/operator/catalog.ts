@@ -7,7 +7,7 @@ import type { ScopeKind } from "./scope"
 import type { DescriptorDraft } from "./descriptor"
 
 /** Catalog document version (semver). Additive bumps only. */
-export const RESERVED_CATALOG_VERSION = "1.2.0" as const
+export const RESERVED_CATALOG_VERSION = "1.3.0" as const
 
 export const OPERATOR_DOMAINS = [
   "telemetry",
@@ -110,12 +110,16 @@ const ENTRIES: readonly EntrySpec[] = [
   // jobs
   { id: "jobs.list", mutates: false, scopesAllowed: GP, offlineCapable: true },
   { id: "jobs.status", mutates: false, scopesAllowed: GP, offlineCapable: true },
+  { id: "jobs.show", mutates: false, scopesAllowed: GP, offlineCapable: true },
   { id: "jobs.create", mutates: true, scopesAllowed: P, offlineCapable: true },
   { id: "jobs.update", mutates: true, scopesAllowed: P, offlineCapable: true },
   { id: "jobs.enable", mutates: true, scopesAllowed: P, offlineCapable: true },
   { id: "jobs.disable", mutates: true, scopesAllowed: P, offlineCapable: true },
   { id: "jobs.delete", mutates: true, scopesAllowed: P, offlineCapable: true },
+  { id: "jobs.reschedule", mutates: true, scopesAllowed: P, offlineCapable: true },
   { id: "jobs.run-now", mutates: true, scopesAllowed: P, offlineCapable: false },
+  { id: "jobs.history", mutates: false, scopesAllowed: GP, offlineCapable: true },
+  { id: "jobs.watch", mutates: false, scopesAllowed: GP, offlineCapable: true },
 
   // langlock
   { id: "langlock.status", mutates: false, scopesAllowed: GP, offlineCapable: true },

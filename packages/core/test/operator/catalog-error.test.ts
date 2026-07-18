@@ -18,11 +18,11 @@ import {
 
 describe("reserved catalog (T007)", () => {
   test("version field present and stable snapshot", () => {
-    expect(RESERVED_CATALOG_VERSION).toBe("1.2.0")
-    expect(catalogVersion()).toBe("1.2.0")
-    expect(RESERVED_CATALOG.version).toBe("1.2.0")
+    expect(RESERVED_CATALOG_VERSION).toBe("1.3.0")
+    expect(catalogVersion()).toBe("1.3.0")
+    expect(RESERVED_CATALOG.version).toBe("1.3.0")
     const snap = reservedCatalogSnapshot()
-    expect(snap.version).toBe("1.2.0")
+    expect(snap.version).toBe("1.3.0")
     expect(snap.domainCount).toBe(12)
     expect(snap.idCount).toBeGreaterThan(50)
   })
@@ -69,6 +69,18 @@ describe("reserved catalog (T007)", () => {
     // read-only surface: neither mutates nor requires confirmation
     expect(requiresConfirmation("routing.explain")).toBe(false)
     expect(requiresConfirmation("routing.capability.inspect")).toBe(false)
+  })
+
+  test("jobs surface ids required by JobsPort/CLI are reserved (v1.3.0)", () => {
+    for (const id of ["jobs.show", "jobs.reschedule", "jobs.history", "jobs.watch"]) {
+      expect(isReservedCommandId(id)).toBe(true)
+    }
+    // reads: neither mutate nor require confirmation
+    expect(requiresConfirmation("jobs.show")).toBe(false)
+    expect(requiresConfirmation("jobs.history")).toBe(false)
+    expect(requiresConfirmation("jobs.watch")).toBe(false)
+    // reschedule mutates but is not a destructive confirm leaf
+    expect(requiresConfirmation("jobs.reschedule")).toBe(false)
   })
 
   test("confirmation matrix leaves marked on catalog entries", () => {
