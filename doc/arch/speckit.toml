@@ -3,6 +3,14 @@
 
 [git]
 email = "farchanjo@gmail.com"
+# Recognized upstream identities (ADR-0025/0026 foreign exemption): commits
+# authored under these are upstream history synced from anomalyco/opencode and
+# are exempt from the commit-discipline gate; own commits stay enforced.
+foreignEmails = [
+  "*@users.noreply.github.com",
+  "*@sst.dev",
+  "noreply@github.com",
+]
 
 # The ACTIVE spec scope is the UNION of the static globs below (operator-managed)
 # and derived globs computed at startup: doc/arch/sdd/NNN-slug/** for the active
@@ -47,4 +55,67 @@ specScopeGlobs = [
   "packages/sdk-next/**/operator/**",
   "scripts/dev/opencode-operator-sandbox*",
   ".gitignore",
+
+  # Feature 001 — Smart Agent Routing and Telemetry.
+  # Existing paths (extended):
+  "packages/core/src/observability/otlp.ts",
+  "packages/opencode/src/session/todo.ts",
+  "packages/opencode/src/agent/agent.ts",
+  "packages/opencode/src/event-v2-bridge.ts",
+  # New paths (novo):
+  "packages/core/src/observability/telemetry-instruments.ts",
+  "packages/opencode/src/routing/**",
+  "packages/opencode/src/session/routing-state.ts",
+  "packages/cli/src/**/smart/**",
+  "packages/cli/src/**/routing/**",
+  "packages/cli/src/**/telemetry/**",
+  "packages/tui/src/**/smart/**",
+  "packages/tui/src/**/routing-state/**",
+  "packages/tui/src/component/prompt/index.tsx",
+  "packages/schema/src/**/routing/**",
+  "packages/schema/src/**/telemetry/**",
+  "packages/protocol/src/**/routing/**",
+  "packages/protocol/src/**/telemetry/**",
+  "doc/arch/sdd/001-define-one-cohesive-smart-agent-routing-and-opentelemetry/**",
+  "doc/arch/adr/0001-opentelemetry-telemetry-foundation.md",
+  "doc/arch/adr/0002-core-smart-agent-routing.md",
+
+  # Repository-health remediation (speckit validate errors: readme, pin,
+  # lint, ai-signature families). Narrow, file-exact globs — remove once
+  # the corpus is green.
+  "README.md",
+  "package.json",
+  ".npmrc",
+  "tsconfig.json",
+  "packages/containers/*/Dockerfile",
+  "packages/opencode/Dockerfile",
+  "packages/stats/server/Dockerfile",
+  "packages/opencode/test/config/markdown.test.ts",
+  "packages/script/package.json",
+  "bun.lock",
+  "packages/opencode/git",
+  "packages/tui/src/component/prompt/cwd.ts",
+  "packages/opencode/test/config/plugin.test.ts",
 ]
+
+# Waivers for intentional near-empty files (warnings only; errors are never
+# waivable). Each keeps a written justification per the waiver validator.
+[[validate.waivers]]
+rule = "hygiene.empty-file"
+path = "packages/desktop/src/renderer/styles.css"
+reason = "Intentionally empty stylesheet imported by packages/desktop/src/renderer/index.tsx; deleting it breaks the renderer build."
+
+[[validate.waivers]]
+rule = "hygiene.empty-file"
+path = "packages/opencode/test/config/fixtures/no-frontmatter.md"
+reason = "Deliberately minimal test fixture exercised by markdown.test.ts and skill.test.ts to cover the no-front-matter parsing path."
+
+[[validate.waivers]]
+rule = "hygiene.empty-file"
+path = "packages/plugin/.gitignore"
+reason = "Legitimate short .gitignore; its few bytes are the entire intended content."
+
+[[validate.waivers]]
+rule = "hygiene.empty-file"
+path = "sdks/vscode/.gitignore"
+reason = "Legitimate short .gitignore; its few bytes are the entire intended content."
