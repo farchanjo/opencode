@@ -2,7 +2,7 @@
 id: 019f697e-c09a-7b40-a82f-30df4badfc7b
 number: 002
 slug: build-an-event-driven-asynchronous-task-lifecycle-engine
-status: planned
+status: tasked
 created_at: 2026-07-16T05:55:42.362102Z
 ---
 
