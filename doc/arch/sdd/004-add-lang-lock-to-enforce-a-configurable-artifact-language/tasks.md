@@ -352,7 +352,7 @@ schema modules so a single vocabulary is enforced (see the Traceability note).
   appear as metric labels, over-budget dynamic values map to `other`, and `langlock.*`
   spans correlate with the Feature 001 spans; every package must typecheck and test green
   (Observability, FR27, C8, AC14). Acceptance: all six packages typecheck and test green.
-- [ ] T042 [S0–S20] Close-out: tick every checkbox above once its task is complete and
+- [x] T042 [S0–S20] Close-out: tick every checkbox above once its task is complete and
   verified, confirm `speckit validate` is green with only the four pre-existing waived
   hygiene findings, and mark the Feature 004 workflow phase complete (every FR1–FR35 and
   AC1–AC22 mapped to a task per the Traceability section). Acceptance: `speckit validate`
