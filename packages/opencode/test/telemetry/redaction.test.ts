@@ -52,10 +52,34 @@ describe("telemetry redaction defaults", () => {
   test("per-flag policy leaves disabled categories untouched", () => {
     const out = redactAttributes(
       { prompt: "keep me", apiKey: "sk-live" },
-      { prompts: false, secrets: true, filePaths: true, toolPayloads: true },
+      { prompts: false, secrets: true, filePaths: true, fileContent: true, toolPayloads: true },
     )
     expect(out.prompt).toBe("keep me")
     expect(out.apiKey).toBe(REDACTED)
+  })
+
+  test("file content is gated by the dedicated fileContent flag", () => {
+    const redacted = redactAttributes(
+      { diff: "@@ -1 +1 @@", arguments: { path: "x" } },
+      { prompts: true, secrets: true, filePaths: true, fileContent: true, toolPayloads: false },
+    )
+    // fileContent on redacts the diff; toolPayloads off keeps the arguments.
+    expect(redacted.diff).toBe(REDACTED)
+    expect(redacted.arguments).toEqual({ path: "x" })
+
+    const kept = redactAttributes(
+      { diff: "@@ -1 +1 @@" },
+      { prompts: true, secrets: true, filePaths: true, fileContent: false, toolPayloads: true },
+    )
+    expect(kept.diff).toBe("@@ -1 +1 @@")
+  })
+
+  test("fileContent falls back to tool_payloads when the config flag is absent", () => {
+    const custom = redactionPolicyFromConfig({
+      ...DEFAULT_TELEMETRY_CONFIG,
+      redact: { prompts: false, secrets: true, file_paths: false, tool_payloads: true },
+    })
+    expect(custom.fileContent).toBe(true)
   })
 
   test("never mutates the input and is depth-bounded", () => {
@@ -69,9 +93,9 @@ describe("telemetry redaction defaults", () => {
     expect(redactionPolicyFromConfig(DEFAULT_TELEMETRY_CONFIG)).toEqual(DEFAULT_REDACTION_POLICY)
     const custom = redactionPolicyFromConfig({
       ...DEFAULT_TELEMETRY_CONFIG,
-      redact: { prompts: false, secrets: true, file_paths: false, tool_payloads: true },
+      redact: { prompts: false, secrets: true, file_paths: false, file_content: false, tool_payloads: true },
     })
-    expect(custom).toEqual({ prompts: false, secrets: true, filePaths: false, toolPayloads: true })
+    expect(custom).toEqual({ prompts: false, secrets: true, filePaths: false, fileContent: false, toolPayloads: true })
   })
 
   test("signalEnabled gates on master enablement and per-signal flag", () => {

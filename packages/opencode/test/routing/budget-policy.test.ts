@@ -90,6 +90,47 @@ describe("BudgetPolicy.checkLimits", () => {
     )
     expect(result.outcome).toBe("error")
   })
+
+  test("prefers recorded consumption byte fields over the ByteObservation param", () => {
+    const result = BudgetPolicy.checkLimits(
+      policy(),
+      consumption({
+        throughput: {
+          turns_used: 1,
+          context_tokens_used: 0,
+          output_tokens_used: 0,
+          context_bytes_used: 5000,
+          output_bytes_used: 100,
+        },
+      }),
+      // The param would pass; the recorded field (5000 > 4000) must win and block.
+      { context_bytes: 10, output_bytes: 10 },
+    )
+    expect(result.outcome).toBe("blocked")
+    expect(result.violations.map((v) => v.dimension)).toEqual(["max_context_bytes"])
+  })
+})
+
+describe("BudgetPolicy.checkRetrievalConsumption", () => {
+  test("within retrieval limits is ok", () => {
+    expect(BudgetPolicy.checkRetrievalConsumption(policy(), consumption()).outcome).toBe("ok")
+  })
+
+  test("blocks when recorded rerank/skill chunks exceed the retrieval caps", () => {
+    const result = BudgetPolicy.checkRetrievalConsumption(
+      policy(),
+      consumption({
+        retrieval: {
+          retrieval_chunks_used: 0,
+          skill_tokens_used: 0,
+          rerank_chunks_used: 9,
+          skill_chunks_used: 9,
+        },
+      }),
+    )
+    expect(result.outcome).toBe("blocked")
+    expect(result.violations.map((v) => v.dimension).sort()).toEqual(["max_skill_chunks", "rerank_top_k"])
+  })
 })
 
 describe("BudgetPolicy.admitFanout", () => {

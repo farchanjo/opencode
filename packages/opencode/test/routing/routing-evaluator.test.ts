@@ -401,7 +401,7 @@ describe("routing-evaluator / T021 fallback + execution boundary", () => {
       reason: "empty pool",
     })
     const mapped = toRoutingError({ type: "mutation_risky", reason: "wrote a file", candidate: id("a", "m1") })
-    expect(mapped.type).toBe("unavailable")
+    expect(mapped).toEqual({ type: "mutation_risky", reason: "wrote a file", agentId: "a", modelId: "m1" })
   })
 })
 

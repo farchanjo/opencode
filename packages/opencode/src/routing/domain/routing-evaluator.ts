@@ -609,9 +609,9 @@ export function planFallback(
 
 /**
  * Map a domain `FallbackError` onto the protocol RoutingError tagged union
- * (packages/protocol/src/routing). `no_authorized_candidate` maps 1:1;
- * `mutation_risky` has no dedicated wire variant and is surfaced as
- * `unavailable` with a descriptive reason.
+ * (packages/protocol/src/routing). Both variants map 1:1: `mutation_risky` is a
+ * first-class wire variant carrying the offending agent/model, so a blind retry
+ * hazard is never flattened into a generic `unavailable`.
  */
 export function toRoutingError(error: FallbackError): RoutingError {
   switch (error.type) {
@@ -619,8 +619,10 @@ export function toRoutingError(error: FallbackError): RoutingError {
       return { type: "no_authorized_candidate", reason: error.reason }
     case "mutation_risky":
       return {
-        type: "unavailable",
-        reason: `mutation_risky: ${error.reason} (agent=${error.candidate.agent_id} model=${error.candidate.model_id})`,
+        type: "mutation_risky",
+        reason: error.reason,
+        agentId: error.candidate.agent_id,
+        modelId: error.candidate.model_id,
       }
   }
 }

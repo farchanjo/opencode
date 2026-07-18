@@ -108,6 +108,28 @@ describe("cardinalityBudget", () => {
       else process.env.OPENCODE_OTEL_CARDINALITY_BUDGET = prev
     }
   })
+
+  test("prefers a valid config value over the env override and default", () => {
+    const prev = process.env.OPENCODE_OTEL_CARDINALITY_BUDGET
+    process.env.OPENCODE_OTEL_CARDINALITY_BUDGET = "16"
+    try {
+      expect(cardinalityBudget(64)).toBe(64)
+    } finally {
+      if (prev === undefined) delete process.env.OPENCODE_OTEL_CARDINALITY_BUDGET
+      else process.env.OPENCODE_OTEL_CARDINALITY_BUDGET = prev
+    }
+  })
+
+  test("falls back to env/default when the config value is invalid", () => {
+    const prev = process.env.OPENCODE_OTEL_CARDINALITY_BUDGET
+    delete process.env.OPENCODE_OTEL_CARDINALITY_BUDGET
+    try {
+      expect(cardinalityBudget(0)).toBe(128)
+      expect(cardinalityBudget(Number.NaN)).toBe(128)
+    } finally {
+      if (prev !== undefined) process.env.OPENCODE_OTEL_CARDINALITY_BUDGET = prev
+    }
+  })
 })
 
 describe("createLabelBounder", () => {

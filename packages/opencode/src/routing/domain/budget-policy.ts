@@ -20,13 +20,12 @@
  *   - cost:        time_budget_ms, cost_budget_usd, token_budget
  *   - resilience:  retry_depth, validation_depth, escalation_threshold
  *
- * KNOWN GAP (report to spec corpus): `Budget.Consumption` (budget-consumption.cue)
- * tracks token counts but carries no `context_bytes_used` / `output_bytes_used`,
- * `rerank_chunks_used`, or `skill_chunks_used` fields, even though
- * `Budget.Policy.limits`/`Budget.Policy.retrieval` define byte and
- * rerank/skill-chunk hard maximums. This module accepts those as optional
- * caller-supplied observations (`ByteObservation`, `RetrievalRequest`) rather
- * than reading them off `Budget.Consumption`, which does not carry them.
+ * `Budget.Consumption` (budget-consumption.cue) carries `context_bytes_used` /
+ * `output_bytes_used` (throughput) and `rerank_chunks_used` / `skill_chunks_used`
+ * (retrieval) as optional observed spend. Enforcement PREFERS those recorded
+ * fields when present and falls back to caller-supplied observations
+ * (`ByteObservation`, `RetrievalRequest`) when they are absent, so persisted
+ * decisions and live admission checks share one code path.
  */
 export * as BudgetPolicy from "./budget-policy"
 
@@ -102,10 +101,17 @@ export interface ByteObservation {
   readonly output_bytes: number
 }
 
-/** Checks `Budget.Limits` hard maximums against observed turn/token (and optional byte) spend. */
+/**
+ * Checks `Budget.Limits` hard maximums against observed turn/token/byte spend.
+ * Byte spend prefers the recorded `throughput.context_bytes_used` /
+ * `output_bytes_used` fields and falls back to a caller-supplied
+ * `ByteObservation`; a dimension is only checked when a value is available.
+ */
 export function checkLimits(policy: Budget.Policy, consumption: Budget.Consumption, bytes?: ByteObservation): Decision {
   const { limits } = policy
   const { throughput } = consumption
+  const contextBytes = throughput.context_bytes_used ?? bytes?.context_bytes
+  const outputBytes = throughput.output_bytes_used ?? bytes?.output_bytes
   const violations = collect([
     overMax("max_turns", limits.max_turns, throughput.turns_used, "blocked", "turn count exceeds max_turns"),
     overMax(
@@ -122,24 +128,12 @@ export function checkLimits(policy: Budget.Policy, consumption: Budget.Consumpti
       "blocked",
       "output tokens exceed max_output_tokens",
     ),
-    ...(bytes
-      ? [
-          overMax(
-            "max_context_bytes",
-            limits.max_context_bytes,
-            bytes.context_bytes,
-            "blocked" as const,
-            "context bytes exceed max_context_bytes",
-          ),
-          overMax(
-            "max_output_bytes",
-            limits.max_output_bytes,
-            bytes.output_bytes,
-            "blocked" as const,
-            "output bytes exceed max_output_bytes",
-          ),
-        ]
-      : []),
+    contextBytes !== undefined
+      ? overMax("max_context_bytes", limits.max_context_bytes, contextBytes, "blocked", "context bytes exceed max_context_bytes")
+      : null,
+    outputBytes !== undefined
+      ? overMax("max_output_bytes", limits.max_output_bytes, outputBytes, "blocked", "output bytes exceed max_output_bytes")
+      : null,
   ])
   return aggregate(violations)
 }
@@ -234,6 +228,28 @@ export function admitRetrieval(policy: Budget.Policy, requested: RetrievalReques
   return { ...aggregate(violations), granted }
 }
 
+/**
+ * Checks recorded retrieval spend (`Budget.Consumption.retrieval`) against the
+ * `Budget.Retrieval` hard maximums. Complements `admitRetrieval` (which gates a
+ * fresh request): this reads the observed used counts off the persisted
+ * consumption, checking the optional rerank/skill-chunk fields only when present.
+ */
+export function checkRetrievalConsumption(policy: Budget.Policy, consumption: Budget.Consumption): Decision {
+  const { retrieval } = policy
+  const used = consumption.retrieval
+  const violations = collect([
+    overMax("retrieval_top_k", retrieval.retrieval_top_k, used.retrieval_chunks_used, "blocked", "retrieval chunks used exceed retrieval_top_k"),
+    overMax("max_skill_tokens", retrieval.max_skill_tokens, used.skill_tokens_used, "blocked", "skill tokens used exceed max_skill_tokens"),
+    used.rerank_chunks_used !== undefined
+      ? overMax("rerank_top_k", retrieval.rerank_top_k, used.rerank_chunks_used, "blocked", "rerank chunks used exceed rerank_top_k")
+      : null,
+    used.skill_chunks_used !== undefined
+      ? overMax("max_skill_chunks", retrieval.max_skill_chunks, used.skill_chunks_used, "blocked", "skill chunks used exceed max_skill_chunks")
+      : null,
+  ])
+  return aggregate(violations)
+}
+
 // =============================================================================
 // Cost: time_budget_ms, cost_budget_usd, token_budget
 // =============================================================================
@@ -305,6 +321,7 @@ export interface EvaluateBudgetInput {
 export function evaluateBudget(policy: Budget.Policy, consumption: Budget.Consumption, input?: EvaluateBudgetInput): Decision {
   const decisions: Decision[] = [
     checkLimits(policy, consumption, input?.bytes),
+    checkRetrievalConsumption(policy, consumption),
     checkCost(policy, consumption),
     checkResilience(policy, consumption),
   ]

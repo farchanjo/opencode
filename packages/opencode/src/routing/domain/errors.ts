@@ -12,7 +12,7 @@
  *
  * Pure, deterministic, zero framework deps: plain discriminated union +
  * constructors + guards + an exhaustive `match`. No Effect runtime, no I/O.
- * The five variants and their fields are authoritative; adding one here MUST
+ * The six variants and their fields are authoritative; adding one here MUST
  * be mirrored in ports.ts and protocol/routing/index.ts.
  */
 export * as RoutingErrors from "./errors"
@@ -32,6 +32,13 @@ export interface CatalogMismatch {
   readonly catalogVersion: string
 }
 
+export interface MutationRisky {
+  readonly type: "mutation_risky"
+  readonly reason: string
+  readonly agentId: string
+  readonly modelId: string
+}
+
 export interface Unavailable {
   readonly type: "unavailable"
   readonly reason: string
@@ -47,12 +54,19 @@ export interface NotImplemented {
   readonly type: "not_implemented"
 }
 
-export type RoutingError = NoAuthorizedCandidate | CatalogMismatch | Unavailable | InvalidArgument | NotImplemented
+export type RoutingError =
+  | NoAuthorizedCandidate
+  | CatalogMismatch
+  | MutationRisky
+  | Unavailable
+  | InvalidArgument
+  | NotImplemented
 
-/** The five discriminant tags, in the port-contract order. */
+/** The six discriminant tags, in the port-contract order. */
 export const ROUTING_ERROR_TYPES = [
   "no_authorized_candidate",
   "catalog_mismatch",
+  "mutation_risky",
   "unavailable",
   "invalid_argument",
   "not_implemented",
@@ -70,6 +84,10 @@ export function noAuthorizedCandidate(reason: string): NoAuthorizedCandidate {
 
 export function catalogMismatch(decisionId: string, catalogVersion: string): CatalogMismatch {
   return { type: "catalog_mismatch", decisionId, catalogVersion }
+}
+
+export function mutationRisky(reason: string, agentId: string, modelId: string): MutationRisky {
+  return { type: "mutation_risky", reason, agentId, modelId }
 }
 
 export function unavailable(reason: string): Unavailable {
@@ -115,6 +133,7 @@ export function is<T extends RoutingErrorType>(
 export interface RoutingErrorMatcher<R> {
   readonly no_authorized_candidate: (error: NoAuthorizedCandidate) => R
   readonly catalog_mismatch: (error: CatalogMismatch) => R
+  readonly mutation_risky: (error: MutationRisky) => R
   readonly unavailable: (error: Unavailable) => R
   readonly invalid_argument: (error: InvalidArgument) => R
   readonly not_implemented: (error: NotImplemented) => R
@@ -127,6 +146,8 @@ export function match<R>(error: RoutingError, matcher: RoutingErrorMatcher<R>): 
       return matcher.no_authorized_candidate(error)
     case "catalog_mismatch":
       return matcher.catalog_mismatch(error)
+    case "mutation_risky":
+      return matcher.mutation_risky(error)
     case "unavailable":
       return matcher.unavailable(error)
     case "invalid_argument":
@@ -141,6 +162,7 @@ export function describe(error: RoutingError): string {
   return match(error, {
     no_authorized_candidate: (e) => `no_authorized_candidate: ${e.reason}`,
     catalog_mismatch: (e) => `catalog_mismatch: decision=${e.decisionId} catalog=${e.catalogVersion}`,
+    mutation_risky: (e) => `mutation_risky: ${e.reason} (agent=${e.agentId} model=${e.modelId})`,
     unavailable: (e) => `unavailable: ${e.reason}`,
     invalid_argument: (e) => `invalid_argument: ${e.field}: ${e.reason}`,
     not_implemented: () => "not_implemented",

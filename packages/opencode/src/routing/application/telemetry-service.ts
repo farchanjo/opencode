@@ -39,6 +39,7 @@ export interface RedactionPolicy {
   readonly prompts: boolean
   readonly secrets: boolean
   readonly filePaths: boolean
+  readonly fileContent: boolean
   readonly toolPayloads: boolean
 }
 
@@ -46,6 +47,7 @@ export const DEFAULT_REDACTION_POLICY: RedactionPolicy = {
   prompts: true,
   secrets: true,
   filePaths: true,
+  fileContent: true,
   toolPayloads: true,
 }
 
@@ -68,9 +70,9 @@ const PROMPT_KEYS = new Set(
   ].map((k) => k.toLowerCase()),
 )
 
-// Attribute keys carrying file content (treated as tool-payload-class data:
-// TelemetryConfig has no dedicated file-content flag, so file content is gated
-// by the tool-payloads flag alongside the tool I/O that usually delivers it).
+// Attribute keys carrying file content (bodies, diffs, snippets), gated by the
+// dedicated redact.file_content flag; when that flag is absent from a config,
+// redactionPolicyFromConfig falls back to tool_payloads for compatibility.
 const FILE_CONTENT_KEYS = new Set(
   ["content", "file_content", "filecontent", "source", "snippet", "diff", "patch", "body", "text"].map((k) =>
     k.toLowerCase(),
@@ -105,6 +107,7 @@ export function redactionPolicyFromConfig(config: TelemetryConfig): RedactionPol
     prompts: config.redact.prompts,
     secrets: config.redact.secrets,
     filePaths: config.redact.file_paths,
+    fileContent: config.redact.file_content ?? config.redact.tool_payloads,
     toolPayloads: config.redact.tool_payloads,
   }
 }
@@ -130,7 +133,8 @@ function redactKeyClass(key: string, policy: RedactionPolicy): boolean {
   const lower = key.toLowerCase()
   if (policy.secrets && isSecretFieldName(key)) return true
   if (policy.prompts && PROMPT_KEYS.has(lower)) return true
-  if (policy.toolPayloads && (TOOL_PAYLOAD_KEYS.has(lower) || FILE_CONTENT_KEYS.has(lower))) return true
+  if (policy.fileContent && FILE_CONTENT_KEYS.has(lower)) return true
+  if (policy.toolPayloads && TOOL_PAYLOAD_KEYS.has(lower)) return true
   return false
 }
 
@@ -262,9 +266,9 @@ export const DEFAULT_TELEMETRY_CONFIG: TelemetryConfig = {
     retry_budget: 3,
     drop_policy: "drop",
   },
-  redact: { prompts: true, secrets: true, file_paths: true, tool_payloads: true },
+  redact: { prompts: true, secrets: true, file_paths: true, file_content: true, tool_payloads: true },
   resource_attributes: {},
-  sampling: 1,
+  shaping: { sampling: 1, cardinality_budget: 128 },
 }
 
 // Config.Service authority keys per scope. Global authorities are prefixed so
@@ -297,13 +301,21 @@ function toEffectiveConfig(config: TelemetryConfig): EffectiveConfig {
       batch_size: config.queue.batch_size,
       drop_policy: config.queue.drop_policy,
     },
-    redact: { ...config.redact },
+    redact: {
+      prompts: config.redact.prompts,
+      secrets: config.redact.secrets,
+      file_paths: config.redact.file_paths,
+      tool_payloads: config.redact.tool_payloads,
+    },
   }
 }
 
 // parseTelemetrySecretRef bridges the opaque string SecretRef stored in
-// TelemetryConfig into a structured operator SecretRef locator. Accepts JSON
-// `{backend,name,version}`, `backend:name`, or a bare env-ref name.
+// TelemetryConfig into a structured operator SecretRef locator. The canonical
+// encoding is `backend:name` or `backend:name@vN` (the version suffix is
+// stripped; the SecretPort resolves the current version). Legacy JSON
+// `{backend,name,version}` is accepted for backward compatibility, and a bare
+// value falls back to an env-ref name.
 export function parseTelemetrySecretRef(raw: string): { backend: SecretBackend; name: string } | null {
   const trimmed = raw.trim()
   if (!trimmed) return null
@@ -314,13 +326,15 @@ export function parseTelemetrySecretRef(raw: string): { backend: SecretBackend; 
         return { backend: parsed.backend, name: parsed.name }
       }
     } catch {
-      /* fall through to delimiter / bare parsing */
+      /* fall through to canonical / bare parsing */
     }
   }
   const sep = trimmed.indexOf(":")
   if (sep > 0) {
     const backend = trimmed.slice(0, sep)
-    const name = trimmed.slice(sep + 1)
+    let name = trimmed.slice(sep + 1)
+    const at = name.lastIndexOf("@v")
+    if (at > 0 && /^@v[1-9]\d*$/.test(name.slice(at))) name = name.slice(0, at)
     if ((backend === "keychain" || backend === "env-ref") && name) return { backend, name }
   }
   return { backend: "env-ref", name: trimmed }

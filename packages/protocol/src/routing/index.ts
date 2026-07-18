@@ -165,6 +165,12 @@ export const RoutingError = Schema.Union([
     decisionId: Ids.DecisionId,
     catalogVersion: Ids.CatalogVersion,
   }),
+  Schema.Struct({
+    type: Schema.Literal("mutation_risky"),
+    reason: Schema.String,
+    agentId: Ids.AgentId,
+    modelId: Ids.ModelId,
+  }),
   Schema.Struct({ type: Schema.Literal("unavailable"), reason: Schema.String }),
   Schema.Struct({ type: Schema.Literal("invalid_argument"), field: Schema.String, reason: Schema.String }),
   Schema.Struct({ type: Schema.Literal("not_implemented") }),

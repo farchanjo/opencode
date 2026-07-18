@@ -231,9 +231,15 @@ export class BoundedExportQueue<T> {
 // Dynamic identifier label dimensions gated by the cardinality budget.
 const DYNAMIC_LABELS = ["provider", "model", "variant", "agent"] as const
 
-// cardinalityBudget resolves the configurable per-dimension budget. Defaults to
-// 128 distinct values when unset or invalid.
-export function cardinalityBudget(): number {
+// cardinalityBudget resolves the configurable per-dimension budget. Prefers an
+// explicit config value (TelemetryConfig.shaping.cardinality_budget), then the
+// OPENCODE_OTEL_CARDINALITY_BUDGET env override, defaulting to 128 distinct
+// values when both are unset or invalid. The optional parameter keeps the
+// zero-arg signature backward compatible.
+export function cardinalityBudget(configBudget?: number): number {
+  if (typeof configBudget === "number" && Number.isFinite(configBudget) && configBudget > 0) {
+    return Math.floor(configBudget)
+  }
   const raw = process.env.OPENCODE_OTEL_CARDINALITY_BUDGET
   const parsed = raw ? Number.parseInt(raw, 10) : Number.NaN
   return Number.isFinite(parsed) && parsed > 0 ? parsed : 128
