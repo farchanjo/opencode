@@ -22,9 +22,12 @@
  */
 export * as FileSinkWriter from "./file-sink-writer"
 
-import { closeSync, fdatasyncSync, fsyncSync, openSync } from "node:fs"
+import { chmodSync, closeSync, fdatasyncSync, fsyncSync, openSync } from "node:fs"
 import { WriterQueue } from "@opencode-ai/core/outputspool/writer-queue"
 import type { DurabilityTier } from "@opencode-ai/schema/outputspool/enums"
+
+/** Owner-only private-file mode for every channel data file (C6, non-negotiable). */
+export const FILE_MODE = 0o600
 
 /** The batched-writer byte-depth cap (provisional plan constant, C3, AC5). */
 export const DEFAULT_QUEUE_DEPTH_CAP = 4 * 1024 * 1024
@@ -55,6 +58,18 @@ const withFd = (path: string, op: (fd: number) => void): void => {
   }
 }
 
+/** Create (if absent) the channel file with 0600 and re-assert the mode on an existing file (C6). */
+const ensurePrivateFile = (path: string): void => {
+  // Open with append (never truncate — a resumed writer keeps committed bytes)
+  // and the restrictive create mode, then chmod to defeat a permissive umask.
+  const fd = openSync(path, "a", FILE_MODE)
+  try {
+    chmodSync(path, FILE_MODE)
+  } finally {
+    closeSync(fd)
+  }
+}
+
 /** A minimal Bun `FileSink`-shaped sink; injectable so tests avoid real disk. */
 export interface ByteSink {
   readonly write: (chunk: Uint8Array) => number
@@ -64,6 +79,11 @@ export interface ByteSink {
 
 /** Open a Bun `FileSink` for appended writes at `path` (live adapter). */
 export const openBunSink = (path: string): ByteSink => {
+  // Pre-create the channel file with owner-only 0600 perms BEFORE the Bun sink
+  // opens it, so a channel data file is never briefly world-readable at 0644
+  // default umask — the C6 private-file posture is enforced at creation, not
+  // relaxed to the parent 0700 directory alone (non-negotiable).
+  ensurePrivateFile(path)
   const sink = Bun.file(path).writer()
   return {
     write: (chunk) => sink.write(chunk) as number,
