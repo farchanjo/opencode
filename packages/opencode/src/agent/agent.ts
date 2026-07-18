@@ -66,6 +66,21 @@ export interface Interface {
   readonly list: () => Effect.Effect<Info[]>
   readonly defaultInfo: () => Effect.Effect<Info>
   readonly defaultAgent: () => Effect.Effect<string>
+  /**
+   * Feature 001 / T031 — resolve a specialist agent for the Smart Routing
+   * two-stage pipeline (task -> specialist agent -> executor model). Reuses
+   * this canonical, config-composed Agent registry — the same registry
+   * `TaskTool` dispatches subagents through — as the sole specialist-agent
+   * resolver; routing never fabricates agent identity of its own. Hidden
+   * internal agents (compaction/title/summary) are never eligible specialists.
+   */
+  readonly resolveSpecialist: (agentId: string) => Effect.Effect<Info | undefined>
+  /**
+   * Feature 001 / T031 — the specialist-agent candidate pool for routing
+   * ranking: every registered, non-hidden agent. No hardcoded agent IDs; the
+   * pool is resolved from this live config-composed registry on every call.
+   */
+  readonly listSpecialists: () => Effect.Effect<Info[]>
   readonly generate: (input: {
     description: string
     model?: { providerID: ProviderV2.ID; modelID: ModelV2.ID }
@@ -343,11 +358,25 @@ const layer = Layer.effect(
           return (yield* defaultInfo()).name
         })
 
+        // Feature 001 / T031 — a hidden agent (compaction/title/summary) is
+        // internal-only and never eligible as a Smart Routing specialist.
+        const resolveSpecialist = Effect.fnUntraced(function* (agentId: string) {
+          const found = agents[agentId]
+          if (!found || found.hidden) return undefined
+          return found
+        })
+
+        const listSpecialists = Effect.fnUntraced(function* () {
+          return Object.values(agents).filter((candidate) => !candidate.hidden)
+        })
+
         return {
           get,
           list,
           defaultInfo,
           defaultAgent,
+          resolveSpecialist,
+          listSpecialists,
         } satisfies State
       }),
     )
@@ -364,6 +393,12 @@ const layer = Layer.effect(
       }),
       defaultAgent: Effect.fn("Agent.defaultAgent")(function* () {
         return yield* InstanceState.useEffect(state, (s) => s.defaultAgent())
+      }),
+      resolveSpecialist: Effect.fn("Agent.resolveSpecialist")(function* (agentId: string) {
+        return yield* InstanceState.useEffect(state, (s) => s.resolveSpecialist(agentId))
+      }),
+      listSpecialists: Effect.fn("Agent.listSpecialists")(function* () {
+        return yield* InstanceState.useEffect(state, (s) => s.listSpecialists())
       }),
       generate: Effect.fn("Agent.generate")(function* (input: {
         description: string
