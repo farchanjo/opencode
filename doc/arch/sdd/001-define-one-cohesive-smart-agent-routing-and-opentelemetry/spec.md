@@ -2,7 +2,7 @@
 id: 019f6938-d2b8-78d2-afbd-377f2d525585
 number: 001
 slug: define-one-cohesive-smart-agent-routing-and-opentelemetry
-status: clarified
+status: analyzed
 created_at: 2026-07-16T04:39:19.48035Z
 ---
 
@@ -280,13 +280,14 @@ Priority uses P1 (must have), P2 (should have), and P3 (could have).
     PermissionV2, Policy, Session, Task, and runner lifecycle to enforce permissions
     and execution boundaries. It MUST NOT create a parallel runtime or bypass
     canonical authorization.
-30. In the TUI component currently confirmed at
-    `packages/tui/src/component/prompt/index.tsx:1441-1471`, when brain mode and
+30. In the TUI prompt component (`packages/tui/src/component/prompt/index.tsx`,
+    lines 1546–1577, inside the `<box>` at lines 1544–1584), the agent name is
+    rendered by `Locale.titlecase(agent().name)` at line 1550. When brain mode and
     Smart Routing are effectively active, the contextual label in the location that
-    currently displays `Build` MUST display the exact text `Smart` in red. The text
-    MUST remain present in monochrome terminals and the color MUST NOT be the sole
-    indicator. `Smart` is a contextual session policy/state, not a rename of the
-    core `build` agent.
+    currently displays `Build` (when the active agent is `build`) MUST display the
+    exact text `Smart` in red (`theme.error`). The text MUST remain present in
+    monochrome terminals and the color MUST NOT be the sole indicator. `Smart` is
+    a contextual session policy/state, not a rename of the core `build` agent.
 31. The TUI MUST NOT display `Smart` as active unless both brain mode and Smart
     Routing are active. A degraded or unavailable state MUST expose an observable
     reason and an explicit fallback visual; the exact fallback text remains open in
