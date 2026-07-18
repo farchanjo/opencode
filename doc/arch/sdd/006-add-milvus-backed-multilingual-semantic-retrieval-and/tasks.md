@@ -517,7 +517,7 @@ vocabulary is enforced (see the Traceability reconciliation note).
   pt/es/en with the fixed zero leakage tolerance and no binding mutation (FR28, FR31, FR35, FR43,
   C15, C18, C19, AC14, AC19, AC20, AC21, AC27, AC28, AC30, AC35, AC37, AC39, AC40). Acceptance:
   `bun test packages/opencode`/`packages/cli`/`packages/tui` green under the sandbox.
-- [ ] T045 [S25] Run per-package `tsgo --noEmit` typecheck and `bun test` for `packages/schema`,
+- [x] T045 [S25] Run per-package `tsgo --noEmit` typecheck and `bun test` for `packages/schema`,
   `packages/protocol`, `packages/core`, `packages/opencode`, `packages/cli`, and `packages/tui`,
   plus a telemetry cardinality audit under `packages/core/test/semantic/**` asserting query
   text, vectors, entity IDs, session IDs, and paths never appear as metric labels, over-budget

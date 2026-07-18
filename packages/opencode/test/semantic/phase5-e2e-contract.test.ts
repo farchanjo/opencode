@@ -36,18 +36,18 @@ const okProvider = (): ProviderPort => ({
   rotateSecret: () => Effect.succeed({ profile: {} as never, auditId: "aud-1" }),
 })
 const okBinding = (): BindingPort => ({
-  showEmbedding: () => Effect.succeed({ slot: "embedding", version: 4 }),
+  showEmbedding: () => Effect.succeed({}),
   selectEmbedding: () => Effect.succeed({ binding: {} as never, auditId: "aud-1" }),
   validateEmbedding: () => Effect.succeed({ binding: {} as never, probeState: "validated" }),
   reindexEmbedding: () => Effect.succeed({ generation: {} as never, auditId: "aud-1" }),
   cutoverEmbedding: (input) => (input.confirmed ? Effect.succeed({ binding: {} as never, generation: {} as never, auditId: "aud-1" }) : Effect.fail({ type: "confirmation_required" })),
   rollbackEmbedding: (input) => (input.confirmed ? Effect.succeed({ binding: {} as never, auditId: "aud-1" }) : Effect.fail({ type: "confirmation_required" })),
-  showReranker: () => Effect.succeed({ slot: "reranker", version: 2 }),
+  showReranker: () => Effect.succeed({}),
   selectReranker: () => Effect.succeed({ binding: {} as never, auditId: "aud-1" }),
   validateReranker: () => Effect.succeed({ binding: {} as never, probeState: "validated" }),
   cutoverReranker: (input) => (input.confirmed ? Effect.succeed({ binding: {} as never, auditId: "aud-1" }) : Effect.fail({ type: "confirmation_required" })),
   rollbackReranker: (input) => (input.confirmed ? Effect.succeed({ binding: {} as never, auditId: "aud-1" }) : Effect.fail({ type: "confirmation_required" })),
-  status: () => Effect.succeed({ slot: "embedding", state: "active", version: 4, degradation: { rung: "full_semantic" } }),
+  status: () => Effect.succeed({ degradation: { rung: "full_semantic" } }),
   history: () => Effect.succeed({ versions: [] }),
 })
 const fakeBackend = (): SemanticBackend => ({

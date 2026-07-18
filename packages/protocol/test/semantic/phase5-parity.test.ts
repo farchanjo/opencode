@@ -44,8 +44,8 @@ describe("T041 protocol vocabulary parity (schema + CUE authority)", () => {
   test("the durable/live split is 9/3 and matches the schema authority", () => {
     expect(DURABLE_SEMANTIC_EVENT_TYPES.length).toBe(9)
     expect(LIVE_SEMANTIC_EVENT_TYPES.length).toBe(3)
-    expect([...DURABLE_SEMANTIC_EVENT_TYPES].sort()).toEqual([...EventDefinitions.DurableDefinitions.map((d) => d.type)].sort())
-    expect([...LIVE_SEMANTIC_EVENT_TYPES].sort()).toEqual([...EventDefinitions.LiveDefinitions.map((d) => d.type)].sort())
+    expect(([...DURABLE_SEMANTIC_EVENT_TYPES] as string[]).sort()).toEqual([...EventDefinitions.DurableDefinitions.map((d) => d.type)].sort())
+    expect(([...LIVE_SEMANTIC_EVENT_TYPES] as string[]).sort()).toEqual([...EventDefinitions.LiveDefinitions.map((d) => d.type)].sort())
   })
 })
 
