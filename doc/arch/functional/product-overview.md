@@ -72,6 +72,9 @@ Acceptance criteria live as prioritized scenarios in each feature `spec.md`.
   domain, surface, scope_kind, outcome, error_code, duration_ms, retry).
 - **Logs** — structured, secret-free; audit detail in EventV2 (90 days).
 - **Conventions** — `doc/arch/observability/observability.md`.
+- **Smart routing lifecycle** — the routing decision state machine is modeled in
+  [routing-decision statechart](../statecharts/routing-decision.md) (classify →
+  hard gates → rank → persist → dispatch → validate → fallback).
 
 ## Phase 2 deferred (explicit)
 
