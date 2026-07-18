@@ -1,0 +1,83 @@
+/**
+ * Feature 006 / T034 (S22) — live `SemanticBackend` composition for the operator
+ * stack.
+ *
+ * Turns the Feature 006 application adapters (Milvus adapter, embedding/rerank
+ * clients, cutover executor, credential resolver) into the un-audited
+ * `SemanticBackend` seam that `createSemanticPort` (T034) consumes, following the
+ * `createLiveOutputSpoolBackend`/`createLiveLangLockBackend` precedent. It is
+ * HONEST about what the operator `AppRuntime` reaches: the live Milvus/provider
+ * stack is not bound from the operator runtime in this wave, so every method
+ * returns the port's typed capability gap (`unavailable` / `milvus_unavailable`)
+ * rather than fabricated data (mirrors the Feature 003 jobs / Feature 005
+ * outputspool Residuals notes). The composition root injects a real per-port
+ * `override` as the Milvus/provider stack is bound.
+ *
+ * Zero provider/model calls, tokens, or cost on this default path (FR28, AC14); a
+ * caller always sees an honest capability gap and never a false success or a
+ * secret/endpoint/path in a view (C19, C22).
+ */
+export * as SemanticBackendLive from "./backend-live"
+
+import { Effect } from "effect"
+import type { BindingPort, IndexPort, ModelPort, ProviderPort } from "@opencode-ai/protocol/semantic/ports"
+import type { SemanticBackend } from "./semantic-port"
+
+export interface LiveSemanticBackendDeps {
+  /** Real per-port implementations the composition root injects as the stack is bound; unset falls back to the honest gap. */
+  readonly override?: Partial<SemanticBackend>
+}
+
+const NOT_BOUND = "semantic Milvus/provider stack is not bound to the operator runtime in this wave"
+
+const providerGap: ProviderPort = {
+  list: () => Effect.fail({ type: "unavailable", reason: NOT_BOUND }),
+  add: () => Effect.fail({ type: "unavailable", reason: NOT_BOUND }),
+  update: () => Effect.fail({ type: "unavailable", reason: NOT_BOUND }),
+  test: () => Effect.fail({ type: "unavailable", reason: NOT_BOUND }),
+  disable: () => Effect.fail({ type: "unavailable", reason: NOT_BOUND }),
+  delete: () => Effect.fail({ type: "unavailable", reason: NOT_BOUND }),
+  rotateSecret: () => Effect.fail({ type: "unavailable", reason: NOT_BOUND }),
+}
+
+const modelGap: ModelPort = {
+  list: () => Effect.fail({ type: "unavailable", reason: NOT_BOUND }),
+  discover: () => Effect.fail({ type: "unavailable", reason: NOT_BOUND }),
+  register: () => Effect.fail({ type: "unavailable", reason: NOT_BOUND }),
+  validate: () => Effect.fail({ type: "unavailable", reason: NOT_BOUND }),
+  disable: () => Effect.fail({ type: "unavailable", reason: NOT_BOUND }),
+}
+
+const bindingGap: BindingPort = {
+  showEmbedding: () => Effect.fail({ type: "unavailable", reason: NOT_BOUND }),
+  selectEmbedding: () => Effect.fail({ type: "unavailable", reason: NOT_BOUND }),
+  validateEmbedding: () => Effect.fail({ type: "unavailable", reason: NOT_BOUND }),
+  reindexEmbedding: () => Effect.fail({ type: "unavailable", reason: NOT_BOUND }),
+  cutoverEmbedding: () => Effect.fail({ type: "unavailable", reason: NOT_BOUND }),
+  rollbackEmbedding: () => Effect.fail({ type: "unavailable", reason: NOT_BOUND }),
+  showReranker: () => Effect.fail({ type: "unavailable", reason: NOT_BOUND }),
+  selectReranker: () => Effect.fail({ type: "unavailable", reason: NOT_BOUND }),
+  validateReranker: () => Effect.fail({ type: "unavailable", reason: NOT_BOUND }),
+  cutoverReranker: () => Effect.fail({ type: "unavailable", reason: NOT_BOUND }),
+  rollbackReranker: () => Effect.fail({ type: "unavailable", reason: NOT_BOUND }),
+  status: () => Effect.fail({ type: "unavailable", reason: NOT_BOUND }),
+  history: () => Effect.fail({ type: "unavailable", reason: NOT_BOUND }),
+}
+
+const indexGap: IndexPort = {
+  status: () => Effect.fail({ type: "milvus_unavailable", reason: NOT_BOUND }),
+  test: () => Effect.fail({ type: "milvus_unavailable", reason: NOT_BOUND }),
+  reindex: () => Effect.fail({ type: "milvus_unavailable", reason: NOT_BOUND }),
+  reconcile: () => Effect.fail({ type: "milvus_unavailable", reason: NOT_BOUND }),
+  showCollections: () => Effect.fail({ type: "milvus_unavailable", reason: NOT_BOUND }),
+}
+
+const gapBackend: SemanticBackend = { provider: providerGap, model: modelGap, binding: bindingGap, index: indexGap }
+
+/** Build the live backend: the honest gap default overlaid with any injected real ports. */
+export const createLiveSemanticBackend = (deps: LiveSemanticBackendDeps = {}): SemanticBackend => ({
+  provider: deps.override?.provider ?? gapBackend.provider,
+  model: deps.override?.model ?? gapBackend.model,
+  binding: deps.override?.binding ?? gapBackend.binding,
+  index: deps.override?.index ?? gapBackend.index,
+})

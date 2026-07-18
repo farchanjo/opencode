@@ -51,6 +51,8 @@ import { LangLockBackendLive } from "./langlock/backend-live"
 import { LangLockPersistence } from "@/langlock/persistence"
 import { OutputSpoolStackWiring } from "./outputspool/stack-wiring"
 import { OutputSpoolBackendLive } from "./outputspool/backend-live"
+import { SemanticStackWiring } from "./semantic/stack-wiring"
+import { SemanticBackendLive } from "./semantic/backend-live"
 import { createDispatcher, type Dispatcher } from "./application/dispatcher"
 import type { MutationPorts } from "./application/mutation"
 import { createFlockLockPort } from "./application/ports/lock-port"
@@ -383,12 +385,24 @@ export async function createLiveOperatorStack(input: CreateLiveOperatorStackInpu
   const outputSpoolBackend = OutputSpoolBackendLive.createLiveOutputSpoolBackend({})
   const outputSpoolWiring = OutputSpoolStackWiring.createOutputSpoolDomainWiring({ backend: outputSpoolBackend })
 
+  // === Feature 006 — semantic domain port composition =======================
+  // The typed 30 `semantic.*` operator ports over the Feature 006 application
+  // adapters. The live Milvus/provider stack is not reachable from the operator
+  // AppRuntime in this wave, so the honest backend returns typed capability gaps
+  // (`unavailable`/`milvus_unavailable`) rather than fabricated data (see
+  // backend-live.ts and the tasks.md T034 note). Feature 007 stays the sole
+  // command-registration authority — this override replaces the not_implemented
+  // stub and adds no ids (the reserved 30 semantic.* ids already live at 1.3.0).
+  const semanticBackend = SemanticBackendLive.createLiveSemanticBackend({})
+  const semanticWiring = SemanticStackWiring.createSemanticDomainWiring({ backend: semanticBackend })
+
   const domainPorts = wireDomainPorts(
     {
       ...lifecycleWiring.ports,
       ...jobsWiring.ports,
       ...langLockWiring.ports,
       ...outputSpoolWiring.ports,
+      ...semanticWiring.ports,
       routing: createRoutingDomainPort(routingService),
     },
     { dnsResolver },
@@ -433,6 +447,7 @@ export async function createLiveOperatorStack(input: CreateLiveOperatorStackInpu
       lifecycleWiring.dispose()
       jobsWiring.dispose()
       outputSpoolWiring.dispose()
+      semanticWiring.dispose()
       maintenance.dispose()
     },
   }

@@ -394,7 +394,7 @@ vocabulary is enforced (see the Traceability reconciliation note).
   existing bridge and no second channel exists, mirroring C22 (FR12, FR13, FR41, FR42, C22).
   Acceptance: `bun test packages/opencode` asserts a durable settlement event reaches the
   bridge boundary once, a live signal is droppable, and no payload carries content or a path.
-- [ ] T034 [S22] Author `packages/opencode/src/operator/semantic/**` with the typed
+- [x] T034 [S22] Author `packages/opencode/src/operator/semantic/**` with the typed
   `ProviderPort`/`ModelPort`/`BindingPort`/`IndexPort`/`EvalPort` domain implementations for
   the **30** reserved `semantic.*` IDs (`semantic.provider.*` 7, `semantic.model.*` 5,
   `semantic.embedding.*` 6, `semantic.reranker.*` 5, `semantic.binding.*` 2, `semantic.index.*`
