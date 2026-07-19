@@ -138,6 +138,17 @@ Acceptance criteria live as prioritized scenarios in each feature `spec.md`.
   (requested → { misconfigured | probing → { reachable | unreachable } } →
   recorded, bounded by a timeout, test-signal only and never blocking the loop —
   the Feature 007 parity invariant is preserved).
+- **Operator config persistence round-trip** — the write→invalidate→reload→read
+  lifecycle that makes a committed operator mutation on a config-backed domain
+  (langlock, telemetry, smart, budget, pools, jobs) durably persist and survive a
+  process restart, wired when the operator config namespace is accepted and the
+  write path is aligned with a loader-consumed read path, is modeled in
+  [config-roundtrip statechart](../statecharts/config-roundtrip.md)
+  (requested → schema_gate → { rejected | validated → written → path_gate →
+  { orphaned | invalidated → reloaded → persisted } } → recorded, with the
+  false-success `orphaned` and unknown-key `rejected` negatives pinned as honest
+  outcomes and the single `mutateAuthority` CAS commit — the Feature 007 parity
+  invariant is preserved).
 
 ## Phase 2 deferred (explicit)
 
