@@ -8,6 +8,7 @@ import {
 import { dynamicTool, jsonSchema, type JSONSchema7, type Tool } from "ai"
 import { Effect } from "effect"
 import { checkReservedRegistrationName } from "@opencode-ai/core/operator"
+import { CatalogPolicy } from "@opencode-ai/core/mcp/catalog-policy"
 
 const DEFAULT_TIMEOUT = 30_000
 const MAX_LIST_PAGES = 1_000
@@ -16,24 +17,30 @@ const TolerantListToolsResultSchema = ListToolsResultSchema.extend({
   tools: ToolSchema.omit({ outputSchema: true }).array(),
 })
 
+/**
+ * Walk a cursor-paginated MCP list, delegating the duplicate/non-advancing cursor
+ * guard and the max-page bound to the Feature 008 core `CatalogPolicy` engine (T016)
+ * so one policy authority governs the walk (C4). A tripped guard throws (fail
+ * closed); the Effect caller catches and RETAINS the prior `defs[server]` shape
+ * (FR10, FR11, C4).
+ */
 export async function paginate<T, R extends { nextCursor?: string }>(
   list: (cursor?: string) => Promise<R>,
   items: (result: R) => T[],
 ) {
   const result: T[] = []
-  const cursors = new Set<string>()
+  let guard = CatalogPolicy.initialGuard(MAX_LIST_PAGES)
   let cursor: string | undefined
 
-  for (let page = 0; page < MAX_LIST_PAGES; page++) {
+  for (;;) {
     const page = await list(cursor)
     result.push(...items(page))
-    if (page.nextCursor === undefined) return result
-    if (cursors.has(page.nextCursor)) throw new Error(`MCP list returned duplicate cursor: ${page.nextCursor}`)
-    cursors.add(page.nextCursor)
+    const decision = CatalogPolicy.nextPage(guard, page.nextCursor ?? null)
+    if (decision.kind === "complete") return result
+    if (decision.kind === "guard_tripped") throw new Error(`MCP list guard tripped: ${decision.reason}`)
+    guard = decision.guard
     cursor = page.nextCursor
   }
-
-  throw new Error(`MCP list exceeded ${MAX_LIST_PAGES} pages`)
 }
 
 export function defs(client: Client, timeout?: number) {

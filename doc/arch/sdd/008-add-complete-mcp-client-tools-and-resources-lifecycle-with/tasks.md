@@ -312,7 +312,7 @@ enforced (see the Traceability reconciliation note).
   `bun test packages/opencode` asserts a progressToken is supplied, wire progress is monotonic,
   the Process Table child and OTEL update, UI coalescing never decreases/invents values, and no
   progress payload enters the transcript.
-- [ ] T027 [S17] Rework `packages/opencode/src/mcp/catalog.ts` to walk `tools/list` paginated
+- [x] T027 [S17] Rework `packages/opencode/src/mcp/catalog.ts` to walk `tools/list` paginated
   under the T016 policy (duplicate-cursor guard + max-page fail-closed), refresh the whole
   catalog on `notifications/tools/list_changed` and emit the durable `mcp.tools_changed`, and
   fail closed on a reserved-name collision via the existing `checkReservedRegistrationName` /
