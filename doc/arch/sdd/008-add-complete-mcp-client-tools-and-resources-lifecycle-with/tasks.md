@@ -386,7 +386,7 @@ enforced (see the Traceability reconciliation note).
   packages/opencode` asserts an elicitation/`input_required` always surfaces to the operator with
   no silent model answer, sensitive-mode blocks model-mediated answers, and content-stream is
   namespaced with a final-`CallToolResult` fallback when not negotiated.
-- [ ] T034 [S22] Author `packages/opencode/src/operator/mcp/**` with the typed domain
+- [x] T034 [S22] Author `packages/opencode/src/operator/mcp/**` with the typed domain
   implementations for the **30** reserved `mcp.*` IDs (`mcp.server.*` 11, `mcp.auth.*` 4,
   `mcp.resource.admin.*` 7, `mcp.logging.level.*` 2, `mcp.experimental.*` 3, `mcp.extension.*` 3)
   registered through the Feature 007 registry, operator-only and zero-LLM (zero provider calls

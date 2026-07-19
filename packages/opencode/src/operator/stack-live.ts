@@ -53,6 +53,8 @@ import { OutputSpoolStackWiring } from "./outputspool/stack-wiring"
 import { OutputSpoolBackendLive } from "./outputspool/backend-live"
 import { SemanticStackWiring } from "./semantic/stack-wiring"
 import { SemanticBackendLive } from "./semantic/backend-live"
+import { McpStackWiring } from "./mcp/stack-wiring"
+import { McpBackendLive } from "./mcp/backend-live"
 import { createDispatcher, type Dispatcher } from "./application/dispatcher"
 import type { MutationPorts } from "./application/mutation"
 import { createFlockLockPort } from "./application/ports/lock-port"
@@ -396,6 +398,17 @@ export async function createLiveOperatorStack(input: CreateLiveOperatorStackInpu
   const semanticBackend = SemanticBackendLive.createLiveSemanticBackend({})
   const semanticWiring = SemanticStackWiring.createSemanticDomainWiring({ backend: semanticBackend })
 
+  // === Feature 008 — mcp domain port composition ============================
+  // The typed 30 `mcp.*` operator ports over the Feature 008 application host.
+  // The live `MCP.Service` is not bound from the operator AppRuntime in this wave,
+  // so the honest backend returns typed capability gaps (`unavailable`/
+  // `mcp_unavailable`) rather than fabricated data (see backend-live.ts and the
+  // tasks.md T034 note). Feature 007 stays the sole command-registration authority
+  // — this override replaces the not_implemented stub and adds no ids (the reserved
+  // 30 mcp.* ids already live at 1.3.0).
+  const mcpBackend = McpBackendLive.createLiveMcpBackend({})
+  const mcpWiring = McpStackWiring.createMcpDomainWiring({ backend: mcpBackend })
+
   const domainPorts = wireDomainPorts(
     {
       ...lifecycleWiring.ports,
@@ -403,6 +416,7 @@ export async function createLiveOperatorStack(input: CreateLiveOperatorStackInpu
       ...langLockWiring.ports,
       ...outputSpoolWiring.ports,
       ...semanticWiring.ports,
+      ...mcpWiring.ports,
       routing: createRoutingDomainPort(routingService),
     },
     { dnsResolver },
@@ -448,6 +462,7 @@ export async function createLiveOperatorStack(input: CreateLiveOperatorStackInpu
       jobsWiring.dispose()
       outputSpoolWiring.dispose()
       semanticWiring.dispose()
+      mcpWiring.dispose()
       maintenance.dispose()
     },
   }
