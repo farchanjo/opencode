@@ -100,6 +100,12 @@ import { ProviderProfile as SemanticProviderProfile } from "../src/semantic/prov
 import { Refs as SemanticRefs } from "../src/semantic/refs"
 import { Retrieval as SemanticRetrieval } from "../src/semantic/retrieval"
 import { TextValues as SemanticTextValues } from "../src/semantic/text-values"
+import {
+  ToolDescriptor as SemanticToolDescriptor,
+  ToolDoc as SemanticToolDoc,
+  ToolParameter as SemanticToolParameter,
+  ToolParameterProjection as SemanticToolParameterProjection,
+} from "../src/semantic/tool-doc"
 import { Values as SemanticValues } from "../src/semantic/values"
 import { Capability as McpCapability } from "../src/mcp/capability"
 import { Collections as McpCollections } from "../src/mcp/collections"
@@ -721,6 +727,9 @@ describe("contract hygiene", () => {
       SemanticIds.CollectionAliasId,
       SemanticIds.ProjectId,
       SemanticIds.EventId,
+      SemanticIds.ToolDocId,
+      SemanticIds.ToolRef,
+      SemanticIds.McpServerRef,
       SemanticRefs.ProviderRef,
       SemanticRefs.ModelRef,
       SemanticRefs.ParentSkillId,
@@ -774,6 +783,7 @@ describe("contract hygiene", () => {
       SemanticTextValues.Available,
       SemanticTextValues.Normalized,
       SemanticTextValues.InsecureAllowed,
+      SemanticTextValues.Truncated,
       SemanticCollections.TagSet,
       SemanticCollections.LanguageSet,
       SemanticCollections.AgentRefSet,
@@ -800,6 +810,11 @@ describe("contract hygiene", () => {
       SemanticEnumsState.ScopeKind,
       SemanticEnumsState.Visibility,
       SemanticEnumsState.RoleKind,
+      SemanticEnumsState.ToolSource,
+      SemanticEnumsState.JsonSchemaType,
+      SemanticEnumsState.ToolRetrievalMode,
+      SemanticEnumsState.ToolSurface,
+      SemanticEnumsState.ToolTriggerSource,
       SemanticEnumsEvent.EventClass,
       SemanticEnumsEvent.EventSource,
       SemanticEnumsEvent.ActorKind,
@@ -838,6 +853,10 @@ describe("contract hygiene", () => {
       SemanticDocuments.AgentDoc,
       SemanticDocuments.SkillDoc,
       SemanticDocuments.SkillChunkDoc,
+      SemanticToolDescriptor,
+      SemanticToolParameter,
+      SemanticToolParameterProjection,
+      SemanticToolDoc,
       SemanticProfile.QueryFingerprint,
       SemanticProfile.TaskProfile,
       SemanticRetrieval.RetrievalRequest,

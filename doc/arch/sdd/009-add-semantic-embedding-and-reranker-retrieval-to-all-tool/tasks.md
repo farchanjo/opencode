@@ -47,7 +47,7 @@ path.
 
 ### Schema and protocol foundation (Phase 1)
 
-- [ ] T001 [S0] Author the tool identifiers and enums: add `ToolDocId` (branded composed
+- [x] T001 [S0] Author the tool identifiers and enums: add `ToolDocId` (branded composed
   tool id — native `tool.id`, MCP `toolName(client, name)`) and `ToolContentHash` (the
   incremental upsert/tombstone hash that doubles as the C3 tie-break version leg) to
   `packages/schema/src/semantic/ids.ts`, and the closed `ToolSource`
@@ -60,7 +60,7 @@ path.
   `tsgo --noEmit` on `packages/schema` green and the schema test asserts `ToolSource` is a
   closed 4-member literal, `ToolSearchSurface` a closed 3-member literal, and `ToolDocId`
   retains its root identifier (annotate-before-check) on the brand.
-- [ ] T002 [S1] Author `packages/schema/src/semantic/tool-doc.ts` composing the reused
+- [x] T002 [S1] Author `packages/schema/src/semantic/tool-doc.ts` composing the reused
   `DocIdentity` / `DocScope` / `DocAvailability` shared parts from `documents.ts` (never
   redefined) with the tool-specific `ToolClassification` (`source`, `displayName`,
   sanitized `description`, nullable `mcpServerRef`), the `ToolParameterProjection` (name /
@@ -75,7 +75,7 @@ path.
   test asserts `ToolDoc` composes the three shared parts, carries the scalar `project_id`/
   `permission_ref` via `DocScope` and a `languageTag`, and exposes no `default`/`example`/
   `const`/`format`/path/secret field.
-- [ ] T003 [S0–S1] Extend the barrel `packages/schema/src/semantic/index.ts` to re-export
+- [x] T003 [S0–S1] Extend the barrel `packages/schema/src/semantic/index.ts` to re-export
   `tool-doc.ts` and the new tool identifiers/enums, and confirm the barrel is registered in
   `packages/schema/src/index.ts` (already exported for Feature 006). Acceptance:
   `tsgo --noEmit` on `packages/schema` green and `bun test packages/schema` imports the
