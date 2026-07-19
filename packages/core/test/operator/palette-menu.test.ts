@@ -15,7 +15,6 @@ import {
   buildOperatorGroupList,
   buildOperatorDomainPanel,
   listOperatorPaletteEntries,
-  listOperatorSuggestedEntries,
   listOperatorSettingsEntries,
   type OperatorVerbItem,
 } from "../../src/operator"
@@ -189,13 +188,45 @@ describe("T014 availability + input-mode derivation (FR3, FR5, FR7)", () => {
   })
 })
 
-describe("T014 curated suggestions replace the flat wall (FR1)", () => {
-  test("suggested set is a strict read-only subset of the full catalog", () => {
-    const all = listOperatorPaletteEntries()
-    const suggested = listOperatorSuggestedEntries()
-    expect(suggested.length).toBeGreaterThan(0)
-    expect(suggested.length).toBeLessThan(all.length)
-    expect(suggested.every((e) => !e.mutates)).toBe(true)
-    expect(suggested.every((e) => !e.secretRelated)).toBe(true)
+describe("Feature 015 T002 — the `suggest` machinery is retired (FR2)", () => {
+  test("no palette entry carries a `suggest` field", () => {
+    for (const entry of listOperatorPaletteEntries()) {
+      expect("suggest" in entry).toBe(false)
+    }
+  })
+})
+
+describe("Feature 015 T003 — unique row-title copy contract (FR3)", () => {
+  test("entry-level titles are domain-qualified `{Domain} {action}`, never a dotted id", () => {
+    for (const entry of listOperatorPaletteEntries()) {
+      // domain-qualified: the human title starts with the humanised domain label.
+      const domainLabel = entry.domain.charAt(0).toUpperCase() + entry.domain.slice(1)
+      expect(entry.title.startsWith(`${domainLabel} `)).toBe(true)
+      // the dotted id is never the primary label.
+      expect(entry.title).not.toContain(".")
+      expect(entry.title).not.toBe(entry.id)
+    }
+  })
+
+  test("entry-level titles are globally unique — no `View: Status` ×8 duplication", () => {
+    const titles = listOperatorPaletteEntries().map((e) => e.title)
+    expect(new Set(titles).size).toBe(titles.length)
+    expect(titles.some((t) => t === "View: Status")).toBe(false)
+  })
+
+  test("each domain panel's rows carry a unique human title, id only as secondary", () => {
+    for (const domain of OPERATOR_SETTINGS_DOMAINS) {
+      const panel = buildOperatorDomainPanel(domain)
+      const rows = [...panel.view, ...panel.configure]
+      const labels = rows.map((r) => r.label)
+      // no two rows on this surface share a human title.
+      expect(new Set(labels).size).toBe(labels.length)
+      for (const row of rows) {
+        // the primary label is never the dotted id; the id lives in the subtitle.
+        expect(row.label).not.toBe(row.id)
+        expect(row.label).not.toContain(".")
+        expect(row.subtitle).toContain(row.id)
+      }
+    }
   })
 })

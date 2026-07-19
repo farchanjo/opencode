@@ -166,12 +166,12 @@ export {
 
 export {
   listOperatorPaletteEntries,
-  listOperatorSuggestedEntries,
   listOperatorSettingsEntries,
   listAllOperatorSettingsDomains,
   buildOperatorPaletteCommands,
   buildOperatorGroupList,
   buildOperatorDomainPanel,
+  buildOperatorScreenControls,
   isOperatorSecretRelatedId,
   isOperatorSecretMutationId,
   OPERATOR_SETTINGS_DOMAINS,
@@ -188,6 +188,9 @@ export {
   type OperatorVerbAvailability,
   type OperatorInputMode,
   type OperatorPersistenceClass,
+  type OperatorToggleControl,
+  type OperatorTriStateControl,
+  type OperatorScreenControls,
 } from "./palette"
 
 export {

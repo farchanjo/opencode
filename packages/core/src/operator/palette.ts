@@ -41,7 +41,6 @@ export type OperatorPaletteEntry = {
   readonly paletteAlias: string
   /** Mutating secret/credential ops — require keychain (T019) when true */
   readonly secretRelated: boolean
-  readonly suggest: boolean
   /** False when secretRelated and keychain unavailable. */
   readonly executable: boolean
   /** Human verb label (never the dotted id) shown in a grouped row (FR4). */
@@ -258,9 +257,18 @@ function inputModeFor(id: string): OperatorInputMode {
   return OPERATOR_INPUT_MODES[id] ?? "none"
 }
 
-/** Normative verb title (T003, FR4): View/Configure prefix + human label. */
-function verbTitleFor(section: OperatorVerbSection, label: string): string {
-  return section === "view" ? `View: ${label}` : `Configure: ${label}`
+/**
+ * Domain-qualified entry title (Feature 015 T003, FR3). This is the row title on
+ * a surface where the domain is NOT implicit (the entry-level `title`): it reads
+ * `{Domain} {action}` — e.g. `Telemetry status`, `Langlock set` — so the copy is
+ * globally unique and the old `View: Status` ×8 duplication is gone. The dotted
+ * command id stays discoverable only in `description`, never as the primary label.
+ * On a domain screen (domain implicit) the action-only `verbLabel` is the row
+ * title instead (see `toVerbItem`).
+ */
+function entryTitleFor(domainLabel: string, verbLabel: string): string {
+  const action = verbLabel.charAt(0).toLowerCase() + verbLabel.slice(1)
+  return `${domainLabel} ${action}`
 }
 
 /** Normative verb subtitle (T003, FR4). Dotted id stays discoverable, never primary. */
@@ -295,20 +303,12 @@ export function listOperatorPaletteEntries(options: ListPaletteOptions = {}): re
     const persistence = persistenceFor(draft.id, domain, draft.mutates)
     const availability = availabilityFor(draft.mutates, confirmRequired, persistence)
     const verbLabel = draft.title ?? verbLabelFor(operation)
-    const suggest =
-      !draft.mutates &&
-      !secretRelated &&
-      (operation === "status" ||
-        operation === "show" ||
-        operation.endsWith(".status") ||
-        operation.endsWith(".show") ||
-        operation === "auth.status")
     return {
       id: draft.id,
       domain,
       operation,
       commandName: `operator.${draft.id}`,
-      title: verbTitleFor(section, verbLabel),
+      title: entryTitleFor(domainLabelFor(domain), verbLabel),
       description: verbSubtitleFor({ commandId: draft.id, section, availability, secretRelated }),
       category: secretRelated ? `Operator / ${domain} / secrets` : `Operator / ${domain}`,
       mutates: draft.mutates,
@@ -318,7 +318,6 @@ export function listOperatorPaletteEntries(options: ListPaletteOptions = {}): re
       slashAlias: `/op.${draft.id}`,
       paletteAlias: draft.id,
       secretRelated,
-      suggest,
       executable: !secretBlocked,
       verbLabel,
       section,
@@ -327,10 +326,6 @@ export function listOperatorPaletteEntries(options: ListPaletteOptions = {}): re
       persistence,
     }
   })
-}
-
-export function listOperatorSuggestedEntries(): readonly OperatorPaletteEntry[] {
-  return listOperatorPaletteEntries().filter((e) => e.suggest)
 }
 
 /** All 12 reserved catalog domains project into the group menu (T004, FR2). */
@@ -430,11 +425,137 @@ export function buildOperatorDomainPanel(domain: string): OperatorDomainPanel {
   }
 }
 
+/**
+ * A collapsed enable/disable toggle control (Feature 015 T008, FR7). One control
+ * replaces a domain's on/off (or enable/disable) verb pair: its enable/disable
+ * command ids, a human label, and the derived availability. An `unavailable`
+ * control renders marked + inert (FR15). Mirrors `controls.cue #ToggleRow`.
+ */
+export type OperatorToggleControl = {
+  readonly kind: "toggle"
+  readonly domain: string
+  readonly base: string
+  readonly label: string
+  readonly enableId: string
+  readonly disableId: string
+  readonly availability: OperatorVerbAvailability
+  readonly confirmRequired: boolean
+}
+
+/**
+ * A tri-state routing control (Feature 015 T009, FR8). Smart routing is
+ * `on`/`off`/`auto`; a binary toggle cannot honestly represent three states, so it
+ * renders a pre-selected three-option picker instead. Mirrors
+ * `controls.cue #TriStateRow`.
+ */
+export type OperatorTriStateControl = {
+  readonly kind: "tristate"
+  readonly domain: string
+  readonly base: string
+  readonly label: string
+  readonly modes: readonly { readonly state: "on" | "off" | "auto"; readonly id: string }[]
+  readonly availability: OperatorVerbAvailability
+}
+
+/**
+ * The composed controls of one domain screen (Feature 015 T008/T009). Toggle and
+ * tri-state controls collapse the on/off/auto Configure verb groups; `consumedIds`
+ * lists every Configure verb a control absorbed so the screen can drop those from
+ * its plain settings list and not render a verb twice.
+ */
+export type OperatorScreenControls = {
+  readonly toggles: readonly OperatorToggleControl[]
+  readonly tristates: readonly OperatorTriStateControl[]
+  readonly consumedIds: ReadonlySet<string>
+}
+
+/** The on/off/auto role a Configure verb plays in a control group, or `undefined`. */
+function controlRoleOf(id: string): { base: string; role: "on" | "off" | "auto" } | undefined {
+  const dot = id.lastIndexOf(".")
+  if (dot <= 0) return undefined
+  const base = id.slice(0, dot)
+  const seg = id.slice(dot + 1)
+  if (seg === "on" || seg === "enable") return { base, role: "on" }
+  if (seg === "off" || seg === "disable") return { base, role: "off" }
+  if (seg === "auto") return { base, role: "auto" }
+  return undefined
+}
+
+/** Human label for a control: the humanised last segment of its base (FR7, FR8). */
+function controlLabelFor(base: string): string {
+  return domainLabelFor(base.slice(base.lastIndexOf(".") + 1))
+}
+
+/** Fold a control group's member availabilities into one row availability (FR15). */
+function controlAvailabilityOf(members: readonly OperatorPaletteEntry[]): OperatorVerbAvailability {
+  if (members.some((e) => e.availability === "unavailable")) return "unavailable"
+  if (members.some((e) => e.availability === "confirm_required")) return "confirm_required"
+  return "available"
+}
+
+/**
+ * Compose a domain's toggle and tri-state controls (Feature 015 T008/T009, FR7,
+ * FR8). Only payload-free Configure verbs (`inputMode === "none"`) collapse into a
+ * domain-level control — a per-entity toggle that selects an id (`jobs.enable`,
+ * `value_picker`) stays a per-entity action for the collection CRUD screens
+ * (FR12), never a domain toggle. A base with both `on` and `off` poles is a
+ * toggle; a base that also has an `auto` pole is a tri-state. An `unavailable`
+ * backend yields an inert, marked control (FR15).
+ */
+export function buildOperatorScreenControls(domain: string): OperatorScreenControls {
+  const configure = listOperatorSettingsEntries(domain).filter(
+    (e) => e.section === "configure" && e.inputMode === "none",
+  )
+  const groups = new Map<string, Partial<Record<"on" | "off" | "auto", OperatorPaletteEntry>>>()
+  for (const entry of configure) {
+    const role = controlRoleOf(entry.id)
+    if (!role) continue
+    const group = groups.get(role.base) ?? {}
+    group[role.role] = entry
+    groups.set(role.base, group)
+  }
+
+  const toggles: OperatorToggleControl[] = []
+  const tristates: OperatorTriStateControl[] = []
+  const consumedIds = new Set<string>()
+  for (const [base, group] of groups) {
+    const { on, off, auto } = group
+    if (!on || !off) continue
+    if (auto) {
+      tristates.push({
+        kind: "tristate",
+        domain,
+        base,
+        label: controlLabelFor(base),
+        modes: [
+          { state: "on", id: on.id },
+          { state: "off", id: off.id },
+          { state: "auto", id: auto.id },
+        ],
+        availability: controlAvailabilityOf([on, off, auto]),
+      })
+      consumedIds.add(on.id).add(off.id).add(auto.id)
+      continue
+    }
+    toggles.push({
+      kind: "toggle",
+      domain,
+      base,
+      label: controlLabelFor(base),
+      enableId: on.id,
+      disableId: off.id,
+      availability: controlAvailabilityOf([on, off]),
+      confirmRequired: on.confirmRequired || off.confirmRequired,
+    })
+    consumedIds.add(on.id).add(off.id)
+  }
+  return { toggles, tristates, consumedIds }
+}
+
 export function buildOperatorPaletteCommands(): readonly {
   readonly name: string
   readonly title: string
   readonly category: string
-  readonly suggested: boolean
   readonly enabled: boolean
   readonly id: string
   readonly secretRelated: boolean
@@ -443,7 +564,6 @@ export function buildOperatorPaletteCommands(): readonly {
     name: e.commandName,
     title: e.title,
     category: e.category,
-    suggested: e.suggest,
     enabled: e.executable,
     id: e.id,
     secretRelated: e.secretRelated,
