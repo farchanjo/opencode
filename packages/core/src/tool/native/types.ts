@@ -107,6 +107,56 @@ export interface NativeGrepResult {
   readonly counts: readonly NativeGrepFileCount[] | null
 }
 
+/** `oc_write` request (FR2). Atomic create/overwrite, mirroring `write.ts`. */
+export interface NativeWriteRequest {
+  readonly path: string
+  readonly content: string
+}
+
+/** `oc_write` result — mirrors CUE `#WriteResult`. */
+export interface NativeWriteResult {
+  readonly created: boolean
+  readonly byte_count: number
+}
+
+/** `oc_edit` request (FR3). Exact string replacement with uniqueness, mirroring `edit.ts`. */
+export interface NativeEditRequest {
+  readonly path: string
+  readonly old_string: string
+  readonly new_string: string
+  readonly replace_all: boolean
+}
+
+/** `oc_edit` result — mirrors CUE `#EditResult`. */
+export interface NativeEditResult {
+  readonly replacements: number
+}
+
+/** `oc_apply_patch` request (FR4). Multi-hunk apply, mirroring `apply-patch.ts`. */
+export interface NativeApplyPatchRequest {
+  readonly patch: string
+  readonly cwd?: string | null
+}
+
+/** `oc_apply_patch` result — mirrors CUE `#ApplyPatchResult`. */
+export interface NativeApplyPatchResult {
+  readonly files_changed: number
+  readonly hunks_applied: number
+}
+
+/** `oc_glob` request (FR5). `.gitignore`-aware, mtime-sorted, mirroring the `glob` tool. */
+export interface NativeGlobRequest {
+  readonly pattern: string
+  readonly cwd?: string | null
+  readonly limit?: number | null
+}
+
+/** `oc_glob` result — mirrors CUE `#GlobResult` (mtime-desc paths + size-cap truncation). */
+export interface NativeGlobResult {
+  readonly paths: readonly string[]
+  readonly truncated: boolean
+}
+
 /** Which backend actually served a call and why, for the content-free telemetry seam (FR24, C14). */
 export interface NativeInvokeMeta {
   readonly backend: NativeBackend

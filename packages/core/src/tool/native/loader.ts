@@ -97,6 +97,10 @@ function symbolTable(crate: NativeCrate): Record<string, FfiSymbolDef> {
       ...shared,
       oc_read: { args: ["ptr", "u64"], returns: "ptr" },
       oc_grep: { args: ["ptr", "u64"], returns: "ptr" },
+      oc_write: { args: ["ptr", "u64"], returns: "ptr" },
+      oc_edit: { args: ["ptr", "u64"], returns: "ptr" },
+      oc_apply_patch: { args: ["ptr", "u64"], returns: "ptr" },
+      oc_glob: { args: ["ptr", "u64"], returns: "ptr" },
     }
   }
   return shared
