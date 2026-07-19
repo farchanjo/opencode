@@ -8,6 +8,7 @@
  */
 import path from "path"
 import { mkdir } from "fs/promises"
+import { Database as BunDatabase } from "bun:sqlite"
 import { Effect } from "effect"
 import { Global } from "@opencode-ai/core/global"
 import {
@@ -24,6 +25,7 @@ import { Config } from "@/config/config"
 import { EventV2Bridge } from "@/event-v2-bridge"
 import { Provider } from "@/provider/provider"
 import { Agent } from "@/agent/agent"
+import { MCP } from "@/mcp"
 import { InstanceRuntime } from "@/project/instance-runtime"
 import { createLiveConfigServiceLike } from "./adapters/outbound/config-live"
 import { createLiveEventV2AuditPortFromUse } from "./adapters/outbound/event-v2-live"
@@ -46,12 +48,13 @@ import { createLiveOperatorOtelRecorder } from "./adapters/outbound/otel-live"
 import { LifecycleStackWiring } from "./lifecycle/stack-wiring"
 import { JobsStackWiring } from "./jobs/stack-wiring"
 import { JobsBackendLive } from "./jobs/backend-live"
-import { JobPersistence } from "@/jobs/persistence"
+import { OperatorJobPersistence } from "./jobs/persistence"
 import { LangLockStackWiring } from "./langlock/stack-wiring"
 import { LangLockBackendLive } from "./langlock/backend-live"
 import { LangLockPersistence } from "@/langlock/persistence"
 import { OutputSpoolStackWiring } from "./outputspool/stack-wiring"
 import { OutputSpoolBackendLive } from "./outputspool/backend-live"
+import { ControlStore } from "@/outputspool/control-store"
 import { SemanticStackWiring } from "./semantic/stack-wiring"
 import { SemanticBackendLive } from "./semantic/backend-live"
 import { McpStackWiring } from "./mcp/stack-wiring"
@@ -375,7 +378,7 @@ export async function createLiveOperatorStack(input: CreateLiveOperatorStackInpu
   // command-registration authority — this override replaces the not_implemented
   // stub and adds no ids.
   const jobsBackend = JobsBackendLive.createLiveJobsBackend({
-    persistence: JobPersistence.createJobPersistence({ config: store.config }),
+    persistence: OperatorJobPersistence.createOperatorJobPersistence({ config: store.config }),
   })
   const jobsWiring = JobsStackWiring.createJobsDomainWiring({ backend: jobsBackend })
 
@@ -393,38 +396,105 @@ export async function createLiveOperatorStack(input: CreateLiveOperatorStackInpu
   })
   const langLockWiring = LangLockStackWiring.createLangLockDomainWiring({ backend: langLockBackend })
 
-  // === Feature 005 — outputspool domain port composition ====================
-  // The typed `output.*` operator port over the Feature 005 application adapters.
-  // The live spool control store / page reader / retention sweeper are not
-  // reachable from the operator AppRuntime in this wave, so the honest backend
-  // returns typed capability gaps for the reads/admin ops and cross-project
-  // deny-by-default for export/share (see backend-live.ts and the Feature 005
-  // tasks.md T037 note). Feature 007 stays the sole command-registration
-  // authority — this override replaces the not_implemented stub and adds no ids
-  // (the reserved output.* ids already live in the catalog at 1.3.0).
-  const outputSpoolBackend = OutputSpoolBackendLive.createLiveOutputSpoolBackend({})
+  // === Feature 005 / 014 — outputspool domain port composition (FR6) ========
+  // The typed `output.*` operator port over the Feature 005 application adapters,
+  // now backed by the real control store. `stat`/`read` project the live
+  // committed-length authority through `createControlStore` + `page-reader.ts`;
+  // `retention.set`/`quota.set` persist bounded POLICY as `mutation_plan`s through
+  // the config round-trip seam. The AppLayer `Database` is an EffectDrizzle client
+  // (incompatible with the `bun:sqlite` `createControlStore` surface), so the
+  // operator binds the outputspool subsystem's own control-store database under the
+  // managed data root; a failure to open it degrades every read to a typed
+  // `unavailable` (FR14) — never a crash. `follow` + `release`/`delete`/`purge` stay
+  // typed capability gaps (cursor-codec / control-store-CAS boundaries, FR14).
+  // Feature 007 stays the sole command-registration authority — this override
+  // replaces the not_implemented stub and adds no ids (the reserved output.* ids
+  // already live in the catalog at 1.3.0).
+  const spoolRoot = path.join(Global.Path.data, "outputspool")
+  let outputControlStore: ReturnType<typeof ControlStore.createControlStore> | undefined
+  try {
+    await mkdir(spoolRoot, { recursive: true })
+    outputControlStore = ControlStore.createControlStore(new BunDatabase(path.join(spoolRoot, "operator-control.db")))
+  } catch {
+    outputControlStore = undefined
+  }
+  const outputSpoolBackend = OutputSpoolBackendLive.createLiveOutputSpoolBackend({
+    store: outputControlStore,
+    spoolRoot,
+    retentionAuthorityFor: (scope, scopeId) =>
+      scope === "global" ? "global:output.retention" : `output.retention/${scopeId || "project"}`,
+    quotaAuthorityFor: (scope, scopeId) =>
+      scope === "global" ? "global:output.quota" : `output.quota/${scopeId || "project"}`,
+  })
   const outputSpoolWiring = OutputSpoolStackWiring.createOutputSpoolDomainWiring({ backend: outputSpoolBackend })
 
-  // === Feature 006 — semantic domain port composition =======================
-  // The typed 30 `semantic.*` operator ports over the Feature 006 application
-  // adapters. The live Milvus/provider stack is not reachable from the operator
-  // AppRuntime in this wave, so the honest backend returns typed capability gaps
-  // (`unavailable`/`milvus_unavailable`) rather than fabricated data (see
-  // backend-live.ts and the tasks.md T034 note). Feature 007 stays the sole
-  // command-registration authority — this override replaces the not_implemented
-  // stub and adds no ids (the reserved 30 semantic.* ids already live at 1.3.0).
-  const semanticBackend = SemanticBackendLive.createLiveSemanticBackend({})
+  // === Feature 006 / 014 — semantic domain port composition =================
+  // The typed 30 `semantic.*` operator ports. Feature 014 (T009) wires the
+  // config-backed HALF of the registry — provider/model/binding reads + CAS
+  // round-trip plans — over the SAME `store.config` seam the other config
+  // domains use, so `provider.add`/`model.register`/`embedding.select` persist and
+  // re-read under CAS (FR8). The Milvus/provider-probe HALF (`provider.test`,
+  // `model.discover`/`validate`, `embedding`/`reranker` `validate`/`reindex`/
+  // `cutover`/`rollback`, every `index.*`) stays the typed capability gap
+  // (`unavailable`/`milvus_unavailable`) — never fabricated (FR8, FR14). Feature
+  // 007 stays the sole command-registration authority — this override replaces the
+  // not_implemented stub and adds no ids (the reserved 30 semantic.* ids live at 1.3.0).
+  const semanticBackend = SemanticBackendLive.createLiveSemanticBackend({ config: store.config })
   const semanticWiring = SemanticStackWiring.createSemanticDomainWiring({ backend: semanticBackend })
 
-  // === Feature 008 — mcp domain port composition ============================
-  // The typed 30 `mcp.*` operator ports over the Feature 008 application host.
-  // The live `MCP.Service` is not bound from the operator AppRuntime in this wave,
-  // so the honest backend returns typed capability gaps (`unavailable`/
-  // `mcp_unavailable`) rather than fabricated data (see backend-live.ts and the
-  // tasks.md T034 note). Feature 007 stays the sole command-registration authority
-  // — this override replaces the not_implemented stub and adds no ids (the reserved
-  // 30 mcp.* ids already live at 1.3.0).
-  const mcpBackend = McpBackendLive.createLiveMcpBackend({})
+  // === Feature 008 / 014 T008 — mcp domain port composition =================
+  // The typed 30 `mcp.*` operator ports over the Feature 008 application host. The
+  // live `MCP.Service` + `McpAuth` are now resolved through the SAME `AppRuntime`
+  // the routing/provider seams use (FR7): the faithful, content-free live-host reads
+  // — `mcp.auth.status`, `mcp.resource.admin.list`/`templates` — reflect the live
+  // client, while every other read (server-profile projections needing SSOT metadata
+  // the host config lacks) and every mutating verb stay typed capability gaps rather
+  // than fabricated data or an FR5 phantom write (the `mcp.*` command port returns
+  // `kind:"query"`, which the dispatcher rejects for a `mutates` descriptor after any
+  // side effect; see backend-live.ts + tasks.md T008). No secret/token/path crosses
+  // the seam (FR11, FR14). Feature 007 stays the sole command-registration authority —
+  // this override replaces the not_implemented stub and adds no ids.
+  const mcpHostReader: McpBackendLive.McpHostReader = {
+    authStatus: (serverId) =>
+      AppRuntime.runPromise(
+        Effect.gen(function* () {
+          const svc = yield* MCP.Service
+          return yield* svc.getAuthStatus(serverId)
+        }).pipe(Effect.provideService(InstanceRef, instance)),
+      ),
+    listResources: (serverId) =>
+      AppRuntime.runPromise(
+        Effect.gen(function* () {
+          const svc = yield* MCP.Service
+          const clients = yield* svc.clients()
+          const subscribable = clients[serverId]?.getServerCapabilities()?.resources?.subscribe === true
+          const resources = yield* svc.resources(serverId)
+          return Object.values(resources).map((r) => ({
+            serverId,
+            uri: r.uri,
+            name: r.name,
+            mimeType: r.mimeType,
+            subscribable,
+          }))
+        }).pipe(Effect.provideService(InstanceRef, instance)),
+      ),
+    listResourceTemplates: (serverId) =>
+      AppRuntime.runPromise(
+        Effect.gen(function* () {
+          const svc = yield* MCP.Service
+          const templates = yield* svc.resourceTemplates(serverId)
+          return Object.values(templates).map((t) => ({
+            serverId,
+            uriTemplate: t.uriTemplate,
+            name: t.name,
+            mimeType: t.mimeType,
+          }))
+        }).pipe(Effect.provideService(InstanceRef, instance)),
+      ),
+  }
+  const mcpBackend = McpBackendLive.createLiveMcpBackend({
+    override: McpBackendLive.createMcpServiceOverride(mcpHostReader),
+  })
   const mcpWiring = McpStackWiring.createMcpDomainWiring({ backend: mcpBackend })
 
   // === Feature 013 — telemetry/smart/budget/pools domain port composition ======
