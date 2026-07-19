@@ -2,7 +2,7 @@
 id: 019f7abe-6b2f-7522-beb7-5468adabe14f
 number: 014
 slug: complete-the-operator-control-plane-persistence-and-service
-status: analyzed
+status: implemented
 created_at: 2026-07-19T14:18:47.471269Z
 ---
 # Feature Specification: Complete the Operator Control Plane Persistence and Service

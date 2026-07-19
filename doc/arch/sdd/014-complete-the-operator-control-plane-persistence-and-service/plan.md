@@ -103,6 +103,17 @@ wire onto; the persistence ValueObjects are specified in
   a file/authority the loader already consumes. Whichever is smaller and honest —
   the round-trip MUST land on a loader-consumed path. **Adding the schema key
   without this alignment is a false success and is explicitly not shipped.**
+  - **Implement note (2026-07-19, T002).** Chosen: teach the loader to read the
+    written file, scoped to the `operator` key only. `loadInstanceState` now reads
+    `<dir>/config.json` via a `loadOperatorNamespace` helper that plucks and
+    validates just the `operator` namespace (never the whole file — a project
+    `config.json` is a common unrelated filename whose unknown keys would
+    otherwise be rejected). This recovers the orphaned **project-scoped**
+    authorities (`routing`); global-scoped authorities (`global:*`) already
+    round-trip through the global config file via `updateGlobal`/`getGlobal`.
+    Proven end-to-end (T004) by the `pools`/`budget` project-authority CLI
+    round-trip surviving fresh processes. Full rationale in ADR-0014 "Decision
+    Outcome".
 - **Invalidate the config cache (FR3).** On a committed CAS mutation, invalidate the
   loader's cached document for the mutated authority so an immediate re-read
   reflects the new state; keep the invalidation authority-scoped (do not drop
@@ -313,7 +324,62 @@ None required beyond this plan. The persistence ValueObjects
 - [x] TUI `Partial` refined per-verb; availability map truthful (FR12, FR14)
 - [x] specScopeGlobs narrow; only `packages/opencode/src/config/**` + its tests genuinely new
 - [x] Security: SecretRef-only, input validation, no false success, no fabricated capability, parity
-- [ ] `tasks.md` generated and filled
-- [ ] `speckit analyze` clean of new Critical/High/Medium blockers
-- [ ] `speckit validate --json` green (0 new findings on Feature 014 artifacts)
+- [x] `tasks.md` generated and filled
+- [x] `speckit analyze` clean of new Critical/High/Medium blockers
+- [x] `speckit validate --json` green (0 new findings on Feature 014 artifacts)
+
+## Implementation notes (recorded during implement)
+
+- 2026-07-19 — T001-T020 landed per plan: `ConfigV1.Info` gained the typed
+  `operator` sub-schema (FR1); `loadInstanceState` gained a scoped
+  `loadOperatorNamespace` read of the project `config.json` (FR2), with
+  `Config.update` invalidating the authority-scoped instance cache on commit
+  (FR3) — proven restart-proof end-to-end across all six config-backed
+  domains via fresh-process CLI round-trips (FR4). `langlock` and `jobs`
+  command ports converted to the `OperatorMutationPlan` contract so
+  `mutateAuthority` owns the single committed CAS write (FR5, the Feature
+  013 `runPlan` template). OutputSpool wired to a real `bun:sqlite` control
+  store (FR6); MCP wired to a live-host reader over `MCP.Service` for the
+  auth/resource reads while every mutating verb and the SSOT-metadata-only
+  server-profile reads stay typed gaps (FR7); the semantic domain split into
+  a config-backed registry (persists) plus the Milvus-gated index ops
+  (typed `milvus_unavailable`) (FR8); jobs mutations persist over a new
+  bounded operator-job seam (`operator/jobs/persistence.ts`) (FR9); the
+  `jobs.run-now` executor edge and the lifecycle `cancel` edge stay
+  documented typed `unavailable` gaps — no clean dependency edge found, none
+  forced (FR10). Secrets stayed `SecretRef`-only throughout (FR11). The
+  palette classification refined to per-verb `Partial` for the newly-mixed
+  semantic/output domains (FR12). No catalog id added, no catalog version
+  bump, no new dispatch path or flag — Feature 007 stayed the sole
+  registration authority throughout (FR13); every honest-degrade path
+  returns a typed envelope, never a fabricated success (FR14).
+- 2026-07-19 — **Fix round (post-implement adversarial + spot-check):**
+  three confirmed defects closed, all honest-degradation / false-success
+  corrections, no catalog/dispatch-path change. (1) **Root-cause false
+  success** — `Config.updateGlobal`'s `patchJsonc` silently dropped a
+  required-but-empty nested object (`models.role_pools:{}`,
+  `export.headers:{}`) on write, so `smart.on`/every `telemetry.*` global
+  round-trip decoded to defaults on re-read (`cas_vN` success that never
+  persisted); fixed by writing the absent empty object explicitly. This
+  also closed the separate "telemetry endpoint didn't stick" finding (same
+  drop broke the whole telemetry decode). (2) **`telemetry.test` hard
+  failure** — the catalog declared `mutates:true` for a handler that is a
+  read-only probe (`kind:"query"`), so the dispatcher's mutate-guard
+  rejected every dispatch; fixed by correcting the descriptor to
+  `mutates:false` (no catalog version bump — `catalogVersion()` is a static
+  constant). (3) **TUI Configure form payload mismatch** — the reusable
+  form dispatched `{ [field.key]: rawText }`, which didn't match the
+  Feature 014 verbs' port-level keys (scalar keys, JSON-object fields);
+  fixed with per-field canonical keys plus a `toPayload` JSON-spread
+  builder and a malformed-JSON validator. Full detail and evidence in
+  `tasks.md` "Fix round (2026-07-19)".
+- 2026-07-19 — **Close-out:** removed a stray untracked
+  `packages/opencode/config.json` left by an un-isolated live-CLI spot
+  check (leaked the operator's real global config plus a plaintext MCP API
+  key) — not a deliverable, never committed. Confirmed the Feature 014
+  `speckit.toml` guard block already covers every genuinely-new implement
+  path (`packages/opencode/src/config/**`,
+  `packages/opencode/test/config/**`, plus the pre-covered
+  `operator/**`/`outputspool/**`/`mcp/**`/`semantic/**`/`jobs/**` trees) —
+  no guard-scope change needed.
 </content>

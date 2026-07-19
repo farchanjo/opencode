@@ -107,6 +107,27 @@ gaps — preserving the Feature 007 parity and registration invariants.**
   written file, or redirect the write); a committed mutation invalidates the
   authority-scoped config cache. **The schema key is shipped only WITH this
   alignment** — accepting the key alone is a false success and is not shipped.
+
+  **Implement decision (FR2, 2026-07-19).** Chosen: *teach the loader to consume
+  the written file*, but scoped to the persisted `operator` key only, never the
+  whole file. `Config.update` writes `<dir>/config.json`; the instance loader
+  (`packages/opencode/src/config/config.ts`, `loadInstanceState`) now reads that
+  file back through a dedicated `loadOperatorNamespace` helper that JSONC-parses
+  it, plucks **only** the `operator` key, validates it against the new
+  `ConfigV1.Info` operator sub-schema, and deep-merges it into the effective
+  config. Reading only the `operator` key (rather than adopting the whole file as
+  opencode config) is deliberate: a project `config.json` is an extremely common
+  unrelated filename, and loading it wholesale would reject every such project on
+  its unknown top-level keys. A malformed or absent operator document degrades to
+  "no namespace" (no crash), preserving honest degradation. Global-scoped
+  authorities (`global:*`, e.g. `global:telemetry`, `global:routing`) already
+  round-trip through the global config file via `updateGlobal`/`getGlobal`, so
+  this recovers the previously-orphaned **project-scoped** authorities
+  (`routing`). This is smaller and safer than redirecting `Config.update`'s target
+  (which is shared by the HTTP config handler and flag-bootstrap and would clobber
+  a user's hand-edited `opencode.json`). The operator store writing the *full*
+  merged config into `<dir>/config.json` (a pre-existing Feature 007 behavior) is
+  harmless here because only the `operator` key is consumed on read.
 - **Round-trip acceptance (FR4).** Per config-backed domain (langlock, telemetry,
   smart, budget, pools, jobs): CLI mutation → success + version bump → immediate
   re-read → process-restart re-read.
