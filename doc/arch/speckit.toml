@@ -413,6 +413,34 @@ specScopeGlobs = [
   # Genuinely new implement paths (not under any existing glob):
   "packages/tui/src/context/**",              # OperatorSlashHandled optional structured result (FR2)
   "packages/tui/src/ui/dialog.tsx",           # push(input, onClose?) back-stack primitive (FR7)
+
+  # Feature 013 implement-phase paths: Wire the four remaining config-backed
+  #   operator domains (telemetry, smart, budget, pools) from generic
+  #   not_implemented stubs onto real typed domain ports over the already-live
+  #   effective config, following the Feature 004 langlock domain-stack template.
+  #   Feature 007 stays the sole command-registration authority — no catalog id is
+  #   added and no catalog version is bumped (FR11); mutations persist through the
+  #   SAME Config.Service seam langlock uses (FR7). Nearly the entire surface is
+  #   ALREADY in scope and is NOT re-added (traceability only):
+  #   packages/opencode/src/operator/** (Feature 007) — the four domain stacks
+  #     (operator/{telemetry,smart,budget,pools}/{*-port,*-command-port,backend-live,
+  #     persistence,stack-wiring,index}.ts), the stack-live.ts wireDomainPorts
+  #     wiring (FR9), domain-stubs.ts stub removal, and config-status.ts
+  #     STATUS_SHOW_IDS shadow removal (FR9);
+  #   packages/core/src/operator/** (Feature 007) — palette.ts
+  #     OPERATOR_PERSISTING_DOMAINS availability flip (FR12);
+  #   packages/protocol/src/**/telemetry/** (Feature 001) — the telemetry protocol
+  #     command module (FR1);
+  #   packages/schema/src/telemetry/** + packages/schema/src/routing/** (Feature 001)
+  #     — the reused effective-config shapes (telemetry config, RoutingConfig
+  #     Activation/Enforcement.budget/Models.role_pools); reused, not re-authored;
+  #   packages/opencode/test/operator/** (Feature 007), packages/protocol/test/**
+  #     + packages/schema/test/** (Feature 001) — the per-domain unit, CAS-conflict,
+  #     honest-unavailable, probe, and parity tests.
+  # Genuinely new implement paths (protocol command modules not under any glob):
+  "packages/protocol/src/smart/**",           # smart.* protocol command module (FR1, FR3)
+  "packages/protocol/src/budget/**",          # budget.* protocol command module (FR1, FR4)
+  "packages/protocol/src/pools/**",           # pools.* protocol command module (FR1, FR5)
 ]
 
 # Waivers for intentional near-empty files (warnings only; errors are never
