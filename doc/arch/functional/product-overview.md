@@ -122,6 +122,14 @@ Acceptance criteria live as prioritized scenarios in each feature `spec.md`.
   (home → domain_panel → { result_toast | confirm_dialog → dispatch |
   input_form → dispatch }, with the typed unavailable envelope surfaced and no
   new dispatch path — the Feature 007 parity invariant is preserved).
+- **Operator structured-result projection** — the TUI consumption of the
+  Feature 007 typed `CommandResult.effective` payload into the five read panels
+  and the entity pickers is modeled in
+  [operator-result-projection statechart](../statecharts/operator-result-projection.md)
+  (dispatched → forwarded → { panel projection: projected | empty_fallback |
+  shape_mismatch } and { picker projection: loaded | empty | unavailable }, with
+  honest empty fallback everywhere and the same loopback dispatch path — the
+  Feature 007 parity invariant is preserved).
 
 ## Phase 2 deferred (explicit)
 
