@@ -5,6 +5,7 @@
  */
 import {
   listOperatorPaletteEntries,
+  listOperatorSuggestedEntries,
   buildOperatorPaletteCommands,
   type OperatorPaletteEntry,
 } from "@opencode-ai/core/operator"
@@ -19,6 +20,15 @@ export type OperatorToast = {
 
 export function operatorPaletteEntries(): readonly OperatorPaletteEntry[] {
   return listOperatorPaletteEntries()
+}
+
+/**
+ * Curated top-level quick-access set (FR1): read-only `status`/`show` queries
+ * only. The full flat wall no longer surfaces at top level — it moved under the
+ * grouped `Operator` entry (DialogOperatorSettingsHome).
+ */
+export function operatorSuggestedEntries(): readonly OperatorPaletteEntry[] {
+  return listOperatorSuggestedEntries()
 }
 
 export function operatorPaletteCommandRegistrations() {

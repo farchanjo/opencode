@@ -25,9 +25,8 @@ import { useOperatorSlash } from "../../context/operator-slash"
 import { useDialog } from "../../ui/dialog"
 import { DialogSelect } from "../../ui/dialog-select"
 import { useToast } from "../../ui/toast"
-import { executeOperatorCommand } from "../../operator/execute"
+import { OperatorForm, resolveOperatorFormField } from "../../operator/form"
 import {
-  deriveAllowlistOptions,
   deriveLangLockSettingsRow,
   EMPTY_LANGLOCK_SETTINGS_ROW,
   SETTINGS_ROW_LABEL,
@@ -43,48 +42,36 @@ export {
   type LangLockSettingsRowView,
 } from "./row"
 
-const SUCCESS_OUTCOMES = new Set(["success", "idempotent_replay"])
-
-/** Picker dialog for the allowlisted artifact-language tags (FR3, FR4, C13). */
+/**
+ * Picker dialog for the allowlisted artifact-language tags (FR3, FR4, C13).
+ * Delegates to the generalised operator Configure form (Feature 011 T010/T011)
+ * driven by `langlock.set`'s `value_picker` descriptor — the single source of the
+ * allowlist tag picker semantics, dispatched through the same
+ * executeOperatorCommand path (FR8). No duplicated dispatch logic here.
+ */
 export function DialogLangLockPicker() {
   const dialog = useDialog()
   const toast = useToast()
   const operator = useOperatorSlash()
-  const options = deriveAllowlistOptions()
   const setEntry = listOperatorSettingsEntries("langlock").find((entry) => entry.operation === "set")
+  const field = setEntry ? resolveOperatorFormField(setEntry) : undefined
 
-  async function apply(tag: string) {
-    if (!setEntry) {
-      toast.show({ title: "Lang Lock unavailable", message: "langlock.set is not registered", variant: "warning" })
-      return
-    }
-    const result = await executeOperatorCommand({
-      entry: setEntry,
-      port: operator.port,
-      dialog,
-      toast,
-      payload: { tag },
-    })
-    if (result.outcome && SUCCESS_OUTCOMES.has(result.outcome)) dialog.clear()
+  if (!setEntry || !field) {
+    return (
+      <DialogSelect title={SETTINGS_ROW_LABEL} options={[]} emptyView={<text>langlock.set is not registered</text>} />
+    )
   }
 
   return (
-    <DialogSelect
+    <OperatorForm
+      entry={setEntry}
+      field={field}
+      port={operator.port}
+      dialog={dialog}
+      toast={toast}
       title={SETTINGS_ROW_LABEL}
-      options={options.map((option) => ({
-        title: option.titleText,
-        description: option.descriptionText,
-        category: "Lang Lock",
-        value: option.tag,
-        onSelect: () => {
-          void apply(option.tag)
-        },
-      }))}
-      emptyView={<text>No allowlisted artifact languages</text>}
-      footerHints={[
-        { title: "esc", label: "back", side: "right" },
-        { title: "enter", label: "set", side: "right" },
-      ]}
+      category="Lang Lock"
+      back={() => dialog.clear()}
     />
   )
 }
