@@ -2,7 +2,7 @@
 id: 019f7837-4e0a-7d43-a299-aa451348a906
 number: 010
 slug: add-native-rust-ffi-layer-for-built-in-tools-and-pty
-status: specified
+status: clarified
 created_at: 2026-07-19T02:31:58.218719Z
 ---
 # Feature Specification: Native Rust FFI Tools and PTY Integration
@@ -426,3 +426,229 @@ tool/process output as refs; Feature 010 emits no raw output as telemetry.
 | Transparent wrappers and silent fallback | FR18–FR20  | 13–14                | 1     |
 | Release build and platform support     | FR21–FR22    | 18                   | 1     |
 | Output-plane and content-free telemetry seams | FR23–FR24 | 17               | 1     |
+
+## Clarifications
+
+### Session 2026-07-19
+
+Declarative resolutions for the Feature 010 clarify phase. Each decision closes one or
+more Clarification Questions (CQ1–CQ10 above) or an inline ambiguity in the body without
+reopening confirmed ownership: Feature 007 PermissionV2 permission/approval authority,
+Feature 005 OutputSpool content-plane authority, Feature 001 / ADR-0001 content-free
+telemetry conventions, ToolRegistry tool identity, or the Feature 006 `milvus_unavailable`
+typed capability-gap precedent this feature mirrors. Toolchain versions, crate patch
+levels, exact discovery paths, and wrapper module names this feature defers are resolved
+here as explicit deferrals to `plan` and to ADR-0010, each with a provisional stance and a
+named acceptance-test hook (AC = Acceptance Scenario above), never as open placeholders.
+Feature 010 is authoritative for nothing at runtime: native code is a swappable execution
+backend behind each tool's existing TypeScript boundary, and every decision below preserves
+byte-identical fallback (FR19, NFR6). Where this section and the spec body differ in wording,
+this section and the machine-validated CUE schema
+(`doc/arch/schemas/add-native-rust-ffi-layer-for-built-in-tools-and-pty.cue`) govern.
+
+**C1 — Artifact location, per-platform naming, and discovery order (CQ1, FR21).** Compiled
+libraries are discovered in a fixed order: (1) an environment override —
+`OPENCODE_NATIVE_LIB_DIR` for the directory, or a per-crate `OPENCODE_TOOLS_FFI_PATH` /
+`OPENCODE_PTY_FFI_PATH` for an exact file; (2) the bundled path shipped inside the package,
+`packages/core/native/<platform>-<arch>/`; (3) neither present or `dlopen` fails → typed
+`native_unavailable` capability gap plus silent TypeScript fallback. Per-platform file names
+follow the cdylib convention: `libopencode_tools_ffi.dylib` / `libopencode_pty_ffi.dylib` on
+macOS and `libopencode_tools_ffi.so` / `libopencode_pty_ffi.so` on Linux; `<arch>` is
+`arm64`/`x64`. The bundled directory is gitignored (built, never committed). The exact
+bundled subpath layout is a provisional plan constant with acceptance hooks AC13, AC14, AC18.
+
+**C2 — Native execution is opt-in behind Config, absence never changes behavior (CQ2, FR12,
+FR19, NFR6).** Native execution is **off by default in V1**. Two Config booleans gate it —
+`experimental.nativeTools` (the six filesystem/text tools) and `experimental.nativePty`
+(the shell PTY backend), both default `false`. When a flag is `false`, presence of the
+compiled library changes nothing; when a flag is `true`, the backend is native only if the
+library loads, otherwise the wrapper falls back to TypeScript and records
+`native_unavailable`. This keeps native a substitute the operator enables, never a behavior
+that appears merely because a `.dylib`/`.so` exists on disk. Flag names and default posture
+are provisional plan constants with acceptance hooks AC13, AC16.
+
+**C3 — FFI JSON envelope is the CUE `#FfiResponse` shape, discriminated by `status` (CQ3,
+FR14–FR16).** Every `oc_<name>` entry point returns the envelope fixed by the schema
+`#FfiResponse`: success is `{ "status": "ok", "result": { … } }` and failure is
+`{ "status": "error", "error": { "code": <enum>, "message": <string> } }`. The spec body's
+`{ ok: true, … }` / `{ ok: false, error: { code, message } }` prose (FR15, FR22, AC12) is the
+same contract expressed informally: `ok` maps to `status == "ok"`. The `status`/`result`/
+`error` form is normative because it is the machine-validated schema. A caught panic (FR16)
+is serialized as `{ "status": "error", "error": { "code": "internal_panic", "message": … } }`
+with a generic message and no backtrace, pointer, or address (Security: error-handling
+exposure). All request and response strings are UTF-8; responses are NUL-terminated C strings.
+
+**C4 — Error `code` enum is a stable closed set mapped to the TypeScript tagged errors
+(CQ3).** The `error.code` values are a fixed enum: `invalid_request`, `not_found`,
+`not_a_file`, `binary_file`, `malformed_utf8`, `offset_out_of_range`, `media_limit`,
+`ambiguous_match`, `no_match`, `context_mismatch`, `invalid_pattern`, `io_error`,
+`internal_panic`. Each maps one-to-one to the existing TypeScript failure a caller already
+observes — for example `binary_file` ↔ `ReadTool.BinaryFileError`, `malformed_utf8` ↔
+`ReadTool.MalformedUtf8Error`, `offset_out_of_range` ↔ `ReadTool.OffsetOutOfRangeError`,
+`ambiguous_match`/`no_match` ↔ the `edit` "multiple matches"/"could not find" failures,
+`context_mismatch` ↔ the `apply_patch` context-mismatch failure, `invalid_pattern` ↔
+`Ripgrep.InvalidPatternError`. The wrapper translates the typed code back into the identical
+`ToolFailure` message the TypeScript path emits, so fallback and native are indistinguishable
+to the model. The enum is closed for V1; new codes require an ABI-minor bump (C7). Hooks
+AC1, AC4, AC5, AC12.
+
+**C5 — glob/grep fallback is the existing `Ripgrep` service seam, not a bypass (CQ4, FR6,
+FR19).** Native `glob`/`grep` replace the `Ripgrep.Service` call inside `glob.ts`/`grep.ts`
+with the embedded engine (`grep-searcher`, `grep-regex`, `ignore`, `globset`); when native
+is unavailable the wrapper falls back to the current `ripgrep.glob` / `ripgrep.grep` path,
+which still spawns the external `rg` binary via `packages/core/src/ripgrep.ts`. The external
+`rg` spawn is therefore the fallback, unchanged; the embedded engine is the only new code
+path and it is entered only when native is enabled and loaded. The four other tools
+(`read`, `write`, `edit`, `apply_patch`) fall back to their existing TypeScript
+implementations directly. Hooks AC6, AC7, AC13.
+
+**C6 — Crate topology: one cargo workspace, two `cdylib` crates, one shared internal lib
+(FR21).** A first-time cargo workspace lives at the repository root (`Cargo.toml`), with
+members under `crates/`: `crates/opencode-tools-ffi` (`cdylib`) and
+`crates/opencode-pty-ffi` (`cdylib`), plus a shared internal `crates/opencode-ffi-abi`
+(`rlib`, not a shipped artifact) that both depend on for the envelope, `catch_unwind`
+wrapper, `oc_free`, and the ABI/version handshake — so the panic-safe/leak-free boundary is
+implemented once. `target/` is already gitignored. No third shipped library is introduced.
+The `crates/` directory choice over `packages/native/` keeps Rust visibly separate from the
+Bun workspace `packages/*`. Hooks AC11, AC12, AC18.
+
+**C7 — FFI symbol surface, `oc_free` ownership, and version handshake (FR14, FR17).** Every
+tool entry point uses the fixed signature `extern "C" fn oc_<name>(req_ptr: *const u8,
+req_len: usize) -> *mut c_char`; the tool set is `oc_read`, `oc_write`, `oc_edit`,
+`oc_apply_patch`, `oc_glob`, `oc_grep`. The PTY crate exports `oc_pty_spawn`,
+`oc_pty_resize`, `oc_pty_kill`, `oc_pty_wait`, `oc_pty_close` (same JSON-in/JSON-out shape).
+Both crates export `oc_free(ptr: *mut c_char)` — the **only** deallocation path; the
+TypeScript wrapper copies each response string, then calls `oc_free` exactly once; Rust
+never frees a response after return and never leaks (FR17, NFR3). Both crates also export
+`oc_abi_version() -> u32` and `oc_version() -> *mut c_char` (semver JSON); on load the
+wrapper asserts `oc_abi_version()` equals the expected ABI major and treats any mismatch as
+unloadable → `native_unavailable` fallback, giving the phase-2 ConPTY/multi-session work
+(FR11, FR22) a forward-compatible handshake without changing this contract. Hooks AC11,
+AC12, AC18.
+
+**C8 — Wrapper integration point and per-call backend selection (FR18, FR19).** The
+TypeScript wrapper layer lives in `packages/core/src/tool/native/`: a single `loader.ts`
+owns discovery (C1), the lazy `dlopen` (cached after first use), the ABI handshake (C7), and
+the `native_unavailable` gap; per-tool wrapper modules mirror each tool's existing input
+schema, output schema, and `toModelOutput`. Backend selection is resolved once at first use
+(lazy `dlopen`), then each tool call chooses native-vs-TypeScript from the cached, gated
+(C2) capability — the model-facing seam in `builtins.ts` and each tool's `Tool.make` shape
+is unchanged. The wrapper marshals JSON across the seam; native code is transparent to
+ToolRegistry and to the model (Compatibility). Hooks AC1, AC13, AC14.
+
+**C9 — `master_fd` ownership transfer and single-owner close (CQ5, FR8, FR10).**
+`oc_pty_spawn` returns the raw integer file descriptor of the PTY master in `master_fd`
+(schema `#PtySession`). Ownership transfers wholly to Bun on return: the Rust side does not
+retain, read, write, or close the master fd after `oc_pty_spawn` returns (it hands back the
+sole owning descriptor). Bun is the single owner — it wraps the fd, sets it non-blocking, and
+performs all async reads/writes on the event loop (kqueue/epoll), with no FFI call on the IO
+hot path (FR10, NFR4). `oc_pty_close` tears down the child/slave side and reaps; the master
+fd is closed exactly once, by Bun, its owner. The exact Bun wrapper — a `node:net` `Socket({
+fd })` (Bun's Node-compat layer registers the fd on the event loop) versus `node:tty`
+streams — is a provisional plan constant; `node:net.Socket({ fd })` with `O_NONBLOCK` is the
+recommended stance, with acceptance hook AC10. `@lydell/node-pty` (already in the workspace
+catalog) is **not** used for the native path; it remains untouched for any existing consumer.
+
+**C10 — TS-side PTY session registry owns lifecycle handles (FR8, FR9).** A TypeScript-side
+registry maps `session_id → { pid, master_fd, pgid, stream }` and is the single owner of
+each session's lifecycle. `oc_pty_spawn` mints the `session_id` (opaque, non-guessable) and
+the registry records it; every subsequent `oc_pty_resize`/`oc_pty_kill`/`oc_pty_wait`/
+`oc_pty_close` call passes the `session_id` and the registry guarantees the single-owner fd
+contract (one close per fd, no double-free, no use-after-close). The registry lives on the
+Bun side because timers, streaming, and grace-period escalation (C12) must stay off the
+synchronous Rust boundary (FR11). Hooks AC8, AC9, AC11.
+
+**C11 — PTY spawn establishes a real controlling terminal via `setsid` (FR8, AC8).**
+`oc_pty_spawn` allocates the PTY through `portable-pty`, calls `setsid` so the child is a
+session leader, and makes the slave the controlling terminal, so the child observes
+`isatty() == true` on stdin/stdout/stderr and emits ANSI output. The child is placed in its
+own process group (session-leader pgid == pid) so C12 can signal the whole tree. Hook AC8.
+
+**C12 — Kill signals the process group; SIGTERM default with TS-driven SIGKILL escalation
+(CQ6, FR9, NFR5).** `oc_pty_kill(session_id, signal)` delivers the caller-supplied signal to
+the child's **process group** (`killpg`/`kill(-pgid, sig)`), terminating the full subprocess
+tree with no orphans (NFR5, AC9). The default flow sends `SIGTERM`, and the **TypeScript
+side** schedules a `SIGKILL` escalation after a grace period mirroring `bash.ts`
+`forceKillAfter: Duration.seconds(3)` — the grace timer lives in TS because phase 1 forbids
+an async runtime inside the FFI boundary (FR11); each Rust call performs exactly one
+`killpg`. `oc_pty_resize` applies the window size via `TIOCSWINSZ`; `oc_pty_wait` is a
+non-blocking `waitpid(WNOHANG)` returning `{ exited, exit_code? , signal? }`; `oc_pty_close`
+is idempotent teardown honoring the single-owner fd contract (C9, C10). `libc` provides
+`setsid`/`killpg`/`waitpid`/`TIOCSWINSZ`. Hooks AC8, AC9, AC10.
+
+**C13 — Parity corpus and deterministic tie normalization (CQ7, FR7, NFR1).** The parity
+corpus is twofold: (a) the opencode repository itself as the live corpus for `glob`/`grep`
+(AC6, AC7), and (b) a curated shared fixtures directory
+`packages/core/test/fixtures/native-parity/` covering the edge cases the references define —
+binary files, CRLF vs LF, `>50 KiB` paged reads, 2000-char line truncation, multi-hunk
+patches with matching and non-matching context, zero/one/many `edit` occurrences, and
+non-ASCII UTF-8. The suite runs each of the six tools through both backends on the same
+fixtures and asserts byte-identical results (FR20). Undefined ordering ties are normalized
+before comparison by a stable secondary total order — `glob` by (mtime desc, then path); 
+`grep` by (path, then line, then absolute offset) — so only ties the references themselves
+leave undefined are neutralized, never real ordering differences. Hooks AC1–AC7.
+
+**C14 — `native_unavailable` is telemetry-only in V1, not an operator-control-plane
+capability (CQ8, FR19, FR24).** The typed `native_unavailable` capability gap is recorded as
+a content-free signal (bounded labels: tool name, backend, stable gap-reason enum such as
+`library_missing` / `dlopen_failed` / `abi_mismatch` / `disabled`), mirroring the Feature
+006 `milvus_unavailable` posture. In V1 it does **not** surface to the Feature 007 operator
+control plane as a reserved capability or a control-plane resource — it is observability
+only, exactly like the semantic-stack precedent. Elevating it to an operator-visible
+capability is deferred to a later feature. Hooks AC13, AC17.
+
+**C15 — Minimum Rust toolchain pinned by `rust-toolchain.toml`, enforced in CI (CQ9,
+FR21).** A `rust-toolchain.toml` at the repository root pins `channel = "1.83.0"` (the V1
+MSRV floor), `profile = "minimal"`, and components `rustfmt` + `clippy`; `edition` is
+`2021`. CI enforces the pin (build fails on toolchain drift or on a resolved dependency
+raising MSRV above the floor). The exact channel is a provisional plan constant — it may be
+raised to a newer stable at `plan` time — with acceptance hook AC18; the fixed requirement is
+a checked-in pin and a CI gate, not a floating toolchain.
+
+**C16 — Size caps are duplicated per side but test-locked to the TypeScript source of truth
+(CQ10, FR1).** The TypeScript constants remain the single conceptual source of truth —
+`MAX_READ_LINES = 2000`, `MAX_READ_BYTES = 51200` (50 KiB), `MAX_LINE_LENGTH = 2000` with the
+`... (line truncated to 2000 chars)` suffix, `MAX_MEDIA_INGEST_BYTES = 20 MiB`. Rust mirrors
+them as `const` values (the FFI boundary carries no shared header), and a parity test asserts
+the Rust-exported caps (surfaced through an introspection call in the version handshake, C7)
+equal the TypeScript constants, so the duplication cannot drift silently. Binary detection
+parity is included: NUL byte, non-printable ratio `> 0.3`, the known binary-extension set,
+and PDF/PNG/JPEG/GIF/WEBP magic bytes (FR1). Hooks AC1, AC2.
+
+**C17 — Build pipeline: an explicit `bun run build:native`, never install-time or a hard
+build gate (FR21).** A root `package.json` script `build:native` invokes a
+`script/build-native.ts` that runs `cargo build --release` and copies the resulting
+`.dylib`/`.so` into `packages/core/native/<platform>-<arch>/` (C1). The Bun `postinstall`
+does **not** build Rust — install stays fast and the native libraries stay absent until the
+operator opts in, so a fresh checkout runs the TypeScript path unchanged. CI builds the
+libraries on macOS and Linux runners and runs the parity + stress suites; absence of the
+artifact never breaks the TypeScript build or runtime (FR21, AC18). Script name and copy
+layout are provisional plan constants with hook AC18.
+
+**C18 — Memory-leak stress test uses a matched alloc/free counter plus bounded RSS (FR17,
+FR20, NFR3).** The stress test issues a high volume (target ≥ 100k) of `oc_*` calls, freeing
+every response via `oc_free`, and asserts leak-freedom two ways: (a) a Rust-side
+allocation/free counter — exposed through a debug-gated `oc_alloc_stats()` returning
+`{ allocated, freed }` — returns to `allocated == freed` at rest; and (b) process RSS stays
+within a bounded ceiling across the run. This verifies FR17's "freed exactly once" across the
+whole boundary, including the PTY entry points. Exact iteration count and RSS ceiling are
+provisional plan constants with hook AC11.
+
+**C19 — Platform gates: darwin/linux native, win32 always TypeScript (FR22).** Native
+libraries are loaded only on `darwin` and `linux`. On `win32` the loader never attempts
+`dlopen` (native is treated as unavailable), so all six tools run TypeScript and, for the
+shell tool, `pty: true` degrades to the default `ChildProcess`/`AppProcess` (non-PTY) path
+with an advisory warning and a `native_unavailable` gap — never a hard failure. Windows
+ConPTY is phase 2 and MUST NOT change the FFI contract (C7). Hooks AC13, AC16, AC18.
+
+**C20 — Cross-feature seams stay owned by their features; Feature 010 adds no plane (FR13,
+FR23, FR24).** The permission/approval gate stays in TypeScript (Feature 007 PermissionV2)
+and is evaluated before any native tool call and before any PTY allocation or spawn, exactly
+as `bash.ts` calls `permission.assert` today — the gate ordering is permission-first, spawn
+second, and native code never evaluates, caches, or bypasses it (FR13, AC15). Native and
+TypeScript tool outputs flow to the Feature 005 OutputSpool through each tool's existing
+output path; the PTY master-fd reader feeds the same bash output sink under the unchanged
+`MAX_CAPTURE_BYTES` cap, so Feature 010 introduces no second output plane and does not
+re-specify OutputSpool (FR23, AC16). Telemetry reuses ADR-0001 / Feature 001 bounded-label
+conventions with no content, paths, patch bodies, command strings, or session ids as labels
+(FR24, AC17). Hooks AC15, AC16, AC17.
