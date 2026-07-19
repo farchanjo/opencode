@@ -115,6 +115,13 @@ Acceptance criteria live as prioritized scenarios in each feature `spec.md`.
   reaping → closed, with the SIGTERM→3s→SIGKILL escalation; and
   check_platform → check_flag → discover → resolve → dlopen → handshake →
   native_ready/fallback, with the native_unavailable typed gap).
+- **Grouped operator control plane TUI navigation** — the single-entry
+  operator menu, the per-domain View/Configure split, editable payload forms,
+  and the honest-availability affordance are modeled in
+  [operator-menu-navigation statechart](../statecharts/operator-menu-navigation.md)
+  (home → domain_panel → { result_toast | confirm_dialog → dispatch |
+  input_form → dispatch }, with the typed unavailable envelope surfaced and no
+  new dispatch path — the Feature 007 parity invariant is preserved).
 
 ## Phase 2 deferred (explicit)
 
