@@ -250,6 +250,47 @@ specScopeGlobs = [
   "packages/protocol/test/semantic/**",
   "packages/core/test/semantic/**",
   "packages/opencode/test/semantic/**",
+
+  # Feature 008 implement-phase paths (T001-T046): Complete MCP Client Tools and
+  #   Resources Lifecycle. New mcp schema/protocol/core modules, the operator
+  #   mcp.* domain impls, the TUI mcp panels, the four mcp test trees, and the
+  #   existing migration seams reworked in place (C27). Feature 001-007 paths are
+  #   preserved unchanged. Reused/shared seams already in scope are noted (not
+  #   duplicated):
+  #   packages/opencode/src/mcp/catalog.ts + .../mcp/index.ts (Feature 007 block
+  #     above) are file-exact entries subsumed by the broader
+  #     packages/opencode/src/mcp/** added here for the reworked service host
+  #     (progress-sink/resource-adapter/spool-bridge/secret-bridge/experimental/**/
+  #     reindex-trigger/logging-bridge/sdk-probe);
+  #   packages/opencode/src/operator/** + packages/tui/src/**/operator/** (Feature
+  #     007) already cover the operator/mcp and TUI mcp panel roots — the
+  #     mcp-scoped globs below are listed explicitly per the 004/005/006 precedent;
+  #   packages/opencode/src/event-v2-bridge.ts (Feature 001) — publishMcpEvent;
+  #   packages/schema/src/durable-event-manifest.ts + packages/core/src/event.ts
+  #     + packages/opencode/src/operator/** + packages/opencode/test/operator/**
+  #     (Feature 007) — durable manifest, EventV2 authority, reserved mcp.* catalog
+  #     already at RESERVED_CATALOG_VERSION 1.3.0 (no bump, C25);
+  #   packages/schema/src/index.ts + packages/schema/test/** (Feature 001),
+  #   packages/protocol/test/** (Feature 001) — schema barrel + schema/protocol tests;
+  #   packages/opencode/src/cli/cmd/op.ts + packages/cli/src/**/operator/** (Feature
+  #     007) — `opencode op mcp <op>` routes through op.ts and the operator registry,
+  #     so no packages/cli/src/**/mcp/** glob is required (the reworked verbs live at
+  #     packages/opencode/src/cli/cmd/mcp.ts, added below).
+  "packages/schema/src/mcp/**",
+  "packages/protocol/src/mcp/**",
+  "packages/core/src/mcp/**",
+  "packages/opencode/src/operator/mcp/**",
+  "packages/tui/src/**/operator/mcp/**",
+  "packages/schema/test/mcp/**",
+  "packages/protocol/test/mcp/**",
+  "packages/core/test/mcp/**",
+  "packages/opencode/test/mcp/**",
+  # Migration seams (existing files reworked in place by Feature 008):
+  "packages/opencode/src/mcp/**",             # legacy MCP.Service reworked behind its seams (C27); broadens the file-exact catalog.ts + index.ts (Feature 007)
+  "packages/schema/src/mcp-event.ts",         # mcp.tools.changed -> mcp.tools_changed rename (C3)
+  "packages/opencode/src/cli/cmd/mcp.ts",     # opencode op mcp <op> verbs + legacy shim coexistence (FR48, C27)
+  # Generated-artifact task (listed for traceability; follows the event rename):
+  # "packages/sdk/js/src/v2/gen/types.gen.ts", # regenerate for mcp.tools_changed (T011)
 ]
 
 # Waivers for intentional near-empty files (warnings only; errors are never
