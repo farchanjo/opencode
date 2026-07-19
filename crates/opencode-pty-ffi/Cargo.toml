@@ -20,6 +20,8 @@ libc = { workspace = true }
 [features]
 # Forward the debug-only oc_alloc_stats gate to the shared ABI crate (C18).
 alloc-stats = ["opencode-ffi-abi/alloc-stats"]
+# Forward the debug-only oc_debug_panic boundary-containment probe (T018, AC12).
+panic-probe = ["opencode-ffi-abi/panic-probe"]
 
 [lints]
 workspace = true

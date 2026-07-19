@@ -268,15 +268,30 @@ pub fn alloc_stats_json() -> String {
     serde_json::to_string(&stats).unwrap_or_else(|_| PANIC_FALLBACK_JSON.to_string())
 }
 
+/// A deliberately panicking body run through [`protect`], proving the `catch_unwind`
+/// containment across the real FFI boundary (T018, AC12): the unwind becomes an
+/// `internal_panic` envelope and the panic message — carrying an address-like token —
+/// never crosses the boundary. Exposed only through the `panic-probe`-gated
+/// `oc_debug_panic` entry point; never present in a default release build. Hidden.
+#[doc(hidden)]
+pub fn __debug_panic() -> *mut c_char {
+    protect(|| -> Result<Value, FfiError> {
+        panic!("deliberate panic probe 0xfeedface — must not cross the FFI boundary")
+    })
+}
+
 // ---------------------------------------------------------------------------
 // Shared extern "C" surface — re-exported by each cdylib
 // ---------------------------------------------------------------------------
 
 /// Emit the shared `#[no_mangle]` ABI symbols (`oc_free`, `oc_abi_version`,
-/// `oc_version`, and — under the `alloc-stats` feature — `oc_alloc_stats`) that
-/// every `cdylib` in this workspace exports. Invoke once at the crate root of each
-/// `cdylib`. The `oc_alloc_stats` gate resolves against the *invoking* crate's
-/// `alloc-stats` feature, which must forward to `opencode-ffi-abi/alloc-stats`.
+/// `oc_version`, and — under the `alloc-stats` / `panic-probe` features —
+/// `oc_alloc_stats` / `oc_debug_panic`) that every `cdylib` in this workspace exports.
+/// Invoke once at the crate root of each `cdylib`. The `oc_alloc_stats` /
+/// `oc_debug_panic` gates resolve against the *invoking* crate's `alloc-stats` /
+/// `panic-probe` features, which must forward to the matching `opencode-ffi-abi`
+/// feature. Both are debug-only probes for the T018 leak/panic stress suite and are
+/// absent from a default release build.
 #[macro_export]
 macro_rules! export_ffi_abi {
     () => {
@@ -299,6 +314,15 @@ macro_rules! export_ffi_abi {
         #[no_mangle]
         pub extern "C" fn oc_alloc_stats() -> *mut ::std::ffi::c_char {
             $crate::__alloc_cstring($crate::alloc_stats_json())
+        }
+
+        #[cfg(feature = "panic-probe")]
+        #[no_mangle]
+        pub extern "C" fn oc_debug_panic(
+            _req_ptr: *const u8,
+            _req_len: usize,
+        ) -> *mut ::std::ffi::c_char {
+            $crate::__debug_panic()
         }
     };
 }
@@ -435,6 +459,20 @@ mod tests {
         let stats: AllocStats = serde_json::from_str(&alloc_stats_json()).unwrap();
         assert_eq!(stats.allocated, allocations());
         assert_eq!(stats.freed, frees());
+    }
+
+    #[test]
+    fn debug_panic_probe_yields_contained_internal_panic() {
+        let _guard = counter_guard();
+        // The probe the panic-probe-gated `oc_debug_panic` entry point calls: the
+        // deliberate unwind is contained and no address-like token crosses out.
+        let json = take(__debug_panic());
+        assert!(json.contains(r#""code":"internal_panic""#), "got {json}");
+        assert!(!json.contains("0xfeedface"), "probe address leaked: {json}");
+        assert!(
+            !json.contains("deliberate panic probe"),
+            "panic body leaked: {json}"
+        );
     }
 
     #[test]

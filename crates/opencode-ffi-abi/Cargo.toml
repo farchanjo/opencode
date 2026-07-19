@@ -19,6 +19,9 @@ serde_json = { workspace = true }
 # The alloc/free counters are always compiled; only the exported entry point and
 # its cdylib re-export are feature-gated (C18). Off by default.
 alloc-stats = []
+# Gates the debug-only oc_debug_panic extern symbol emitted by export_ffi_abi!, the
+# T018 boundary-containment probe. Off by default; never in a release build (AC12).
+panic-probe = []
 
 [lints]
 workspace = true
