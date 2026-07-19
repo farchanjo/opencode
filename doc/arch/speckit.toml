@@ -367,6 +367,31 @@ specScopeGlobs = [
   "packages/core/test/tool/native/**",
   "packages/core/test/fixtures/native-parity/**",
   "script/build-native.ts",
+
+  # Feature 011 implement-phase paths (T001-T017): Restructure the Operator
+  #   Control Plane TUI from a flat list into grouped navigation with editable
+  #   forms and honest availability. Presentation and navigation ONLY — no new
+  #   dispatch path, no backend change, no new flag; the Feature 007
+  #   OperatorClient loopback parity invariant (FR8) is preserved. Nearly the
+  #   entire surface is ALREADY in scope under the Feature 007 / Feature 001
+  #   blocks and is NOT re-added (listed as comments for traceability):
+  #   packages/core/src/operator/** (Feature 007) — palette.ts label copy +
+  #     availability/input-mode metadata + 12-domain OPERATOR_SETTINGS_DOMAINS +
+  #     group-list/domain-panel projection builders; catalog.ts metadata read
+  #     (mutates, 12 domains) with NO catalog change and NO version bump;
+  #   packages/tui/src/**/operator/** (Feature 007) — dialog-settings.tsx home +
+  #     domain-panel split, execute.ts unchanged dispatch path, the new reusable
+  #     operator form under .../operator/form/**, and the five read panels
+  #     .../operator/{jobs,output,langlock,semantic,mcp}/index.tsx;
+  #   packages/tui/src/**/settings/** (Feature 007 / Feature 004) — the
+  #     DialogLangLockPicker source pattern generalised by the form;
+  #   packages/core/test/operator/** (Feature 007) — palette metadata/label unit
+  #     tests;
+  #   packages/tui/test/** (Feature 001) — dialog navigation, form dispatch,
+  #     honest-unavailable, and parity tests (new packages/tui/test/operator/**
+  #     lives under this glob).
+  # Genuinely new implement path (the top-level palette host, not under any glob):
+  "packages/tui/src/app.tsx",                 # collapse the flat listOperatorPaletteEntries spread → one Operator entry (FR1)
 ]
 
 # Waivers for intentional near-empty files (warnings only; errors are never
