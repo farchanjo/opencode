@@ -2,7 +2,7 @@
 id: 019f7184-70b5-7f83-bd9a-ed019572f111
 number: 008
 slug: add-complete-mcp-client-tools-and-resources-lifecycle-with
-status: tasked
+status: implemented
 created_at: 2026-07-17T19:18:52.853767Z
 ---
 
