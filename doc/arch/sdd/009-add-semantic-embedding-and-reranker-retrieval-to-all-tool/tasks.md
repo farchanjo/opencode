@@ -81,7 +81,7 @@ path.
   `tsgo --noEmit` on `packages/schema` green and `bun test packages/schema` imports the
   barrel without a duplicate-export error and the schema contract-hygiene test asserts
   annotate-before-check on the `ToolDocId`/`ToolContentHash` brands.
-- [ ] T004 [S2] Extend the protocol tool surface: add `ToolRetrievalRequest` (with the
+- [x] T004 [S2] Extend the protocol tool surface: add `ToolRetrievalRequest` (with the
   fixed `collection: Extract<CollectionKind, "tools">` discriminator research.md identifies —
   the schema `RetrievalRequest` already carries `collection`, the protocol one does not),
   `ToolCandidate`, `ToolRetrievalResult`, `ToolDegradationOutcome`, the `ToolReindexTriggerEvent`/

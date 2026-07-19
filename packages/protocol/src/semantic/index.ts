@@ -12,4 +12,15 @@
  */
 
 export * from "./commands"
-export type { BindingPort, EvalPort, IndexPort, ModelPort, ProviderPort, RetrievalPort } from "./ports"
+export type {
+  BindingPort,
+  EvalPort,
+  IndexPort,
+  ModelPort,
+  ProviderPort,
+  RetrievalPort,
+  ToolIndexPort,
+  ToolPipelineRunnerPort,
+  ToolRetrievalPort,
+  ToolSearchConfigPort,
+} from "./ports"

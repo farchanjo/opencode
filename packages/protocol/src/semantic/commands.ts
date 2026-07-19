@@ -43,7 +43,13 @@ import type {
   GenerationState as SchemaGenerationState,
   ResidencyProfile as SchemaResidencyProfile,
   RetrievalMode as SchemaRetrievalMode,
+  ToolRetrievalMode as SchemaToolRetrievalMode,
+  ToolSource as SchemaToolSource,
+  ToolSurface as SchemaToolSurface,
+  ToolTriggerSource as SchemaToolTriggerSource,
 } from "@opencode-ai/schema/semantic/enums-state"
+import type { DocScope as SchemaDocScope } from "@opencode-ai/schema/semantic/documents"
+import type { ToolDoc as SchemaToolDoc } from "@opencode-ai/schema/semantic/tool-doc"
 import type { SemanticEventType as SchemaSemanticEventType } from "@opencode-ai/schema/semantic/event-types"
 
 // =============================================================================
@@ -838,4 +844,156 @@ export type EvalError =
   | { readonly type: "binding_not_pinned"; readonly slot: BindingSlot } // guards C14
   | { readonly type: "denied"; readonly reason: string }
   | { readonly type: "unavailable"; readonly reason: string }
+  | { readonly type: "not_implemented" }
+
+// =============================================================================
+// Feature 009 — Semantic Tool Search payloads (extends the 006 stack, no fork)
+//
+// Adds only the genuinely new tool wire shapes on top of the reused 006 surface.
+// Every enum is SOURCED from `@opencode-ai/schema/semantic/*` (never redeclared),
+// so the transport contract cannot drift from the wire authority; `TaskProfile`,
+// `RetrievalFilters`, `SemanticScore`, `QueryFingerprint`, `CollectionKind`,
+// `OutputRef`, `OperatorPrincipal` and `DegradationGapCode` are reused verbatim
+// from the 006 mirror above (FR2, FR11, FR22, C2).
+// Wire shape: doc/arch/schemas/semantic/{tool-shared,enums-tool,tool-retrieval,
+// tool-trigger,tool-config}.cue and the sdd contracts/ports.ts sketch.
+// =============================================================================
+
+/** Composed canonical tool document id (native `tool.id`; MCP `toolName(client, name)`, FR6). */
+export type ToolDocId = string
+
+/** Stable content hash driving incremental upsert/tombstone; doubles as the C3 tie-break version leg (FR8). */
+export type ToolContentHash = string
+
+/** The four tool provenance sources (FR6, C6); sourced from `@opencode-ai/schema/semantic/enums-state`. */
+export type ToolSource = SchemaToolSource
+
+/**
+ * The tool degradation ladder rung (C14); sourced from the schema `ToolRetrievalMode`,
+ * distinct from the 006 `RetrievalMode` (`DegradationRung`) — the tool floor is the
+ * unranked `full_set_passthrough` set, and `fail_closed` is the per-surface opt-in (C12).
+ */
+export type ToolRetrievalRung = SchemaToolRetrievalMode
+
+/** The three tool-search consumption surfaces gated independently by Config.Service (FR21, C9, C12). */
+export type ToolSearchSurface = SchemaToolSurface
+
+/** The three C11 trigger sources; `mcp_tools_changed` is scoped to one server (C11b). */
+export type ToolReindexTriggerSource = SchemaToolTriggerSource
+
+/**
+ * Protocol-layer tool-retrieval request. The schema `RetrievalRequest` already carries
+ * `collection`; this adds the fixed `collection: "tools"` discriminator to the protocol
+ * mirror (research.md), reusing `TaskProfile`/`RetrievalFilters` verbatim (C2, C7).
+ */
+export interface ToolRetrievalRequest {
+  readonly profile: TaskProfile
+  readonly retrievalTopK: number // inherits the 006 `Values.TopK` bound via the reused `budgetError` guard (C5)
+  readonly rerankTopK: number // MUST be <= retrievalTopK, enforced by the reused `budgetError` guard (C5)
+  readonly filters: RetrievalFilters
+  readonly collection: Extract<CollectionKind, "tools"> // fixed discriminator; CollectionKind reused (C2, C7)
+}
+
+/** One candidate surviving the tool pass through stage 9 revalidation (FR3, FR11, C2). */
+export interface ToolCandidate {
+  readonly canonicalId: ToolDocId
+  readonly canonicalVersion: ToolContentHash // C3: the tie-break version leg is the tool content hash
+  readonly source: ToolSource
+  readonly mcpServerRef?: string
+  readonly score: SemanticScore // reused verbatim; the tie-break comparator is the same code (C3)
+  readonly revalidated: boolean // never returned true before stage 9 completes
+}
+
+/** Explicit degraded outcome for one tool-retrieval call; never a silent empty result (FR18, FR19, C14). */
+export interface ToolDegradationOutcome {
+  readonly rung: ToolRetrievalRung
+  readonly gapCode?: DegradationGapCode // reused verbatim; same typed codes, no tool-specific gap vocabulary
+  readonly reason?: string
+}
+
+/** Stage-9 tool result; `cacheHit` reports {@link QueryFingerprint} reuse across surfaces (FR14, C8). */
+export interface ToolRetrievalResult {
+  readonly candidates: readonly ToolCandidate[]
+  readonly degradation: ToolDegradationOutcome
+  readonly queryFingerprint: QueryFingerprint // reused verbatim (C8)
+  readonly cacheHit: boolean
+}
+
+/** The domain-layer tool pass outcome before facade assembly (mirrors the 006 `PipelineOutcome` shape, C2). */
+export interface ToolPipelineOutcome {
+  readonly candidates: readonly ToolCandidate[]
+  readonly degradation: ToolDegradationOutcome
+}
+
+/** One raw trigger event before coalescing (FR8, C11); `mcpServerId` set only for `mcp_tools_changed` (C11b). */
+export interface ToolReindexTriggerEvent {
+  readonly source: ToolReindexTriggerSource
+  readonly mcpServerId?: string
+  readonly occurredAt: string // ISO-8601
+}
+
+/** One coalesced flush target after the bounded coalescing window closes (NFR2, C11). */
+export interface ToolIndexFlushInput {
+  readonly affectedMcpServerId?: string // narrows the reindex to one server's tool documents (C11b)
+  readonly principal: OperatorPrincipal // "system" for automatic triggers, an operator principal for manual reindex (FR22)
+}
+
+/** Mirrors the reused 006 `IndexReindexOutput` shape for the `tools` collection (FR8, FR13, C7). */
+export interface ToolIndexFlushOutput {
+  readonly upsertedCount: number
+  readonly tombstonedCount: number
+  readonly outputRef: OutputRef // Feature 005 ref for the job log
+}
+
+/** Input to the sanitized ToolDoc projection (C6, FR6, FR7); sourced from the registry/MCP boundary. */
+export interface ToolProjectionInput {
+  readonly source: ToolSource
+  readonly toolId: ToolDocId // native `tool.id`; MCP composed `toolName(client, name)`
+  readonly displayName: string
+  readonly mcpServerRef?: string
+  readonly rawDescription: string // native `tool.description`; MCP `convertTool` description
+  readonly rawParameterSchema: unknown // native `tool.jsonSchema`; MCP `convertTool` inputSchema — never stored raw
+  readonly scope: SchemaDocScope // reused document scope; scalar project/permission partition (C13)
+  readonly languageTag: string
+}
+
+/** Output of the sanitized ToolDoc projection; `sanitizedFieldsDropped` lists field NAMES only (AC18). */
+export interface ToolProjectionOutput {
+  readonly doc: SchemaToolDoc // reused schema projection entity (FR6, C6)
+  readonly sanitizedFieldsDropped: readonly string[] // e.g. ["default","example","const","format"]; content-free
+}
+
+/**
+ * One surface's tool-search configuration (FR21). `enabled` and `failClosed` both
+ * default to `false` for every surface (C9, C12) — the V1 floor is the unranked
+ * full-set passthrough, identical to today, until an operator opts a surface in.
+ */
+export interface ToolSearchSurfaceConfig {
+  readonly surface: ToolSearchSurface
+  readonly enabled: boolean // default false (C9)
+  readonly failClosed: boolean // default false; per-surface, never global-only (C12)
+  readonly retrievalTopK: number // inherits the 006 `Values.TopK` bound (C5)
+  readonly rerankTopK: number // MUST be <= retrievalTopK (C5)
+  readonly resultBound: number // small bounded result list, never unbounded (C5, FR13)
+  readonly latencyBudgetMs: number // expiry triggers the C14 ladder, never blocks exposure (C5, NFR1)
+  readonly cacheTtlMs: number // last-known index-metadata cache TTL; invalidates by binding_version/config_hash (C8)
+}
+
+export type ToolRetrievalError =
+  | { readonly type: "invalid_profile"; readonly reason: string }
+  | { readonly type: "budget_exceeded"; readonly field: "retrieval_top_k" | "rerank_top_k" | "result_bound" } // guards C5
+  | { readonly type: "timeout" } // triggers the C14 ladder at the call site, never a hard failure by itself
+  | { readonly type: "fail_closed_denied"; readonly surface: ToolSearchSurface; readonly gapCode?: DegradationGapCode } // guards the C12 opt-in
+  | { readonly type: "not_implemented" }
+
+export type ToolIndexError =
+  | { readonly type: "milvus_unavailable"; readonly reason: string } // reused gap vocabulary shape, scoped to `tools`
+  | { readonly type: "reconcile_in_progress"; readonly collection: Extract<CollectionKind, "tools"> }
+  | { readonly type: "schema_projection_too_large"; readonly toolId: ToolDocId } // guards the AC18 size cap
+  | { readonly type: "denied"; readonly reason: string }
+  | { readonly type: "unavailable"; readonly reason: string }
+  | { readonly type: "not_implemented" }
+
+export type ToolSearchConfigError =
+  | { readonly type: "invalid_argument"; readonly field: string }
   | { readonly type: "not_implemented" }

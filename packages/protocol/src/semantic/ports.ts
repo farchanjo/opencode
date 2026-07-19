@@ -76,6 +76,19 @@ import type {
   SkillRetrievalRequest,
   TestProviderInput,
   TestProviderOutput,
+  ToolIndexError,
+  ToolIndexFlushInput,
+  ToolIndexFlushOutput,
+  ToolPipelineOutcome,
+  ToolProjectionInput,
+  ToolProjectionOutput,
+  ToolReindexTriggerEvent,
+  ToolRetrievalError,
+  ToolRetrievalRequest,
+  ToolRetrievalResult,
+  ToolSearchConfigError,
+  ToolSearchSurface,
+  ToolSearchSurfaceConfig,
   UpdateProviderInput,
   UpdateProviderOutput,
   ValidateBindingInput,
@@ -192,4 +205,49 @@ export interface RetrievalPort {
  */
 export interface EvalPort {
   readonly runGolden: (input: RunGoldenInput) => Effect.Effect<EvalReport, EvalError>
+}
+
+/**
+ * Feature 009 tool retrieval seam. Extends the 006 retrieval surface rather than forking
+ * a router (C2): composed by the SAME facade alongside `retrieveAgents`/`retrieveSkills`
+ * — a sibling port, not a second facade. The tool pass runs pipeline stages 1 profile ->
+ * 2 filter -> 3 recall -> 4 reduce -> 5 rerank -> 6 score -> 9 revalidate, reusing
+ * `hybrid-fusion.ts`/`tie-break.ts` verbatim and OMITTING the agent-only 7/8 stages.
+ * Not reached by a live route until a per-surface flag (C9) turns it on (FR11, C15).
+ */
+export interface ToolRetrievalPort {
+  readonly retrieveTools: (input: ToolRetrievalRequest) => Effect.Effect<ToolRetrievalResult, ToolRetrievalError>
+}
+
+/**
+ * The injected pipeline runner Feature 009 adds alongside the 006 `runAgents`/`runSkills`;
+ * `tool-pass.ts` implements this signature with zero framework/I/O dependencies (C2).
+ */
+export interface ToolPipelineRunnerPort {
+  readonly runTools: (request: ToolRetrievalRequest) => Promise<ToolPipelineOutcome>
+}
+
+/**
+ * The C11 trigger-coalescing wrapper over the REUSED 006 `IndexPort` (no new lifecycle
+ * machinery, C7). It owns ONLY the three-source trigger intake, the bounded coalescing
+ * window, and the sanitized projection; every actual upsert/tombstone pass flows through
+ * the reused `IndexPort.reindex`/`reconcile({ collection: "tools" })`. Parallel and
+ * independent from the Feature 008 resource-index trigger — never merged (C11).
+ */
+export interface ToolIndexPort {
+  /** Records one of the three C11 trigger sources; never reindexes synchronously (NFR2). */
+  readonly recordTrigger: (event: ToolReindexTriggerEvent) => Effect.Effect<void, never>
+  /** Flushes the coalesced window for one affected scope/server, driving the reused `IndexPort.reindex` (FR8, C7, C11). */
+  readonly flush: (input: ToolIndexFlushInput) => Effect.Effect<ToolIndexFlushOutput, ToolIndexError>
+  /** Projects one boundary tool record into a sanitized, content-hashed `ToolDoc` (FR6, FR7, FR8, C6). */
+  readonly project: (input: ToolProjectionInput) => Effect.Effect<ToolProjectionOutput, ToolIndexError>
+}
+
+/**
+ * Read-only projection of the per-surface Config.Service tool-search flags Feature 009
+ * adds (FR21, C9, C12). Config MUTATION is NOT a new port — it flows through the existing
+ * Config.Service write surface; Feature 009 registers no new operator command ID (FR22).
+ */
+export interface ToolSearchConfigPort {
+  readonly get: (surface: ToolSearchSurface) => Effect.Effect<ToolSearchSurfaceConfig, ToolSearchConfigError>
 }
