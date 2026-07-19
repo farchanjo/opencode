@@ -261,14 +261,33 @@ export function createDispatcher(options: DispatchOptions): Dispatcher {
         })
       }
 
-      const result = await mutateAuthority(options.mutationPorts, {
-        request,
-        authority: plan.authority || options.authorityFor?.(descriptor) || descriptor.domain,
-        apply: plan.apply,
-        snapshotBefore: plan.snapshotBefore,
-        cutoverDomain: plan.cutoverDomain,
-        rollbackDomain: plan.rollbackDomain,
-      })
+      // Defense in depth: the commit path (idempotency claim → CAS → audit) reads
+      // Config.Service through a Promise seam that can reject with a defect (e.g. a
+      // missing InstanceRef on a runtime fiber). A raw rejection here would escape the
+      // CLI/HTTP Promise boundary as a hard crash, violating honest degradation (FR8).
+      // Convert any unexpected throw into a typed `unavailable` envelope so a config
+      // outage degrades instead of crashing — the primary fix keeps InstanceRef bound,
+      // this guarantees the invariant even if a future seam regresses.
+      let result: CommandResult
+      try {
+        result = await mutateAuthority(options.mutationPorts, {
+          request,
+          authority: plan.authority || options.authorityFor?.(descriptor) || descriptor.domain,
+          apply: plan.apply,
+          snapshotBefore: plan.snapshotBefore,
+          cutoverDomain: plan.cutoverDomain,
+          rollbackDomain: plan.rollbackDomain,
+        })
+      } catch (error) {
+        return finish(
+          request,
+          failureResult({
+            id: descriptor.id,
+            code: "unavailable",
+            message: error instanceof Error ? error.message : "config authority is unreachable",
+          }),
+        )
+      }
       // mutateAuthority already audits on success path via events; ensure envelope
       assertAdminResultShape(result)
       try {

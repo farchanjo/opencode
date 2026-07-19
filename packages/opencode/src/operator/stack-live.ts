@@ -19,6 +19,7 @@ import {
   type DnsResolver,
 } from "@opencode-ai/core/operator"
 import { AppRuntime } from "@/effect/app-runtime"
+import { InstanceRef } from "@/effect/instance-ref"
 import { Config } from "@/config/config"
 import { EventV2Bridge } from "@/event-v2-bridge"
 import { Provider } from "@/provider/provider"
@@ -130,7 +131,15 @@ export function getOrCreateLiveOperatorStack(input: CreateLiveOperatorStackInput
 }
 
 export async function createLiveOperatorStack(input: CreateLiveOperatorStackInput): Promise<LiveOperatorStack> {
-  await InstanceRuntime.load({ directory: input.directory })
+  // Capture the loaded InstanceContext so the config seam below can bind it onto
+  // every AppRuntime.runPromise. Without it, Config.get/update (InstanceState-backed,
+  // project-scoped authorities: routing/langlock/idempotency) run on a runtime fiber
+  // with no InstanceRef and Effect.die("InstanceRef not provided") — which escapes a
+  // Promise-boundary caller (CLI `op`) as a hard crash. getGlobal has no InstanceState
+  // dependency, so global:* reads survived while any mutation (idempotency claim →
+  // project Config.get) died. Binding InstanceRef here makes CLI mutations really
+  // persist (bug fix, Feature 013 residual).
+  const instance = await InstanceRuntime.load({ directory: input.directory })
 
   const lockDir = path.join(Global.Path.state, "operator-locks")
   await mkdir(lockDir, { recursive: true })
@@ -146,7 +155,7 @@ export async function createLiveOperatorStack(input: CreateLiveOperatorStackInpu
             update: (patch) => svc.update(patch as never),
             updateGlobal: (patch) => svc.updateGlobal(patch as never),
           })
-        }),
+        }).pipe(Effect.provideService(InstanceRef, instance)),
       ),
   })
 
