@@ -33,13 +33,15 @@ function req(overrides: Partial<CommandRequest> = {}): CommandRequest {
 }
 
 describe("B1/T040 Config-backed status (not stub)", () => {
-  test("langlock.status / telemetry.status return configured/version query", async () => {
+  // langlock.status/show are intentionally NOT config-backed here: they route through the
+  // Feature 004 domain port (port.resolve). telemetry/budget remain config-status ids.
+  test("telemetry.status / budget.status return configured/version query", async () => {
     const lock = createProcessMutexLockPort()
     const store = createDurableOperatorStore({ config: createFakeConfigService(), lock })
     await store.config.compareAndSet({
-      authority: "langlock",
+      authority: "telemetry",
       expectedVersion: null,
-      payload: { language: "en" },
+      payload: { enabled: true },
       nowMs: 1,
     })
     const stack = createTestOperatorStack({ mutationPorts: {
@@ -52,7 +54,7 @@ describe("B1/T040 Config-backed status (not stub)", () => {
       nowMs: () => 1,
     }})
     const status = await stack.dispatcher.dispatchRequest({
-      ...req({ id: "langlock.status" as CommandRequest["id"], confirm: false }),
+      ...req({ id: "telemetry.status" as CommandRequest["id"], confirm: false }),
     })
     expect(status.ok).toBe(true)
     expect(status.outcome).toBe("success")
@@ -60,12 +62,12 @@ describe("B1/T040 Config-backed status (not stub)", () => {
     expect((status.effective as { configured?: boolean })?.configured).toBe(true)
     expect(status.version).toBeTruthy()
 
-    const tele = await stack.dispatcher.dispatchRequest({
-      ...req({ id: "telemetry.status" as CommandRequest["id"], confirm: false }),
+    const budget = await stack.dispatcher.dispatchRequest({
+      ...req({ id: "budget.status" as CommandRequest["id"], confirm: false }),
     })
-    expect(tele.ok).toBe(true)
-    expect((tele.effective as { status?: string })?.status).toBe("unconfigured")
-    expect((tele.effective as { configured?: boolean })?.configured).toBe(false)
+    expect(budget.ok).toBe(true)
+    expect((budget.effective as { status?: string })?.status).toBe("unconfigured")
+    expect((budget.effective as { configured?: boolean })?.configured).toBe(false)
   })
 
   test("handlersFromDomainPorts with config overrides stubs for status ids", () => {

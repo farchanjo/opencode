@@ -39,8 +39,9 @@ export function createConfigStatusHandler(config: ConfigPort, authority?: string
 }
 
 const STATUS_SHOW_IDS = [
-  "langlock.status",
-  "langlock.show",
+  // langlock.status/langlock.show intentionally excluded: they dispatch through the
+  // Feature 004 domain port (port.resolve) so they render the effective redacted policy
+  // and degrade to the typed unavailable envelope, matching jobs/semantic parity.
   "telemetry.status",
   "telemetry.show",
   "smart.status",
