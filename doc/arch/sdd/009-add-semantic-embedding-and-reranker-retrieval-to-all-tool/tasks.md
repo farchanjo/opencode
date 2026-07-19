@@ -142,7 +142,7 @@ path.
   asserts `tools` joins the collection set, cutover moves all collections atomically,
   select/reindex leave the alias inactive, an embedding dimension change forces a new generation,
   and reindex flows through the reused `semantic.index.*` operators with no new ID.
-- [ ] T008 [S7] Author `packages/opencode/src/semantic/tool-reindex-trigger.ts` implementing the
+- [x] T008 [S7] Author `packages/opencode/src/semantic/tool-reindex-trigger.ts` implementing the
   three coalesced triggers — (a) ToolRegistry corpus change (the **honest derived wiring point**:
   ToolRegistry emits no native change event per research.md, so this trigger is a documented
   derived hook, not a fabricated event), (b) the Feature 008 `mcp.tools_changed` event scoped to
