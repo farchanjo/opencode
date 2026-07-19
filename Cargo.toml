@@ -1,0 +1,36 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/opencode-ffi-abi",
+    "crates/opencode-tools-ffi",
+    "crates/opencode-pty-ffi",
+]
+
+# Single-sourced, exact-pinned dependency versions for the whole workspace
+# (Feature 010, plan.md "Crate dependency versions"). Every crate inherits a
+# version via `workspace = true`; the pin validator requires `=x.y.z`.
+[workspace.dependencies]
+serde = { version = "=1.0.229", features = ["derive"] }
+serde_json = "=1.0.150"
+ignore = "=0.4.30"
+globset = "=0.4.19"
+grep-searcher = "=0.1.17"
+grep-regex = "=0.1.14"
+grep-matcher = "=0.1.9"
+portable-pty = "=0.9.0"
+libc = "=0.2.186"
+
+# Workspace-wide lint policy (inherited by every crate via `[lints] workspace = true`).
+# The FFI boundary is held to a clippy-clean bar; `unsafe` blocks must be explicit
+# even inside `unsafe fn` so the pointer-ownership contracts stay auditable.
+[workspace.lints.rust]
+unsafe_op_in_unsafe_fn = "warn"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+
+[profile.release]
+# Release dylibs: optimize and abort on panic is NOT set here — the FFI
+# boundary relies on unwinding being caught by catch_unwind, so panic = "unwind"
+# (the default) must be preserved. Do not set panic = "abort".
+opt-level = 3

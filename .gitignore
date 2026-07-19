@@ -36,3 +36,7 @@ doc/.specify/*.db
 
 # Feature 007 operator isolation sandbox (never commit runtime data)
 .dev/
+
+# Feature 010 native Rust FFI (built, never committed — C1, C6, C17)
+/target
+packages/core/native/*/

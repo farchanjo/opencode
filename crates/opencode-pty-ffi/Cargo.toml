@@ -1,0 +1,25 @@
+[package]
+name = "opencode-pty-ffi"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.83.0"
+publish = false
+description = "Native PTY entry points (spawn/resize/kill/wait/close) for the opencode shell tool (Feature 010)."
+
+# cdylib — dlopened by the Bun-side loader.ts via bun:ffi.
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+opencode-ffi-abi = { path = "../opencode-ffi-abi" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+portable-pty = { workspace = true }
+libc = { workspace = true }
+
+[features]
+# Forward the debug-only oc_alloc_stats gate to the shared ABI crate (C18).
+alloc-stats = ["opencode-ffi-abi/alloc-stats"]
+
+[lints]
+workspace = true

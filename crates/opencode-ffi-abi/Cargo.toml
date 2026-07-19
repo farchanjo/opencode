@@ -1,0 +1,24 @@
+[package]
+name = "opencode-ffi-abi"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.83.0"
+publish = false
+description = "Shared, panic-safe, leak-free FFI boundary for the opencode native tool/PTY crates (Feature 010, not shipped)."
+
+# rlib only — this crate is linked into the two cdylib crates, never dlopened directly.
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[features]
+# Gates the debug-only oc_alloc_stats extern symbol emitted by export_ffi_abi!.
+# The alloc/free counters are always compiled; only the exported entry point and
+# its cdylib re-export are feature-gated (C18). Off by default.
+alloc-stats = []
+
+[lints]
+workspace = true
