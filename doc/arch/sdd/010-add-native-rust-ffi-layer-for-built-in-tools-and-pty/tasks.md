@@ -146,7 +146,7 @@ symbols are pinned by `plan.md`, not provisional.
 
 ### Remaining filesystem tools (Phase 3)
 
-- [ ] T009 [S7] Author `crates/opencode-tools-ffi/src/write.rs` (`oc_write`) with
+- [x] T009 [S7] Author `crates/opencode-tools-ffi/src/write.rs` (`oc_write`) with
   create/overwrite semantics and an **atomic** write — temp file in the destination directory
   then rename over the target so a partial write never leaves a truncated destination — and
   `packages/core/src/tool/native/write.native.ts` mirroring `packages/core/src/tool/write.ts`;
@@ -154,7 +154,7 @@ symbols are pinned by `plan.md`, not provisional.
   `cargo test -p opencode-tools-ffi` and `bun test packages/core/test/tool/native` assert the
   destination is always full-new or unchanged-prior (never truncated) and the wrapper is
   byte-identical to the TS reference.
-- [ ] T010 [S8] Author `crates/opencode-tools-ffi/src/edit.rs` (`oc_edit`) as exact string
+- [x] T010 [S8] Author `crates/opencode-tools-ffi/src/edit.rs` (`oc_edit`) as exact string
   replacement with uniqueness: `no_match` on zero occurrences, `ambiguous_match` on more than
   one without replace-all, replace-all substituting every exact occurrence, and
   `oldString != newString` — at parity with `packages/core/src/tool/edit.ts`
@@ -162,7 +162,7 @@ symbols are pinned by `plan.md`, not provisional.
   `packages/core/src/tool/native/edit.native.ts` and its parity fixtures (FR3, FR18, C4, AC4).
   Acceptance: `cargo test -p opencode-tools-ffi` and `bun test packages/core/test/tool/native`
   assert the zero/one/many + replace-all matrix with the exact TS `ToolFailure` messages.
-- [ ] T011 [S9] Author `crates/opencode-tools-ffi/src/patch.rs` (`oc_apply_patch`) with
+- [x] T011 [S9] Author `crates/opencode-tools-ffi/src/patch.rs` (`oc_apply_patch`) with
   multi-hunk parse + apply, per-hunk surrounding-context matching, and the typed
   `context_mismatch` error that applies **nothing** on a mismatch — at parity with
   `packages/core/src/tool/apply-patch.ts` — plus
@@ -170,7 +170,7 @@ symbols are pinned by `plan.md`, not provisional.
   C4, AC5). Acceptance: `cargo test -p opencode-tools-ffi` and
   `bun test packages/core/test/tool/native` assert all hunks apply on a matching patch and a
   non-matching hunk yields `context_mismatch` with no partial application.
-- [ ] T012 [S10] Author `crates/opencode-tools-ffi/src/glob.rs` (`oc_glob`) as
+- [x] T012 [S10] Author `crates/opencode-tools-ffi/src/glob.rs` (`oc_glob`) as
   `.gitignore`-aware file-pattern search via `ignore` + `globset` sorted by modification time
   (mtime-desc), plus `packages/core/src/tool/native/glob.native.ts` whose selection falls back
   through the `Ripgrep.Service` seam in `packages/core/src/tool/glob.ts`; extend the parity
