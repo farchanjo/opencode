@@ -1,0 +1,4 @@
+# Feature 010 native-parity fixtures must retain exact bytes across clones —
+# CRLF terminators, NUL bytes, and raw UTF-8 are load-bearing for byte-identity
+# parity. Disable all text normalization so git stores/checks out the bytes as-is.
+* -text
