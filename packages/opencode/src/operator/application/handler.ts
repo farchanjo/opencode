@@ -23,11 +23,19 @@ export type QueryHandlerResult = {
   readonly version?: string
 }
 
-/** Mutation plan executed only by dispatcher via mutateAuthority. */
-export type MutationPlanHandlerResult = {
-  readonly kind: "mutation_plan"
+/**
+ * The authority + pure transform a domain backend hands to the dispatcher so
+ * `mutateAuthority` owns the single committed CAS write (never the backend itself).
+ * `apply` is a pure function of the raw persisted payload — no I/O, no self-commit.
+ */
+export type OperatorMutationPlan = {
   readonly authority: string
   readonly apply: (current: unknown) => unknown
+}
+
+/** Mutation plan executed only by dispatcher via mutateAuthority. */
+export type MutationPlanHandlerResult = OperatorMutationPlan & {
+  readonly kind: "mutation_plan"
   readonly snapshotBefore?: boolean
   readonly cutoverDomain?: string
   readonly rollbackDomain?: string

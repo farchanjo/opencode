@@ -1,0 +1,237 @@
+/**
+ * Feature 013 / T007 — the `budget.*` inbound command adapter.
+ *
+ * Bridges the reserved Feature 007 `budget.status|show|set|reset|validate` operator
+ * command ids to the typed `BudgetPort` through the Feature 007 dispatcher's
+ * `DomainInvoke` seam, exactly like `langlock-command-port.ts`. Feature 007 remains
+ * the SOLE registration authority: this adapter registers NO command ids — it only
+ * supplies the `budget` domain `invoke`, replacing the `not_implemented` stub.
+ *
+ * Every command is parsed and dispatched LOCALLY (before any prompt admission): the
+ * payload never reaches a model, and every port call is model-independent and
+ * zero-cost. `status`/`show`/`validate` project the redacted, bounded effective
+ * limits; `set`/`reset` carry an operator principal + explicit scope + CAS expected
+ * version and return a Feature 007 audit-correlation id. This adapter is the single
+ * uniform operator access-audit point — it holds the Feature 007 principal for every
+ * command — and emits exactly one bounded, secret-free audit event per dispatch.
+ */
+export * as BudgetCommandPort from "./budget-command-port"
+
+import { Effect } from "effect"
+import type { OperatorPrincipal as OperatorPrincipalCore, CommandRequest } from "@opencode-ai/core/operator"
+import { INITIAL_CONFIG_VERSION } from "@/operator/application/ports/config-port"
+import type {
+  BudgetError,
+  BudgetLimitsView,
+  BudgetScope,
+  OperatorPrincipal as BudgetOperatorPrincipal,
+} from "@opencode-ai/protocol/budget/commands"
+import type { HandlerContext, HandlerResult, FailureHandlerResult, OperatorMutationPlan } from "@/operator/application/handler"
+import type { DomainInvoke } from "@/operator/application/ports/domain-ports"
+import type { BudgetAuditEvent, BudgetAuditSink, BudgetBackend } from "./budget-port"
+
+export interface BudgetDomainPorts {
+  readonly budget: { readonly invoke: DomainInvoke }
+}
+
+export interface BudgetCommandDeps {
+  readonly backend: BudgetBackend
+  readonly audit: BudgetAuditSink
+}
+
+// =============================================================================
+// Payload helpers
+// =============================================================================
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {}
+}
+
+function firstString(record: Record<string, unknown>, keys: ReadonlyArray<string>): string | undefined {
+  for (const key of keys) {
+    const value = record[key]
+    if (typeof value === "string" && value.length > 0) return value
+  }
+  return undefined
+}
+
+function firstNumber(record: Record<string, unknown>, keys: ReadonlyArray<string>): number | undefined {
+  for (const key of keys) {
+    const value = record[key]
+    if (typeof value === "number" && Number.isFinite(value)) return value
+  }
+  return undefined
+}
+
+function fail(code: FailureHandlerResult["code"], message: string, details?: FailureHandlerResult["details"]): FailureHandlerResult {
+  return { kind: "failure", code, message, details }
+}
+
+/** Map the Feature 007 operator principal onto the budget operator principal. */
+function toBudgetOperator(principal: OperatorPrincipalCore): BudgetOperatorPrincipal {
+  return { kind: principal.kind, id: principal.subject }
+}
+
+/** Resolve the CAS `expectedVersion` string from the payload or the envelope version; defaults to create. */
+function resolveExpectedVersion(record: Record<string, unknown>, request: CommandRequest): string {
+  const fromPayload = firstString(record, ["expectedVersion", "expected_version", "version"])
+  if (fromPayload !== undefined) return fromPayload
+  if (request.version !== undefined && request.version.length > 0) return request.version
+  return INITIAL_CONFIG_VERSION
+}
+
+/** Parse the bounded limits view from a `budget.set` payload; undefined when any field is missing. */
+function parseLimits(record: Record<string, unknown>): BudgetLimitsView | undefined {
+  const raw = asRecord(record["limits"])
+  const maxTurns = firstNumber(raw, ["maxTurns", "max_turns"])
+  const maxContextTokens = firstNumber(raw, ["maxContextTokens", "max_context_tokens"])
+  const maxOutputTokens = firstNumber(raw, ["maxOutputTokens", "max_output_tokens"])
+  const maxWorkers = firstNumber(raw, ["maxWorkers", "max_workers"])
+  const tokenBudget = firstNumber(raw, ["tokenBudget", "token_budget"])
+  if (
+    maxTurns === undefined ||
+    maxContextTokens === undefined ||
+    maxOutputTokens === undefined ||
+    maxWorkers === undefined ||
+    tokenBudget === undefined
+  ) {
+    return undefined
+  }
+  return { maxTurns, maxContextTokens, maxOutputTokens, maxWorkers, tokenBudget }
+}
+
+// =============================================================================
+// Error mapping
+// =============================================================================
+
+/** Map the closed `BudgetError` union onto the bounded operator audit outcome. */
+function auditOutcome(error: BudgetError): BudgetAuditEvent["outcome"] {
+  switch (error.type) {
+    case "unauthorized":
+      return "unauthorized"
+    case "version_conflict":
+      return "conflict"
+    case "invalid_argument":
+      return "invalid"
+    default:
+      return "rejected"
+  }
+}
+
+/** Map the closed `BudgetError` union onto an operator failure code + envelope. */
+function budgetErrorToFailure(error: BudgetError): FailureHandlerResult {
+  switch (error.type) {
+    case "unauthorized":
+      return fail("unauthorized", error.reason)
+    case "invalid_argument":
+      return fail("invalid_argument", error.reason, { field: error.field })
+    case "version_conflict":
+      return fail("invalid_argument", `version conflict: expected ${error.expectedVersion}, actual ${error.actualVersion}`, {
+        field: "expectedVersion",
+        expectedVersion: error.expectedVersion,
+        actualVersion: error.actualVersion,
+      })
+    case "unavailable":
+      return fail("unavailable", error.reason)
+    case "not_implemented":
+      return fail("not_implemented", "operation is not implemented")
+  }
+}
+
+// =============================================================================
+// budget.* domain invoke
+// =============================================================================
+
+function budgetInvoke(deps: BudgetCommandDeps): DomainInvoke {
+  const { backend } = deps
+
+  /** Run a read effect, emit exactly one audit event, and shape the result. */
+  const run = <A>(
+    commandId: string,
+    principalId: string,
+    target: string,
+    effect: Effect.Effect<A, BudgetError>,
+    onSuccess: (value: A) => HandlerResult,
+  ): Promise<HandlerResult> =>
+    Effect.runPromise(
+      effect.pipe(
+        Effect.matchEffect({
+          onSuccess: (value): Effect.Effect<HandlerResult> =>
+            deps.audit.record({ commandId, principalId, target, outcome: "ok" }).pipe(Effect.as(onSuccess(value))),
+          onFailure: (error): Effect.Effect<HandlerResult> =>
+            deps.audit
+              .record({ commandId, principalId, target, outcome: auditOutcome(error) })
+              .pipe(Effect.as(budgetErrorToFailure(error))),
+        }),
+      ),
+    )
+
+  /** Validate a mutation and hand back the `mutation_plan` the dispatcher commits (audited on commit). */
+  const runPlan = (
+    commandId: string,
+    principalId: string,
+    target: string,
+    effect: Effect.Effect<OperatorMutationPlan, BudgetError>,
+  ): Promise<HandlerResult> =>
+    Effect.runPromise(
+      effect.pipe(
+        Effect.matchEffect({
+          onSuccess: (plan): Effect.Effect<HandlerResult> => Effect.succeed({ kind: "mutation_plan", ...plan }),
+          onFailure: (error): Effect.Effect<HandlerResult> =>
+            deps.audit
+              .record({ commandId, principalId, target, outcome: auditOutcome(error) })
+              .pipe(Effect.as(budgetErrorToFailure(error))),
+        }),
+      ),
+    )
+
+  const query = (value: unknown): HandlerResult => ({ kind: "query", effective: value })
+
+  return (ctx: HandlerContext): Promise<HandlerResult> => {
+    const id = String(ctx.descriptor.id)
+    const payload = asRecord(ctx.request.payload)
+    const principal = toBudgetOperator(ctx.request.principal)
+    const principalId = principal.id
+    const scope = (firstString(payload, ["scope"]) ?? ctx.request.scope.kind) as BudgetScope
+    const target = firstString(payload, ["scopeId", "scope_id"]) ?? ctx.request.scope.ref ?? scope
+
+    switch (id) {
+      case "budget.status":
+        return run(id, principalId, target, backend.resolve({ scope }), (summary) => query(summary))
+
+      case "budget.show":
+        return run(id, principalId, target, backend.resolve({ scope }), (summary) => query(summary))
+
+      case "budget.validate":
+        return run(id, principalId, target, backend.validate({ scope }), (out) => query(out))
+
+      case "budget.set": {
+        const limits = parseLimits(payload)
+        if (limits === undefined) {
+          return Promise.resolve(fail("invalid_argument", "budget.set requires a complete limits view", { field: "limits" }))
+        }
+        const expectedVersion = resolveExpectedVersion(payload, ctx.request)
+        return runPlan(id, principalId, target, backend.planSet({ scope, limits, expectedVersion, principal }))
+      }
+
+      case "budget.reset": {
+        const expectedVersion = resolveExpectedVersion(payload, ctx.request)
+        return runPlan(id, principalId, target, backend.planReset({ scope, expectedVersion, principal }))
+      }
+
+      default:
+        return Promise.resolve(fail("not_implemented", `budget command ${id} is not implemented`))
+    }
+  }
+}
+
+/**
+ * Build the `budget` DomainPort override. Wire it into the Feature 007 dispatcher
+ * via `wireDomainPorts(createBudgetDomainPorts({ port, audit }))` at the composition
+ * root — it replaces the `not_implemented` stub without touching the registry.
+ */
+export function createBudgetDomainPorts(deps: BudgetCommandDeps): BudgetDomainPorts {
+  return {
+    budget: { invoke: budgetInvoke(deps) },
+  }
+}
