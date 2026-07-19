@@ -2,7 +2,7 @@
 id: 019f7837-4e0a-7d43-a299-aa451348a906
 number: 010
 slug: add-native-rust-ffi-layer-for-built-in-tools-and-pty
-status: tasked
+status: implemented
 created_at: 2026-07-19T02:31:58.218719Z
 ---
 # Feature Specification: Native Rust FFI Tools and PTY Integration
