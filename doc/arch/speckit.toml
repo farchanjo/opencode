@@ -469,6 +469,36 @@ specScopeGlobs = [
   # Genuinely new implement paths (config round-trip write/read alignment):
   "packages/opencode/src/config/**",          # operator-key accept + write/read align + cache invalidation (FR1-FR3)
   "packages/opencode/test/config/**",         # round-trip persistence tests (FR4)
+
+  # Feature 017 implement-phase paths: Close the implementable operator
+  #   capability gaps. Wire the gaps whose live dependency already exists — MCP
+  #   live reads over MCP.Service status()/clients() (FR1-FR2), MCP mutations via
+  #   the mutation_plan contract + live-service action plans (FR3-FR5), the
+  #   OutputSpool production writer at the session message-part seam + stat/read/
+  #   follow + the store-scoped admin edge (FR6-FR10), the jobs occurrence
+  #   projection over EventV2Bridge (FR11-FR12), and the Milvus registry binding
+  #   when an endpoint is configured (FR13-FR14) — plus the operator-TUI editing
+  #   surface FIRST (multi-field edit modals + the detail view tree, FR19-FR23),
+  #   the availability-map flip (FR15), and repo health (FR18). The executor
+  #   (jobs.run-now), lifecycle forced-abort (cancel), and Smart Routing edges
+  #   stay typed capability gaps (FR16). Feature 007 stays the sole
+  #   command-registration authority — no catalog id, no catalog version bump, no
+  #   new dispatch path (FR17). Nearly the entire backend surface is ALREADY in
+  #   scope and is NOT re-added (traceability only):
+  #   packages/opencode/src/operator/** (Feature 007) — mcp/output/jobs/semantic
+  #     backend wiring + stack-live composition (FR1-FR14);
+  #   packages/opencode/src/mcp/** (Feature 008) — MCP.Service host reused (FR1-FR5);
+  #   packages/opencode/src/outputspool/** (Feature 005) — writer/reader/control
+  #     store reused (FR6-FR10);
+  #   packages/opencode/src/semantic/** (Feature 006) — milvus-adapter reused (FR13);
+  #   packages/opencode/src/jobs/** (Feature 002/003) — occurrence events reused (FR11);
+  #   packages/core/src/operator/** (Feature 007) — palette.ts availability flip (FR15);
+  #   packages/{opencode/test/operator,core/test/operator,tui/test/operator}/** — tests.
+  # Genuinely new implement paths (session writer hook + TUI editing + repo health):
+  "packages/opencode/src/session/**",         # production spool writer at the message-part seam (FR6, FR10)
+  "packages/opencode/.gitignore",             # git-ignore the runtime-generated config.json (FR18)
+  "packages/tui/src/operator/form/**",        # multi-field edit modal + descriptor (FR19-FR22)
+  "packages/tui/src/operator/status.ts",      # detail view tree renderer, distinct from the compact strip (FR23)
 ]
 
 # Waivers for intentional near-empty files (warnings only; errors are never
