@@ -173,3 +173,18 @@ export const TelemetryError = Schema.Union([
   Schema.Struct({ type: Schema.Literal("not_implemented") }),
 ]).annotate({ identifier: "TelemetryProtocol.TelemetryError" })
 export type TelemetryError = typeof TelemetryError.Type
+
+// =============================================================================
+// Feature 013 — Telemetry operator-domain command module (T001).
+//
+// Re-exports the telemetry operator-surface payloads / typed error union from
+// ./commands and the `TelemetryDomainPort` interface from ./ports, mirroring
+// protocol/src/langlock/index.ts. These are the operator control-plane
+// projection consumed by the Feature 013 domain stack + Feature 007 adapter,
+// distinct from the Feature 001 `TelemetryPort` request/response pairs above.
+// The names are disjoint (the operator error union is `TelemetryDomainError`,
+// never the Feature 001 `TelemetryError`), so no barrel identifier collides.
+// =============================================================================
+
+export * from "./commands"
+export type { TelemetryDomainPort } from "./ports"
