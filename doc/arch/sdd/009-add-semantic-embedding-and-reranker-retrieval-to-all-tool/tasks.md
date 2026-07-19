@@ -101,7 +101,7 @@ path.
 
 ### Domain tool-retrieval pass (Phase 2)
 
-- [ ] T005 [S3] Author `packages/core/src/semantic/tool-pass.ts` implementing the immutable
+- [x] T005 [S3] Author `packages/core/src/semantic/tool-pass.ts` implementing the immutable
   tool runner over the injected recall/rerank/revalidate/clock ports, executing pipeline
   stages **1 profile → 2 filter → 3 recall → 4 reduce → 5 rerank → 6 score → 9 revalidate**
   and OMITTING the agent-only **7 select_agent / 8 skill_pass**, reusing
