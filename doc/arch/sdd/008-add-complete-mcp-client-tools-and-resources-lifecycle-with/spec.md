@@ -2,7 +2,7 @@
 id: 019f7184-70b5-7f83-bd9a-ed019572f111
 number: 008
 slug: add-complete-mcp-client-tools-and-resources-lifecycle-with
-status: specified
+status: clarified
 created_at: 2026-07-17T19:18:52.853767Z
 ---
 
@@ -659,3 +659,265 @@ Priority uses P1 (must have), P2 (should have), and P3 (could have).
 | Native `mcp.*` management                    | FR48–FR50       | 15, 29               | 1     |
 | LangLock external + semantic opt-in          | FR52–FR53       | 27–28                | 1–2   |
 | Security / privacy / OTEL / UI               | FR51–FR57, NFRs | 20–22                | 1–2   |
+
+## Clarifications
+
+### Session 2026-07-18
+
+Declarative resolutions for the Feature 008 clarify phase. Each decision closes one or
+more Clarification Questions (CQ1–CQ17 above) or an inline ambiguity in the body without
+reopening the confirmed product decisions, the ownership split, or the domain authority
+of Features 001–007: Feature 001 Smart/budget/OTEL and privacy, Feature 002 lifecycle /
+Process Table / cancel-tree / EventBus, Feature 003 scheduled/wake occurrence, Feature
+004 LangLock provenance, Feature 005 OutputSpool content plane, Feature 006 semantic
+stack, and Feature 007 native-only operator authority and reserved catalog. SDK
+constants, numeric limits, backoff curves, protocol strings, and index internals this
+feature intentionally defers are resolved here as explicit deferrals to `plan` and to
+the future ADR **Complete MCP Client Lifecycle**, each with a fixed stance and a named
+acceptance hook (AC = Acceptance Scenario above), never as open placeholders. This
+section fixes the decisions the ADR will formalize; it does not author the ADR (Out of
+Scope). Feature 008 owns the MCP runtime and the `mcp.*` domain operation schemas;
+Feature 007 owns the registry/auth/audit/adapters and Feature 006 owns the semantic
+stack — this session does not move those boundaries.
+
+**C1 — SDK baseline and version/patch path (CQ1).** The pinned baseline is
+`@modelcontextprotocol/sdk@1.29.0` targeting protocol **2025-11-25** with negotiated
+downgrade (FR7). When session resume, `Last-Event-ID`, or Tasks surface gaps against the
+baseline, Feature 008 pins a forward patch/minor of the same major line rather than
+forking wire logic; a major SDK jump is a plan/ADR decision with a migration note, never
+a silent bump. Missing SDK support for an optional wire feature degrades to a typed
+capability gap (FR7, C2), never a hard failure. The exact resolved SDK version is a
+provisional plan constant with acceptance hooks AC1, AC12.
+
+**C2 — Connection lifecycle state machine and recorded capabilities (FR7–FR8).** The
+client lifecycle is a fixed sequence: `configure → connect(transport) → initialize /
+protocol-version negotiate → capability exchange → record → connected`, with terminal
+branches `disabled`, `failed`, `needs_auth`, `needs_client_registration` (the existing
+`Status` union is authoritative and extends only additively). Negotiated protocol
+version and full server capabilities are **recorded per server** for operator query
+(`mcp.server.capabilities`) and runtime gating; a capability the server did not advertise
+is never exercised. Reconnect re-runs negotiation and emits
+`mcp.server.capabilities_changed` when the recorded set differs. Server unavailability is
+a typed gap (`mcp_unavailable`) and the session continues (FR7). Exact recorded-capability
+struct fields are provisional plan constants with acceptance hooks AC1, AC12, AC16.
+
+**C3 — Event vocabulary and durable/live split; `mcp.tools_changed` naming (FR38; 009
+seam).** The FR38 event set is normative. Events divide into a **durable** control-plane
+class persisted to EventV2/EventBus for reindex and audit correlation
+(`mcp.server.status`, `mcp.server.capabilities_changed`, `mcp.tools_changed`,
+`mcp.resources_changed`, `mcp.resource_updated`, `mcp.call.settled`,
+`mcp.call.cancelled`, `mcp.task.settled`, `mcp.subscription.*`) and a **live** UI/OTEL
+class that is coalesced and never required to persist (`mcp.call.started`,
+`mcp.call.progress`, `mcp.task.status`, `mcp.log`). Feature 009 subscribes to the durable
+`mcp.tools_changed` and `mcp.resources_changed` as its incremental reindex triggers. The
+canonical event **id** is `mcp.tools_changed`; the existing schema literal
+`mcp.tools.changed` is renamed to `mcp.tools_changed` at implementation so the wire id,
+FR38, and the Feature 009 contract agree — no dual spelling survives. No event carries
+full content, URIs, or paths (FR38, FR56). Exact EventV2 payload enums are provisional
+plan constants with acceptance hooks AC4, AC9, AC22.
+
+**C4 — Tools pagination and list_changed refresh (FR10–FR11).** `tools/list` is
+cursor-paginated with a **duplicate-cursor guard** (a repeated or non-advancing cursor
+terminates the walk) and a **max-page bound** that fails closed with a typed error rather
+than looping. `notifications/tools/list_changed` refreshes the whole catalog for that
+server under the current guard and emits `mcp.tools_changed`; the existing single-shot
+`McpCatalog.defs` path is superseded by the paginated walk without changing the cached
+`defs[server]` shape consumers read. Exact max-page and per-page bounds are provisional
+plan constants with acceptance hooks AC4.
+
+**C5 — outputSchema validation default and error UX (CQ8).** The default validation
+policy is **tolerant**: `structuredContent` is validated against `outputSchema` and a
+mismatch is surfaced as a typed non-fatal validation warning on the call child while the
+result is still spooled and delivered. **Strict** is an operator opt-in per server that
+converts a schema mismatch into an `isError`-class tool-execution failure (fail-closed).
+Protocol errors remain distinct from tool-execution `isError` in both modes (FR12). Exact
+policy config key is a provisional plan constant with acceptance hooks AC8.
+
+**C6 — Tool annotation trust (FR13a).** Tool annotations (`readOnlyHint`,
+`destructiveHint`, and peers) are treated as **untrusted** by default and never relied
+upon as safety guarantees. Only a server trust profile explicitly elevated by the
+operator lets annotations inform UI hints or policy; an unelevated or unknown server
+profile ignores them for gating. Trust-profile shape is a provisional plan constant with
+acceptance hooks AC26.
+
+**C7 — Progress plumbing and no-op migration (FR14–FR16a).** The client always supplies a
+progressToken (the current `onprogress: () => {}` no-op in `convertTool` migrates to a
+real sink) so servers emit `notifications/progress`; `resetTimeoutOnProgress` behavior is
+preserved. Wire `progress` is enforced **monotonic** per token; UI/EventBus coalescing and
+rate-limiting MAY drop or merge display frames but MUST NOT rewrite, invent, or decrease
+protocol values. Progress updates the Feature 002 Process Table child and OTEL counters
+and **never** enters LLM context/turns or is persisted as tool output by default. Coalesce
+window and OTEL bucket bounds are provisional plan constants with acceptance hooks AC5,
+AC22.
+
+**C8 — Cancellation wire-path split (FR17–FR18, FR44).** A standard (non-task-augmented)
+in-flight `tools/call` cancels via `notifications/cancelled` for that request id, driven
+by `AbortSignal` (the existing `signal: options.abortSignal`) or the Feature 002 Ctrl+C
+root tree. A task-augmented call cancels via `tasks/cancel`. The Feature 002 root tree
+cancels both classes with the correct wire path per child. Local settlement seals/aborts
+OutputSpool writers per Feature 005; a remote that does not acknowledge is recorded as
+`cancel-requested` / `unknown-remote` (FR17). Acceptance hooks AC7, AC31.
+
+**C9 — Default resource-update policy matrix (CQ3, FR23–FR24).** The default per-server
+policy is **notify + cache only**: `resources/updated` coalesces/dedupes/debounces into a
+bounded queue with sequence/correlation, updates UI and cache, and emits
+`mcp.resource_updated` — **no** re-read, reindex, or main/agent wake. Conditional re-read
+and semantic reindex are per-server operator opt-ins; wake is a further opt-in gated by
+Feature 002/003 admission (C22). No configuration produces an automatic turn per update
+(FR3, FR24; Out of Scope). Queue depth and debounce interval are provisional plan
+constants with acceptance hooks AC9, AC10, AC11.
+
+**C10 — Subscribe/unsubscribe authority and fail-closed (FR21).** Runtime resource
+list/templates/read reach the LLM only through the canonical adapter under `mcp:server:*`
+Permission (the existing `list_mcp_resources` / `list_mcp_resource_templates` /
+`read_mcp_resource` tools). Subscribe/unsubscribe require the server `resources.subscribe`
+capability **and** operator `mcp.resource.admin.subscribe|unsubscribe`; the LLM never
+subscribes. Any unauthorized subscribe/read/delivery fails closed with a typed error.
+Acceptance hooks AC9, AC21, AC29.
+
+**C11 — resource_link laziness and auto-fetch budget (FR26).** `resource_link` content
+stays lazy: it is surfaced as a reference and auto-fetched only under explicit policy,
+Permission, and Feature 001 budget/admission. Arbitrary large linked resources are never
+inlined automatically; a fetched link routes through OutputSpool (C16) like any read.
+Auto-fetch budget bounds are provisional plan constants with acceptance hooks AC8.
+
+**C12 — URI scheme allowlist defaults (CQ11, FR25).** The default resource URI allowlist
+is **`https` and server-declared MCP resource URIs scoped to the negotiated roots**;
+`file` is allowed only within authorized project/session roots; every other scheme
+(including bare `http` to non-loopback) is deny-by-default and operator-added per server.
+Scheme policy prevents sibling-session and cross-project leakage (FR25, Privacy 3). The
+concrete allow/deny set is a provisional plan constant with acceptance hooks AC20, AC21,
+AC25.
+
+**C13 — Canonical adapter merge and residual presentation (CQ2, FR13).** Top-level tools
+and code-mode converge on **one** canonical adapter for policy, permissions, lifecycle
+child, OutputSpool, and settlement. The **only** permitted differences after merge are
+presentation: code-mode renders the catalog as an API/type surface and may batch or
+name-scope calls, while top-level renders individual tool cards; both invoke the same
+adapter path with identical behavior (FR13, confirmed decision 4). Acceptance hooks AC14.
+
+**C14 — Transport defaults, SSE deprecation, and reconnect curve (CQ4, CQ16, FR29–FR31).**
+New connections **prefer Streamable HTTP**; the existing StreamableHTTP→SSE fallback stays
+for compatibility with an explicit operator-visible **deprecation label** on SSE
+connections, and legacy SSE is removed no earlier than the ADR-defined deprecation
+window (a named future milestone, not this feature). Streamable HTTP reconnect uses
+**bounded exponential backoff with jitter and a capped max delay**, honoring session
+resume and `Last-Event-ID` where the SDK/spec supports them, under operator reconnect
+policy; stdio has no reconnect and instead restarts under lifecycle control with child
+cleanup (FR30, the existing `pgrep -P` SIGTERM finalizer). Base delay, cap, jitter, and
+max attempts are provisional plan constants with acceptance hooks AC2, AC3, AC12.
+
+**C15 — OAuth and secret cutover to Feature 007 refs (CQ10, FR32).** OAuth tokens,
+headers, and secrets move from current storage to **Feature 007 secure references**;
+secrets never appear in args, history, output, config JSON, or plain audit. Cutover is a
+one-time migration that reads existing `McpAuth` token entries into secure refs and leaves
+config surfaces backward-compatible (Compatibility section). No plaintext secret enters a
+spool preview shown to the LLM (Security, Privacy 4). Migration mapping is a provisional
+plan constant with acceptance hooks AC13.
+
+**C16 — OutputSpool integration and RAM spill honesty (CQ7, FR33–FR35).** Every
+`tools/call` and `resources/read` creates a Feature 005 OutputGroup with typed channels;
+UI and LLM receive a **bounded preview + OutputRef only**, never a filesystem path (the
+current path-in-preview and 10MB inline blob behavior migrate to OutputRef). Because
+`@modelcontextprotocol/sdk@1.29.0` parses the final JSON-RPC result in RAM, phases
+document (a) a **compatibility post-parse spill** now and (b) a future bounded
+transport/parser or negotiated nonstandard extension later; **zero-RAM is never promised**
+(Out of Scope). Preview byte bound and spill threshold are provisional plan constants with
+acceptance hooks AC6.
+
+**C17 — Base64 blobs, MIME/size limits (FR36).** Base64/data-URL content is decoded and
+streamed to spool when possible under **MIME allowlist and size caps**; full data URLs
+never enter model context. Audio/image/resource content is size- and MIME-limited before
+spooling (FR12, AC8). The existing `MAX_MCP_RESOURCE_BLOB_BYTES` (10MB) and MIME allowlist
+are the migration baseline; final caps are provisional plan constants with acceptance
+hooks AC8, AC20.
+
+**C18 — Experimental rollout order, scope, and content-stream string (CQ5, CQ6, FR41,
+FR45).** `mcp.tasks`, `mcp.sampling`, `mcp.elicitation`, and the nonstandard
+content-stream extension are **separate flags, disabled by default, per-server** (global
+default off; a server enable never implies another server or another flag). Rollout order
+is **tasks → sampling → elicitation → content-stream extension**, each requiring
+capability negotiation + operator `mcp.experimental.enable` + per-server policy. The
+content-stream extension advertises under a reserved namespaced capability string
+`experimental/opencode.contentStream` (namespaced, capability-negotiated, never silent);
+absence falls back to final `CallToolResult` + progress metadata (FR6, AC19). The exact
+capability string is confirmed here and re-validated at plan against SDK experimental
+conventions with acceptance hooks AC16, AC19.
+
+**C19 — Sampling permission shape and gates (CQ13, FR46).** When `mcp.sampling` is enabled
+for a server, a server-initiated sampling request requires **explicit per-agent/per-model
+Permission** and passes through Feature 001 Smart routing, budgets, LangLock, and privacy
+unchanged — sampling never bypasses them. The permission pattern is
+`mcp:<server>:sampling` under the runtime Permission model, distinct from the operator
+`mcp.experimental.*` enable authority. Audit records the approval path (Security). Exact
+permission grammar is a provisional plan constant with acceptance hooks AC17.
+
+**C20 — Elicitation and `input_required` operator surfacing (CQ13, CQ17, FR47).** With
+`mcp.elicitation` enabled, every elicitation request and every Tasks
+`notifications/tasks/status: input_required` surfaces to the **operator UI**; the model
+never silently auto-answers, and sensitive-mode restrictions block model-mediated answers
+outright. `input_required` is treated as a lifecycle prompt, never as partial tool content
+(FR47, FR32-Tasks). Agent-mediated input, when permitted, is an explicit per-server
+operator policy, not a default. Acceptance hooks AC18, AC32.
+
+**C21 — Resource semantic-index opt-in seam (CQ14, FR23, FR53; honors 006 C21).** Feature
+008 owns the **opt-in trigger** for MCP resource semantic indexing; Feature 006 owns the
+stack, the binding generation, and the classification taxonomy. No reindex runs without
+operator opt-in **and** a Feature 006 classification decision; when enabled, a qualifying
+`resources/updated` (per C9 policy) emits a single reindex trigger consumed by Feature 006
+under its admission ladder — Feature 008 never embeds, ranks, or stores vectors. This is
+the single MCP-resource reindex trigger Feature 009 CQ10 references. Acceptance hooks
+AC28.
+
+**C22 — Wake budgets and admission for resource policy (CQ15, FR24; Features 002/003).**
+Conditional wake from a resource update is **admission-controlled**: at most one wake per
+qualifying semantic-policy event, gated by Feature 001 budget and a Feature 002/003
+admission/safe-boundary check, with the decision audited. No update path produces an
+unbounded or per-update wake. Budget and admission thresholds are owned by Features
+001/002/003 and consumed here, not redefined; the provisional per-server wake ceiling is
+a plan constant with acceptance hooks AC10, AC11.
+
+**C23 — Logging retention and redaction depth (CQ9, FR28).** MCP `notifications/message`
+logging integrates with native logging under **redaction (secrets, tokens, and
+path-shaped fields stripped) and rate limits**; retention follows the native logging
+retention policy, not a separate MCP store. Operator `logging/setLevel` is Feature 007
+`mcp.logging.level.set` only, audited. Redaction rule set and rate bound are provisional
+plan constants with acceptance hooks AC24.
+
+**C24 — Prompt/resource trust UX (CQ12, FR27, Security).** Untrusted MCP prompt/resource
+content carries **provenance and untrusted-content labels** in UI and in the context
+boundary so injection text is never treated as trusted system instruction; size and
+decompression-bomb limits reject oversized payloads before delivery. Confirmation is
+required for auto-fetch of linked or elevated-risk content (C11). Prompts remain runtime
+content under Permission, never Feature 007 admin IDs (FR27). Label/badge vocabulary is a
+provisional plan constant with acceptance hooks AC20, AC23.
+
+**C25 — Reserved catalog relationship and schema ownership (FR48–FR50).** Feature 008 owns
+the **domain schemas** for the operator-only `mcp.*` operation IDs; Feature 007 owns the
+**registry** and enforces principal/auth/CAS/audit/adapters. The reserved set is fixed at
+`RESERVED_CATALOG_VERSION` **1.3.0** and comprises exactly the 30 IDs across
+`mcp.server.*` (11), `mcp.auth.*` (4), `mcp.resource.admin.*` (7), `mcp.logging.level.*`
+(2), `mcp.experimental.*` (3), and `mcp.extension.*` (3); the runtime data plane never
+registers these and the LLM/ToolRegistry/MCP/custom/`session.command` paths never reach
+them (no dual authority). Runtime MCP tool registration that would collide with a reserved
+id fails closed with no silent rename (the existing `checkReservedRegistrationName` /
+`toolNameIfAllowed` guard). Any future `mcp.*` id is a coordinated 007/008 catalog bump,
+not a unilateral add. Acceptance hooks AC15, AC29.
+
+**C26 — Content-free observability set (FR54–FR56, ADR-0001).** Spans cover connect,
+capability negotiation, list, call, progress, read, subscribe, reconnect, cancel, and task
+status/result. Metrics are **bounded-enum only**: latency histograms, progress count,
+bytes spooled, reconnect count, update-coalesce count, and failures. URIs, content, call
+IDs, and session IDs never appear as metric labels; Process Table child IDs correlate on
+traces, not labels (FR56, Privacy). Exact metric names and bucket boundaries are
+provisional plan constants with acceptance hooks AC22.
+
+**C27 — Migration and consumer compatibility (Compatibility section).** Existing
+`MCP.Service` consumers (the tool registry via `tools()`, code-mode `describeCatalog`, and
+the `list_mcp_resources` / `read_mcp_resource` runtime tools) keep their current interface
+shape; Feature 008 completes lifecycle behind these seams without breaking operator
+configs. The cached `defs[server]` structure, the `Status` union, and the `mcp:server:*`
+Permission grammar are compatibility surfaces that extend additively. Operator resource
+surfaces rename to `mcp.resource.admin.*` (schemas owned by 008, registry by 007) with the
+prior behavior preserved. Consumer-migration inventory is a provisional plan constant with
+acceptance hooks AC14, AC29.
