@@ -165,7 +165,7 @@ path.
   revalidated ranked candidates, records the effective binding versions and language tag without
   content, and the `FEATURE_009_TOOL_SELECTION_SEAM` is present, covered by a seam test, and not
   reached by a live route under the V1 default flags.
-- [ ] T010 [S9–S10] Author `packages/opencode/src/semantic/tool-retrieval.ts` composing the
+- [x] T010 [S9–S10] Author `packages/opencode/src/semantic/tool-retrieval.ts` composing the
   per-surface flag gate and the ranked-subset application, and wire the live-consumption seams:
   `packages/opencode/src/session/tools.ts` (native + MCP `resolve()` seam),
   `packages/opencode/src/tool/registry.ts` `tools()` + `describeCodeMode`, and

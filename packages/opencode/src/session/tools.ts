@@ -8,6 +8,7 @@ import { Permission } from "@/permission"
 import { Tool } from "@/tool/tool"
 import { ToolJsonSchema } from "@/tool/json-schema"
 import { ToolRegistry } from "@/tool/registry"
+import { ToolRetrieval } from "@/semantic/tool-retrieval"
 import { Truncate } from "@/tool/truncate"
 
 import { Plugin } from "@/plugin"
@@ -89,12 +90,18 @@ export const resolve = Effect.fn("SessionTools.resolve")(function* (input: {
         .pipe(Effect.orDie),
   })
 
-  for (const item of yield* registry.tools({
+  // FEATURE_009_TOOL_SELECTION_SEAM (native surface, C9/C15). `registry.tools(...)`
+  // is already permission-visible; the ranked subset gate is applied AFTER it and
+  // never widens it. The V1 default is `PASSTHROUGH` (surface flag off) = the full
+  // permission-visible list unchanged; a flag-on route replaces the gate with the
+  // `{ enabled: true, ranked }` produced by the tool pass (FR1, FR3, C9, C15).
+  const nativeVisible = yield* registry.tools({
     modelID: ModelV2.ID.make(input.model.api.id),
     providerID: input.model.providerID,
     agent: input.agent,
     permission: input.session.permission,
-  })) {
+  })
+  for (const item of ToolRetrieval.narrow(nativeVisible, (t) => t.id, ToolRetrieval.PASSTHROUGH)) {
     const schema = ProviderTransform.schema(input.model, ToolJsonSchema.fromTool(item))
     tools[item.id] = tool({
       description: item.description,
@@ -387,7 +394,11 @@ export const resolve = Effect.fn("SessionTools.resolve")(function* (input: {
 
   if (flags.experimentalCodeMode) return tools
 
-  for (const [key, entry] of Object.entries(yield* mcp.tools())) {
+  // FEATURE_009_TOOL_SELECTION_SEAM (MCP surface, C9/C15). `mcp.tools()` is the
+  // permission-visible MCP catalog; the ranked subset gate is applied AFTER it and
+  // never widens it. V1 default `PASSTHROUGH` (surface flag off) = the full catalog
+  // unchanged; a flag-on route replaces the gate with the tool-pass ranking (C15).
+  for (const [key, entry] of Object.entries(ToolRetrieval.narrowRecord(yield* mcp.tools(), ToolRetrieval.PASSTHROUGH))) {
     const item = McpCatalog.convertTool(entry.def, entry.client, entry.timeout)
     const execute = item.execute
     if (!execute) continue

@@ -286,7 +286,13 @@ const layer = Layer.effect(
       const ruleset = Permission.merge(input.agent.permission, input.permission ?? [])
       const tools = Permission.visibleTools(yield* mcp.tools(), ruleset)
       if (Object.keys(tools).length === 0) return
-      return codeMode.describeCatalog(tools, Object.keys(yield* mcp.clients()).map(McpCatalog.sanitize))
+      // FEATURE_009_TOOL_SELECTION_SEAM (code-mode surface, C10/C15). The ranked,
+      // revalidated tool-id subset from the tool pass would be threaded as the third
+      // `describeCatalog` argument once the code_mode surface flag is on; it is applied
+      // AFTER Permission.visibleTools and never widens it. With the V1 default (flag off,
+      // seam not wired into the composition root) `ranked` is undefined and the full
+      // permission-visible catalog is rendered unchanged (full-set passthrough floor).
+      return codeMode.describeCatalog(tools, Object.keys(yield* mcp.clients()).map(McpCatalog.sanitize), undefined)
     })
 
     const tools: Interface["tools"] = Effect.fn("ToolRegistry.tools")(function* (input) {
@@ -306,6 +312,10 @@ const layer = Layer.effect(
       const codeModeDescription = filtered.some((tool) => tool.id === "execute")
         ? yield* describeCodeMode(input)
         : undefined
+      // FEATURE_009_TOOL_SELECTION_SEAM (native surface, C9/C15): `visible` is the
+      // permission-visible native tool list; a ranked subset (when the native surface
+      // flag is on) is applied over it downstream in `session/tools.ts` `resolve()` —
+      // after visibility, never widening it. Default off = full-set passthrough here.
       const visible = filtered.filter((tool) => tool.id !== "execute" || codeModeDescription)
 
       return yield* Effect.forEach(

@@ -4,6 +4,7 @@ import { Cause, Effect, Schema } from "effect"
 import { CodeMode, Tool as SandboxTool, toolError } from "@opencode-ai/codemode"
 import { MCP } from "@/mcp"
 import { McpCatalog } from "@/mcp/catalog"
+import { ToolRetrieval } from "@/semantic/tool-retrieval"
 import { Agent } from "@/agent/agent"
 import { Session } from "@/session/session"
 import { Permission } from "@/permission"
@@ -55,10 +56,23 @@ function groupByServer(mcpTools: Record<string, MCP.McpTool>, servers: readonly 
   return groups
 }
 
-export function describeCatalog(mcpTools: Record<string, MCP.McpTool>, servers: readonly string[]): string {
+/**
+ * Feature 009 code-mode consumption seam (C10, C15). `ranked` is the ordered,
+ * revalidated tool-id subset from the tool pass, supplied ONLY when the code-mode
+ * surface flag is on; it is applied AFTER `Permission.visibleTools` and never
+ * widens it (`narrowRecord` intersects the visible record). When `ranked` is
+ * absent (the V1 default), the full permission-visible catalog is rendered
+ * unchanged — the full-set passthrough floor (FR5, C10, C15).
+ */
+export function describeCatalog(
+  mcpTools: Record<string, MCP.McpTool>,
+  servers: readonly string[],
+  ranked?: readonly string[],
+): string {
+  const scoped = ranked ? ToolRetrieval.narrowRecord(mcpTools, { enabled: true, ranked }) : mcpTools
   return CodeMode.make({
     tools: toolTree(
-      [...groupByServer(mcpTools, servers).values()].flat(),
+      [...groupByServer(scoped, servers).values()].flat(),
       () => () => Effect.fail(toolError("Tool preview is not executable.")),
     ),
   }).instructions()
