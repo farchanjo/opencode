@@ -2,7 +2,7 @@
 id: 019f7712-e70c-73d1-b7b3-e767562f7df0
 number: 009
 slug: add-semantic-embedding-and-reranker-retrieval-to-all-tool
-status: planned
+status: tasked
 created_at: 2026-07-18T21:12:35.34095Z
 ---
 # Feature Specification: Semantic Tool Search (Embeddings + Reranker)
