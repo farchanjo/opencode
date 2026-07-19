@@ -107,6 +107,14 @@ Acceptance criteria live as prioritized scenarios in each feature `spec.md`.
   reconnecting/backoff/resume, the mcp_unavailable typed gap, and
   unsubscribed → subscribing → subscribed → unsubscribing, fail-closed on
   an unauthorized or capability-lost subscribe).
+- **Native PTY session lifecycle and dylib load ladder** — the permission-
+  gated PTY spawn/stream/kill/close machine and the per-crate native-library
+  discovery/handshake/fallback ladder are modeled in
+  [native-pty-session statechart](../statecharts/native-pty-session.md)
+  (permission_gated → spawning → streaming → terminating/escalating →
+  reaping → closed, with the SIGTERM→3s→SIGKILL escalation; and
+  check_platform → check_flag → discover → resolve → dlopen → handshake →
+  native_ready/fallback, with the native_unavailable typed gap).
 
 ## Phase 2 deferred (explicit)
 

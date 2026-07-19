@@ -2,7 +2,7 @@
 id: 019f7837-4e0a-7d43-a299-aa451348a906
 number: 010
 slug: add-native-rust-ffi-layer-for-built-in-tools-and-pty
-status: clarified
+status: planned
 created_at: 2026-07-19T02:31:58.218719Z
 ---
 # Feature Specification: Native Rust FFI Tools and PTY Integration
@@ -443,8 +443,8 @@ named acceptance-test hook (AC = Acceptance Scenario above), never as open place
 Feature 010 is authoritative for nothing at runtime: native code is a swappable execution
 backend behind each tool's existing TypeScript boundary, and every decision below preserves
 byte-identical fallback (FR19, NFR6). Where this section and the spec body differ in wording,
-this section and the machine-validated CUE schema
-(`doc/arch/schemas/add-native-rust-ffi-layer-for-built-in-tools-and-pty.cue`) govern.
+this section and the machine-validated CUE corpus
+(`doc/arch/schemas/ffi/`) govern.
 
 **C1 — Artifact location, per-platform naming, and discovery order (CQ1, FR21).** Compiled
 libraries are discovered in a fixed order: (1) an environment override —
@@ -538,7 +538,7 @@ ToolRegistry and to the model (Compatibility). Hooks AC1, AC13, AC14.
 
 **C9 — `master_fd` ownership transfer and single-owner close (CQ5, FR8, FR10).**
 `oc_pty_spawn` returns the raw integer file descriptor of the PTY master in `master_fd`
-(schema `#PtySession`). Ownership transfers wholly to Bun on return: the Rust side does not
+(schema `#PtySpawnResult`). Ownership transfers wholly to Bun on return: the Rust side does not
 retain, read, write, or close the master fd after `oc_pty_spawn` returns (it hands back the
 sole owning descriptor). Bun is the single owner — it wraps the fd, sets it non-blocking, and
 performs all async reads/writes on the event loop (kqueue/epoll), with no FFI call on the IO

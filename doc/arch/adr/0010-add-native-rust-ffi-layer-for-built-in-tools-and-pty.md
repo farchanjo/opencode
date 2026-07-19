@@ -67,13 +67,24 @@ Node-API surface the project does not otherwise use; wasm cannot deliver a real 
 controlling TTY or process-group signaling, which is a core deliverable.
 
 The contract is fixed as: `extern "C" fn oc_<name>(req_ptr: *const u8, req_len: usize) ->
-*mut c_char` with `serde` JSON request/response, `{ ok: false, error: { code, message } }`
-errors (never numeric return codes), `catch_unwind` on every entry point, and responses
-freed only through the exported `oc_free`. Two crates ship: `opencode-tools-ffi` (the six
-filesystem/text tools) and `opencode-pty-ffi` (`oc_pty_spawn`/`resize`/`kill`/`wait`/
-`close`). The shell tool gains opt-in `pty: true` with the permission gate still in
-TypeScript. macOS and Linux ship first; Windows ConPTY is phase 2 and MUST NOT change the
-FFI contract; no Tokio/async runtime is introduced in phase 1.
+*mut c_char` with `serde` JSON request/response and the machine-validated `#FfiResponse`
+envelope discriminated by `status` — `{ "status": "ok", "result": … }` /
+`{ "status": "error", "error": { "code", "message" } }`, where the informal `{ ok: … }`
+prose maps to `status == "ok"`. `error.code` is a closed enum mapped one-to-one to the
+existing TypeScript `ToolFailure` set (never numeric return codes); `catch_unwind` wraps
+every entry point and converts a panic to `internal_panic` with no backtrace; responses are
+freed only through the exported `oc_free`. A first-time cargo workspace at the repository
+root ships **three** crates under `crates/`: two `cdylib` artifacts — `opencode-tools-ffi`
+(the six filesystem/text tools) and `opencode-pty-ffi`
+(`oc_pty_spawn`/`resize`/`kill`/`wait`/`close`) — plus a shared internal `opencode-ffi-abi`
+`rlib` (not a shipped artifact) that implements the envelope, the `catch_unwind` wrapper,
+`oc_free`, and the version handshake once. Both `cdylib` crates export
+`oc_abi_version() -> u32` and `oc_version()` so the TypeScript loader asserts the ABI major
+on `dlopen` and treats a mismatch as unloadable (`native_unavailable` fallback), giving the
+phase-2 work a forward-compatible handshake. The shell tool gains opt-in `pty: true` with
+the permission gate still in TypeScript. Crate versions are pinned exactly and the
+toolchain by `rust-toolchain.toml`. macOS and Linux ship first; Windows ConPTY is phase 2
+and MUST NOT change the FFI contract; no Tokio/async runtime is introduced in phase 1.
 
 ### Consequences
 
