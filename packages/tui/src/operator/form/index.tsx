@@ -10,14 +10,14 @@
  * honest-unavailable verbs surface the typed envelope and never a synthesized
  * success (FR7). Secret material is never rendered, echoed, or persisted here.
  */
-import { createSignal, type JSX } from "solid-js"
-import type { OperatorPaletteEntry } from "@opencode-ai/core/operator"
+import { createMemo, createSignal, onMount, type JSX } from "solid-js"
+import { listOperatorPaletteEntries, type OperatorPaletteEntry } from "@opencode-ai/core/operator"
 import type { OperatorSlashPort } from "../../context/operator-slash"
 import type { DialogContext } from "../../ui/dialog"
 import { DialogSelect } from "../../ui/dialog-select"
 import { DialogPrompt } from "../../ui/dialog-prompt"
 import { executeOperatorCommand, type OperatorToast } from "../execute"
-import type { OperatorFormField } from "./descriptor"
+import type { OperatorFormField, OperatorFormOption, OperatorPickerSource } from "./descriptor"
 
 export { resolveOperatorFormField } from "./descriptor"
 export type { OperatorFormField, OperatorFormOption, OperatorFormValidation } from "./descriptor"
@@ -43,6 +43,37 @@ export type OperatorFormProps = {
 /** The generalised Configure form; branches on the descriptor's input mode (FR5). */
 export function OperatorForm(props: OperatorFormProps): JSX.Element {
   const [busy, setBusy] = createSignal(false)
+  // Loaded entity-picker options (Feature 012 T010/T011): `undefined` until the
+  // read query resolves; an unavailable read resolves to `[]` (honest empty).
+  const [loaded, setLoaded] = createSignal<readonly OperatorFormOption[] | undefined>(undefined)
+
+  // Issue the picker's source read through the SAME executeOperatorCommand path on
+  // open and project its `effective` payload into options (FR6, FR8). No source →
+  // the field's static options (e.g. the langlock allowlist) are used unchanged.
+  onMount(() => {
+    if (props.field.mode === "value_picker" && props.field.source) void loadPickerOptions(props.field.source)
+  })
+
+  async function loadPickerOptions(source: OperatorPickerSource) {
+    const readEntry = listOperatorPaletteEntries().find((entry) => entry.id === source.read)
+    if (!readEntry) {
+      setLoaded([])
+      return
+    }
+    const result = await executeOperatorCommand({
+      entry: readEntry,
+      port: props.port,
+      projectId: props.projectId,
+      sessionId: props.sessionId,
+      dialog: props.dialog,
+      toast: props.toast,
+      // Auto-issued picker read (Feature 012 P1): no toast on open — the
+      // process/task pickers must not flash an `invalid_argument` warning; an
+      // unavailable read renders the honest empty picker instead.
+      silent: true,
+    })
+    setLoaded(source.project(result.result?.effective))
+  }
 
   async function dispatchPayload(value: string) {
     if (busy()) return
@@ -70,10 +101,13 @@ export function OperatorForm(props: OperatorFormProps): JSX.Element {
 
   if (props.field.mode === "value_picker") {
     const field = props.field
+    // A source-backed picker shows the loaded options (honest-empty while the read
+    // resolves); a static picker uses its fixed option set (FR6, FR8).
+    const pickerOptions = createMemo<readonly OperatorFormOption[]>(() => (field.source ? (loaded() ?? []) : field.options()))
     return (
       <DialogSelect
         title={props.title ?? props.entry.title}
-        options={field.options().map((option) => ({
+        options={pickerOptions().map((option) => ({
           title: option.title,
           description: option.description,
           category: props.category ?? props.entry.verbLabel,
