@@ -11,6 +11,10 @@ import { LocationMutation } from "../location-mutation"
 import { AppProcess } from "../process"
 import { PermissionV2 } from "../permission"
 import { PositiveInt } from "../schema"
+import { sharedLoader } from "./native/loader"
+import { loadNativePty } from "./native/pty.native"
+import { runPty } from "./native/pty-exec"
+import { sharedPtyRegistry } from "./native/pty-registry"
 import { ToolRegistry } from "./registry"
 import { Tool } from "./tool"
 import { Tools } from "./tools"
@@ -30,7 +34,15 @@ export const Input = Schema.Struct({
     .annotate({
       description: `Timeout in milliseconds. Defaults to ${DEFAULT_TIMEOUT_MS} and may not exceed ${MAX_TIMEOUT_MS}.`,
     }),
+  pty: Schema.Boolean.pipe(Schema.optional).annotate({
+    description:
+      "Run the command inside a real pseudo-terminal (isatty), enabling TTY-only behavior such as ANSI colors. Opt-in and experimental; ignored unless the native PTY backend is enabled. Defaults to false.",
+  }),
 })
+
+/** Default PTY window when a native PTY session is requested (columns × rows). */
+const PTY_COLS = 80
+const PTY_ROWS = 24
 
 const StructuredOutput = Schema.Struct({
   exit: Schema.Number.pipe(Schema.optional),
@@ -155,6 +167,53 @@ const layer = Layer.effectDiscard(
               const shell =
                 Object.assign({}, ...entries.flatMap((entry) => (entry.type === "document" ? [entry.info] : [])))
                   .shell ?? defaultShell()
+              const timeout = input.timeout ?? DEFAULT_TIMEOUT_MS
+
+              // Opt-in native PTY route (FR12, C12). The permission gate above has
+              // already been evaluated (permission-first, spawn-second — FR13, AC15);
+              // native code never becomes a permission authority. `win32` degrades to
+              // the ChildProcess path with an advisory; a disabled/unloadable backend
+              // falls through silently (native_unavailable, C19).
+              if (input.pty === true) {
+                if (process.platform === "win32") {
+                  warnings.push(
+                    "Native PTY is unavailable on this platform; running without a PTY (native_unavailable).",
+                  )
+                } else if (Config.latest(entries, "experimental")?.native_pty === true) {
+                  const backend = loadNativePty(sharedLoader(), true)
+                  if (backend.kind === "ok") {
+                    const env = Object.entries(process.env).flatMap(([nameKey, value]) =>
+                      value === undefined ? [] : [{ name: nameKey, value }],
+                    )
+                    const result = yield* Effect.tryPromise(() =>
+                      runPty(backend.ops, sharedPtyRegistry(), {
+                        command: shell,
+                        args: ["-c", input.command],
+                        cwd: target.canonical,
+                        env,
+                        cols: PTY_COLS,
+                        rows: PTY_ROWS,
+                        timeoutMs: timeout,
+                      }),
+                    )
+                    if (result.timedOut) {
+                      return {
+                        output: `Command exceeded timeout of ${timeout} ms. Retry with a larger timeout if the command is expected to take longer.`,
+                        truncated: result.truncated,
+                        timeout: true,
+                        ...(warnings.length ? { warnings } : {}),
+                      }
+                    }
+                    return {
+                      exit: result.exit ?? undefined,
+                      output: result.output || "(no output)",
+                      truncated: result.truncated,
+                      ...(warnings.length ? { warnings } : {}),
+                    }
+                  }
+                }
+              }
+
               const command = ChildProcess.make(input.command, [], {
                 cwd: target.canonical,
                 shell,
@@ -162,7 +221,6 @@ const layer = Layer.effectDiscard(
                 detached: process.platform !== "win32",
                 forceKillAfter: Duration.seconds(3),
               })
-              const timeout = input.timeout ?? DEFAULT_TIMEOUT_MS
               const result = yield* appProcess
                 .run(command, {
                   combineOutput: true,
