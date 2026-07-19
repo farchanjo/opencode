@@ -182,7 +182,7 @@ symbols are pinned by `plan.md`, not provisional.
 
 ### PTY crate and shell integration (Phase 4)
 
-- [ ] T013 [S11] Author `crates/opencode-pty-ffi/Cargo.toml` (cdylib, inheriting the abi
+- [x] T013 [S11] Author `crates/opencode-pty-ffi/Cargo.toml` (cdylib, inheriting the abi
   rlib + `portable-pty`/`libc`) and `crates/opencode-pty-ffi/src/lib.rs` with the five
   synchronous, `catch_unwind`-wrapped entry points: `oc_pty_spawn` (allocate a PTY and spawn
   via `portable-pty` with `setsid`, a controlling TTY, and its own pgid, returning
@@ -195,7 +195,7 @@ symbols are pinned by `plan.md`, not provisional.
   `cargo test -p opencode-pty-ffi` assert spawn returns the triple with a controlling TTY,
   resize applies the window size, `killpg` targets the group, `waitpid` is non-blocking, and
   `close` is idempotent — with no async runtime linked.
-- [ ] T014 [S12] Author `packages/core/src/tool/native/pty-registry.ts`
+- [x] T014 [S12] Author `packages/core/src/tool/native/pty-registry.ts`
   (`session_id → { pid, master_fd, pgid, stream }` with the single-owner fd contract) and
   `packages/core/src/tool/native/pty-reader.ts` reading/writing the `master_fd` through
   `node:net.Socket({ fd })` with `O_NONBLOCK` on Bun's event loop (kqueue/epoll) — **no FFI
@@ -205,7 +205,7 @@ symbols are pinned by `plan.md`, not provisional.
   and `bun test packages/core/test/tool/native` asserts a streaming session stays responsive,
   the fd is closed exactly once, and output flows to the sink under `MAX_CAPTURE_BYTES` with
   no FFI on the hot path.
-- [ ] T015 [S13] Extend `packages/core/src/tool/bash.ts` with the opt-in `pty: true` route
+- [x] T015 [S13] Extend `packages/core/src/tool/bash.ts` with the opt-in `pty: true` route
   that spawns through `opencode-pty-ffi` — **`permission.assert` evaluated FIRST**, before any
   PTY allocation or spawn (the security invariant: native code never evaluates, caches, or
   bypasses permissions) — with the TS-driven `SIGKILL` escalation 3 s after the initial
@@ -216,7 +216,7 @@ symbols are pinned by `plan.md`, not provisional.
   AC9, AC15, AC16). Acceptance: `bun run typecheck` on `packages/core` green and
   `bun test packages/core/test/tool/native` asserts `permission.assert` precedes every spawn,
   the 3 s SIGKILL escalation fires, the default path is unchanged, and `win32` degrades.
-- [ ] T016 [S13] Add the PTY acceptance tests under `packages/core/test/tool/native/`:
+- [x] T016 [S13] Add the PTY acceptance tests under `packages/core/test/tool/native/`:
   terminal fidelity (`isatty() == true` + ANSI color from a probe command spawned via
   `oc_pty_spawn`), full-tree kill (a child that forks a subprocess tree is fully terminated
   by `oc_pty_kill` on the pgid with no orphans), the non-blocking event loop (a long-running
@@ -227,7 +227,7 @@ symbols are pinned by `plan.md`, not provisional.
   Acceptance: `bun test packages/core/test/tool/native` green across terminal fidelity,
   full-tree kill, non-blocking streaming, permission-first ordering, and the unchanged default
   bash path.
-- [ ] T017 [S14] Finalize the Config flags and platform gate: `experimental.nativeTools` and
+- [x] T017 [S14] Finalize the Config flags and platform gate: `experimental.nativeTools` and
   `experimental.nativePty` are optional booleans defaulting `false` in
   `packages/core/src/config/experimental.ts` (Feature 007 `experimental.*` precedent), their
   **presence never changes behavior when off**, and `win32` always takes the TypeScript path;
