@@ -278,7 +278,7 @@ enforced (see the Traceability reconciliation note).
 
 ### Application, adapters, and operator wiring (Phase 3)
 
-- [ ] T024 [S15] **EARLY SDK + transport validation (honest outcome).** Author
+- [x] T024 [S15] **EARLY SDK + transport validation (honest outcome).** Author
   `packages/opencode/src/mcp/sdk-probe.ts` empirically validating that the pinned
   `@modelcontextprotocol/sdk@1.29.0` and its applied 629-line forward patch
   (`patches/@modelcontextprotocol%2Fsdk@1.29.0.patch`) expose, under the Bun runtime, the client
@@ -303,7 +303,7 @@ enforced (see the Traceability reconciliation note).
   `bun test packages/opencode` asserts a Streamable HTTP connect records capabilities and reaches
   `connected`, an SSE fallback is deprecation-labeled, a stdio disconnect cleans up children, and
   the `tools()`/`resources()`/`readResource()`/`Status` seams keep their prior shape.
-- [ ] T026 [S16] Author `packages/opencode/src/mcp/progress-sink.ts` replacing the
+- [x] T026 [S16] Author `packages/opencode/src/mcp/progress-sink.ts` replacing the
   `convertTool` `onprogress: () => {}` no-op with a real sink that supplies a progressToken,
   enforces wire monotonicity per token, updates the Feature 002 Process Table child and OTEL
   counters, preserves `resetTimeoutOnProgress`, coalesces/rate-limits display frames without
@@ -321,7 +321,7 @@ enforced (see the Traceability reconciliation note).
   `bun test packages/opencode` asserts the paginated walk replaces `defs[server]` with its shape
   intact, `list_changed` emits `mcp.tools_changed` without content, a duplicate cursor / max-page
   breach fails closed retaining prior defs, and a reserved-id collision is rejected.
-- [ ] T028 [S18] Author `packages/opencode/src/mcp/spool-bridge.ts` routing every `tools/call`
+- [x] T028 [S18] Author `packages/opencode/src/mcp/spool-bridge.ts` routing every `tools/call`
   and `resources/read` through a Feature 005 OutputGroup, delivering a **bounded preview +
   OutputRef only** (never a filesystem path), decoding base64/data-URL content to spool under the
   T006 MIME allowlist and size caps (full data URLs never enter model context), performing the
