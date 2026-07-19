@@ -371,6 +371,43 @@ it.instance("updates config and preserves empty shell sentinel", () =>
   }),
 )
 
+it.instance(
+  "Feature 014 T013 — operator namespace round-trips; the write/read alignment is load-bearing (FR2/FR3/FR4)",
+  () =>
+    Effect.gen(function* () {
+      const test = yield* TestInstance
+
+      // Baseline is the false-success SHAPE: with no persisted operator namespace the
+      // loader reports the authority absent (configured:false). FR1 (the schema key)
+      // alone would let a write land while the loader never read it back here.
+      const baseline = yield* Config.use.get()
+      expect((baseline.operator?.authorities as Record<string, unknown> | undefined)?.routing).toBeUndefined()
+
+      // Config.update writes <dir>/config.json — the SAME file the loader scope-merges
+      // via loadOperatorNamespace (FR2). A project-scoped operator CAS record persists.
+      const record = { version: "cas_v1", payload: { role_pools: { build: ["anthropic/claude-opus"] } } }
+      yield* Config.Service.use((svc) =>
+        svc.update(ConfigParse.schema(ConfigV1.Info, { operator: { authorities: { routing: record } } }, "test:op")),
+      )
+
+      // FR3: the directory-scoped cache is invalidated on commit, so an immediate
+      // in-process re-read reflects the new authority — no stale document.
+      const roundtrip = yield* Config.use.get()
+      const authorities = roundtrip.operator?.authorities as Record<string, { version?: string }> | undefined
+      expect(authorities?.routing?.version).toBe("cas_v1")
+
+      // FR4 (restart-equivalent): the namespace persisted to disk at the loader's read
+      // target, so a fresh load re-reads it. The raw file proves the write landed at
+      // <dir>/config.json — the write target IS the read target, closing the orphaned
+      // false-success this alignment fixes. Removing loadOperatorNamespace makes the
+      // FR3 re-read above regress to `undefined` (the load-bearing negative).
+      const raw = yield* FSUtil.use.readJson(path.join(test.directory, "config.json"))
+      expect((raw as { operator: { authorities: { routing: { version: string } } } }).operator.authorities.routing.version).toBe(
+        "cas_v1",
+      )
+    }),
+)
+
 it.effect("updates global config and omits empty shell key in json", () =>
   withGlobalConfig({ config: { shell: "bash" } }, ({ dir }) =>
     Effect.gen(function* () {
@@ -393,6 +430,48 @@ it.effect("updates global config and omits empty shell key in jsonc", () =>
       expect(writtenConfig).not.toContain('"shell"')
       expect(parsed.shell).toBeUndefined()
       expect(parsed.model).toBe("test/model")
+    }),
+  ),
+)
+
+// Feature 014 FR14 — the global jsonc writer (`patchJsonc`) must persist a
+// required-but-empty nested object. The durable operator store writes a
+// config-backed domain payload under the operator namespace; a routing payload
+// carries `models.role_pools: {}` (empty by default). Before the empty-object fix,
+// `patchJsonc` recursed per key and emitted nothing for `{}`, silently dropping the
+// key — the read-back `RoutingConfig` decode then failed and the effective read fell
+// back to the default, a false `cas_vN` success (smart.on / telemetry.configure).
+it.effect("global jsonc write preserves a required-but-empty nested object", () =>
+  withGlobalConfig({ config: { model: "test/model" }, name: "opencode.jsonc" }, ({ dir }) =>
+    Effect.gen(function* () {
+      const operator = {
+        authorities: {
+          "global:routing": {
+            version: "cas_v1",
+            payload: {
+              activation: { enabled: true, mode: "never", strict_gates: true },
+              models: {
+                decision_model: { pool: ["architect"] },
+                role_pools: {},
+                fallback: { floor_role: "architect" },
+              },
+            },
+            updatedAtMs: 1,
+            snapshots: [],
+          },
+        },
+      }
+      yield* Config.use.updateGlobal({ operator })
+
+      const file = path.join(dir, "opencode.jsonc")
+      const written = yield* FSUtil.use.readFileString(file)
+      const parsed = ConfigParse.schema(ConfigV1.Info, ConfigParse.jsonc(written, file), file) as {
+        operator?: { authorities?: Record<string, { payload?: { models?: Record<string, unknown> } }> }
+      }
+      const models = parsed.operator?.authorities?.["global:routing"]?.payload?.models
+      expect(models).toBeDefined()
+      expect(models && "role_pools" in models).toBe(true)
+      expect(models?.role_pools).toEqual({})
     }),
   ),
 )

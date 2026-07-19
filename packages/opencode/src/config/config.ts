@@ -10,7 +10,7 @@ import fsNode from "fs/promises"
 import { Flag } from "@opencode-ai/core/flag/flag"
 import { Auth } from "../auth"
 import { Env } from "../env"
-import { applyEdits, modify } from "jsonc-parser"
+import { applyEdits, findNodeAtLocation, modify, parseTree } from "jsonc-parser"
 import { InstallationLocal, InstallationVersion } from "@opencode-ai/core/installation/version"
 import { existsSync } from "fs"
 import { Account } from "@/account/account"
@@ -157,7 +157,27 @@ function patchJsonc(input: string, patch: unknown, path: string[] = []): string 
     return applyEdits(input, edits)
   }
 
-  return Object.entries(patch).reduce((result, [key, value]) => patchJsonc(result, value, [...path, key]), input)
+  const entries = Object.entries(patch)
+  // An empty object patch produces no per-key edit, so the plain reduce below would
+  // silently drop the key. When the key is absent, write the `{}` explicitly so a
+  // required-but-empty object round-trips (e.g. routing `models.role_pools:{}`,
+  // telemetry `export.headers:{}`); a decode of the persisted document would
+  // otherwise fail and the effective read fall back to a default — a false success
+  // (Feature 014 FR14). When the key already exists its value is preserved, so the
+  // deep-merge semantics for populated targets are unchanged.
+  if (entries.length === 0) {
+    const tree = parseTree(input)
+    if (tree && findNodeAtLocation(tree, path) !== undefined) return input
+    const edits = modify(input, path, patch, {
+      formattingOptions: {
+        insertSpaces: true,
+        tabSize: 2,
+      },
+    })
+    return applyEdits(input, edits)
+  }
+
+  return entries.reduce((result, [key, value]) => patchJsonc(result, value, [...path, key]), input)
 }
 
 function writable(info: Info) {
@@ -241,6 +261,31 @@ const layer = Layer.effect(
       const text = yield* readConfigFile(filepath)
       if (!text) return {} as Info
       return yield* loadConfig(text, { path: filepath }, env)
+    })
+
+    /**
+     * Feature 014 (FR2): read back ONLY the persisted `operator` namespace from
+     * the file `Config.update` writes (`<dir>/config.json`). The instance loader
+     * otherwise reads `opencode.json(c)` plus the *global* `config.json`, never the
+     * project `config.json`, so a project-scoped operator CAS mutation would land in
+     * an orphaned file and be reported as a false `cas_vN` success on re-read.
+     *
+     * Only the `operator` key is consumed, never the whole file: a project
+     * `config.json` is a very common unrelated filename, and adopting it wholesale
+     * as opencode config would reject every such project on its unknown keys. A
+     * malformed or absent operator document degrades to `undefined` (no namespace),
+     * never a crash (Security: honest degradation, no fabricated state).
+     */
+    const loadOperatorNamespace = Effect.fnUntraced(function* (filepath: string) {
+      const text = yield* readConfigFile(filepath)
+      if (!text) return undefined
+      try {
+        const parsed = ConfigParse.jsonc(text, filepath)
+        if (!isRecord(parsed) || parsed.operator === undefined) return undefined
+        return ConfigParse.schema(ConfigV1.Info, { operator: parsed.operator }, filepath).operator
+      } catch {
+        return undefined
+      }
     })
 
     const loadGlobal = Effect.fnUntraced(function* (env?: Record<string, string>) {
@@ -406,6 +451,17 @@ const layer = Layer.effect(
         if (!Flag.OPENCODE_DISABLE_PROJECT_CONFIG) {
           for (const file of yield* ConfigPaths.files("opencode", ctx.directory, ctx.worktree).pipe(Effect.orDie)) {
             yield* merge(file, yield* loadFile(file, authEnv), "local")
+          }
+          // Feature 014 (FR2): also consume the operator namespace persisted to
+          // <dir>/config.json by Config.update, so a project-scoped operator CAS
+          // mutation round-trips instead of orphaning in a file no reader loads.
+          // Global-scoped operator authorities travel through the global config file
+          // (loaded above) and are read via getGlobal; this only recovers the
+          // project-scoped authorities. Merged after the project files so the
+          // freshest persisted operator record wins.
+          const operatorNamespace = yield* loadOperatorNamespace(path.join(ctx.directory, "config.json"))
+          if (operatorNamespace) {
+            result.operator = mergeDeep(result.operator ?? {}, operatorNamespace) as Info["operator"]
           }
         }
 
@@ -628,6 +684,12 @@ const layer = Layer.effect(
       yield* fs
         .writeFileString(file, JSON.stringify(mergeDeep(writable(existing), writable(config)), null, 2))
         .pipe(Effect.orDie)
+      // Feature 014 (FR3): a committed operator CAS mutation writes <dir>/config.json;
+      // invalidate this directory's cached instance config so an immediate in-process
+      // re-read reflects the new operator namespace instead of the stale cached
+      // document. Scoped to this directory's instance state — the global cache and
+      // other directories' caches are untouched.
+      yield* InstanceState.invalidate(state)
     })
 
     const invalidate = Effect.fn("Config.invalidate")(function* () {

@@ -30,6 +30,41 @@ const LogLevelRef = Schema.Literals(["DEBUG", "INFO", "WARN", "ERROR"]).annotate
   description: "Log level",
 })
 
+/**
+ * Feature 014 (FR1): the persisted operator control-plane namespace.
+ *
+ * The durable operator store (Feature 007) writes a single `operator` document
+ * into the config file it round-trips through — the CAS-versioned per-authority
+ * records plus the idempotency, rollback, and audit-outbox bookkeeping. Before
+ * this key existed, `ConfigParse.schema` rejected a persisted operator document
+ * as an unrecognized top-level key (`ConfigInvalidError`), so no operator
+ * mutation could ever be read back.
+ *
+ * The sub-schema is typed at the envelope (the four bookkeeping sections) but
+ * permissive at the leaves: each authority payload and audit row is opaque
+ * (`Schema.Unknown`), so an arbitrary config-backed domain document round-trips
+ * without loss and NO plaintext-secret field is ever declared here — secret
+ * values stay `SecretRef` references produced by the domain backends (FR11).
+ */
+export const Operator = Schema.Struct({
+  authorities: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)).annotate({
+    description: "Per-authority CAS records (version + opaque payload + snapshots) keyed by Config.Service authority",
+  }),
+  idempotency: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)).annotate({
+    description: "Operator idempotency ledger (opaque bookkeeping)",
+  }),
+  rollback: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)).annotate({
+    description: "Operator cutover rollback slots (opaque bookkeeping)",
+  }),
+  auditOutbox: Schema.optional(Schema.mutable(Schema.Array(Schema.Unknown))).annotate({
+    description: "Durable operator audit outbox rows pending delivery (opaque bookkeeping)",
+  }),
+}).annotate({
+  identifier: "OperatorNamespace",
+  description:
+    "Feature 007/014 native operator control-plane persisted state. Written and read by the operator store only; secret values are SecretRef references, never plaintext.",
+})
+
 export const Info = Schema.Struct({
   $schema: Schema.optional(Schema.String).annotate({
     description: "JSON schema reference for configuration validation",
@@ -167,6 +202,10 @@ export const Info = Schema.Struct({
       }),
     }),
   ),
+  operator: Schema.optional(Operator).annotate({
+    description:
+      "Feature 007/014 native operator control-plane persisted state. Managed by the operator store; not hand-edited.",
+  }),
   experimental: Schema.optional(
     Schema.Struct({
       disable_paste_summary: Schema.optional(Schema.Boolean),
