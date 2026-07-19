@@ -291,6 +291,37 @@ specScopeGlobs = [
   "packages/opencode/src/cli/cmd/mcp.ts",     # opencode op mcp <op> verbs + legacy shim coexistence (FR48, C27)
   # Generated-artifact task (listed for traceability; follows the event rename):
   # "packages/sdk/js/src/v2/gen/types.gen.ts", # regenerate for mcp.tools_changed (T011)
+
+  # Feature 009 implement-phase paths (T001-T016): Semantic Tool Search
+  #   (embeddings + reranker extended to every tool-search surface). Feature 009
+  #   is a strict EXTENSION of the implemented Feature 006 stack — only two paths
+  #   are genuinely new (the C15 live-consumption seams). Everything else is
+  #   ALREADY in scope and is NOT re-added (listed as comments for traceability):
+  #   packages/schema/src/semantic/** (Feature 006) — ToolDoc, ToolSource,
+  #     ToolDocId, tool-doc.ts, schema barrel additions;
+  #   packages/protocol/src/semantic/** (Feature 006) — retrieveTools port,
+  #     ToolRetrievalRequest collection discriminator, tool index payloads;
+  #   packages/core/src/semantic/** (Feature 006) — tool-pass.ts, instruments ext;
+  #   packages/opencode/src/semantic/** (Feature 006) — tool-projection,
+  #     retrieval-facade ext, tool-reindex-trigger, tool-retrieval, index-jobs,
+  #     cutover-executor, eval-harness ext;
+  #   packages/{schema,protocol,core,opencode}/test/semantic/** (Feature 006) —
+  #     all tool test suites;
+  #   packages/opencode/src/tool/registry.ts (Feature 007) — describeCodeMode +
+  #     tools() consumption seam;
+  #   packages/core/src/config/experimental.ts (Feature 007) — per-surface flags;
+  #   packages/core/src/v1/config/config.ts (Feature 007) — config threading;
+  #   packages/opencode/src/mcp/** (Feature 008) — mcp.tools_changed trigger wiring;
+  #   packages/schema/src/index.ts + packages/schema/test/** (Feature 001) —
+  #     schema barrel registration + schema tests;
+  #   packages/protocol/test/** (Feature 001) — protocol parity tests;
+  #   doc/arch/schemas/semantic/*.cue (always-derived doc/arch/**) — tool-doc CUE
+  #     mirrors (tool-doc.cue, tool-doc-parts.cue, ids-tool.cue, enums-tool.cue);
+  #   the reserved semantic.* catalog at RESERVED_CATALOG_VERSION 1.3.0 is reused
+  #     with NO new operator ID and NO catalog bump (FR22).
+  # Genuinely new implement paths (the C15 live-consumption seams):
+  "packages/opencode/src/session/tools.ts",   # native + MCP live-consumption seam (C15)
+  "packages/opencode/src/tool/code-mode.ts",  # code-mode describeCatalog ranked-subset seam (C10, C15)
 ]
 
 # Waivers for intentional near-empty files (warnings only; errors are never
