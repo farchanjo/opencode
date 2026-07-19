@@ -16,7 +16,8 @@ import {
   OPERATOR_SETTINGS_DOMAINS,
   type OperatorPaletteEntry,
 } from "@opencode-ai/core/operator"
-import { operatorSuggestedEntries } from "../../src/operator/execute"
+import { buildOperatorPaletteCommands } from "@opencode-ai/core/operator"
+import * as executeModule from "../../src/operator/execute"
 import { resolveOperatorFormField } from "../../src/operator/form"
 
 const BY_ID = new Map(listOperatorPaletteEntries().map((e) => [e.id, e]))
@@ -36,15 +37,39 @@ function routeFor(e: OperatorPaletteEntry): "view" | "form" | "direct" {
   return resolveOperatorFormField(e) ? "form" : "direct"
 }
 
-describe("T015 top-level entry — curated, no flat wall (FR1)", () => {
-  test("quick-access is read-only queries only and strictly smaller than the catalog", () => {
-    const suggested = operatorSuggestedEntries()
-    const all = listOperatorPaletteEntries()
-    expect(suggested.length).toBeGreaterThan(0)
-    expect(suggested.length).toBeLessThan(all.length)
-    expect(suggested.every((e) => !e.mutates)).toBe(true)
-    // no mutation ever surfaces as a top-level quick command
-    expect(suggested.some((e) => e.mutates)).toBe(false)
+describe("Feature 015 T001/T002 — one Operator entry, suggest machinery retired (FR1, FR2)", () => {
+  test("the suggested-spread re-export is gone from the execute module", () => {
+    expect("operatorSuggestedEntries" in executeModule).toBe(false)
+  })
+
+  test("every read-only verb stays reachable through the grouped domain panels", () => {
+    // FR1 discoverability compensation: with the top-level spread removed, each
+    // read-only verb is still reached through the single grouped Operator entry.
+    const readOnly = listOperatorPaletteEntries().filter((e) => !e.mutates)
+    expect(readOnly.length).toBeGreaterThan(0)
+    const panelViewIds = new Set(
+      OPERATOR_SETTINGS_DOMAINS.flatMap((d) => buildOperatorDomainPanel(d).view.map((v) => v.id)),
+    )
+    for (const e of readOnly) expect(panelViewIds.has(e.id)).toBe(true)
+  })
+})
+
+describe("Feature 015 T019 — palette-command registrations carry no suggested spread (FR1, FR2)", () => {
+  test("no `/op.*` command registration carries the retired `suggested` field", () => {
+    // app.tsx builds the top-level Commands from `buildOperatorPaletteCommands()`;
+    // the retired suggested-spread field must not resurface on any registration.
+    for (const command of buildOperatorPaletteCommands()) {
+      expect("suggested" in command).toBe(false)
+    }
+  })
+
+  test("every registration resolves to its canonical `/op.<id>` command name (one loopback, no divergent path)", () => {
+    const commands = buildOperatorPaletteCommands()
+    expect(commands.length).toBeGreaterThan(0)
+    const names = commands.map((c) => c.name)
+    // command names are unique — no duplicated Operator entry per verb.
+    expect(new Set(names).size).toBe(names.length)
+    for (const command of commands) expect(command.name).toBe(`operator.${command.id}`)
   })
 })
 

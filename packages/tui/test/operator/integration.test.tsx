@@ -205,6 +205,26 @@ describe("T016 dialog back stack — push appends, escape pops exactly one (FR7)
     }
   })
 
+  test("dialog.pop unwinds exactly one level (close-on-success back to the screen, FR9)", async () => {
+    await using tmp = await tmpdir()
+    const { app, dialog } = await mountDialog(tmp.path)
+    const closed: string[] = []
+    try {
+      dialog.push(() => <text>screen</text>)
+      dialog.push(() => <text>modal</text>, () => closed.push("modal"))
+      expect(dialog.stack.length).toBe(2)
+
+      await app.flush()
+      // A modal Save closes itself programmatically, not via escape — back to the screen.
+      dialog.pop()
+      await wait(() => dialog.stack.length === 1)
+      expect(dialog.stack.length).toBe(1)
+      expect(closed).toEqual(["modal"])
+    } finally {
+      app.renderer.destroy()
+    }
+  })
+
   test("push runs each level's onClose exactly once as escape pops it", async () => {
     await using tmp = await tmpdir()
     const { app, dialog } = await mountDialog(tmp.path)

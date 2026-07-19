@@ -94,6 +94,7 @@ export function createFakeDialog(): DialogContext {
     clear() {},
     replace(_input: unknown, _onClose?: () => void) {},
     push(_input: unknown, _onClose?: () => void) {},
+    pop() {},
     get stack() {
       return []
     },
