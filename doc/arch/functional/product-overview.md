@@ -161,6 +161,20 @@ Acceptance criteria live as prioritized scenarios in each feature `spec.md`.
   typed-gap affordance surfaced, status refreshed after every mutation, and the
   same `executeOperatorCommand`/`OperatorClient` loopback dispatch path — the
   Feature 007 parity invariant is preserved).
+- **OutputSpool production writer and operator read** — the Feature 017 closure
+  of the headline capability gap: session output is written into the OutputSpool
+  control store by a production writer subscribed at the session message-part
+  seam, so `output.stat`/`read`/`follow` reflect real output instead of an empty
+  store, and the `release`/`delete`/`purge` admin edge commits through a
+  store-scoped authority (never a fabricated config CAS version). The writer
+  lifecycle — subscribe → open generation → append (bounded, fenced) → seal/abort
+  on cancel, with the operator read projecting the populated store or a typed gap
+  — is modeled in
+  [output-spool-writer statechart](../statecharts/output-spool-writer.md)
+  (subscribed → generation_open → { fenced | appending → { sealed | aborted } } →
+  recorded, plus operator_read → { projected | typed_gap }, honoring the Feature
+  005 producer ownership and content-free events — the Feature 007 parity
+  invariant is preserved).
 
 ## Phase 2 deferred (explicit)
 
