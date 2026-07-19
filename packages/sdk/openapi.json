@@ -15470,7 +15470,7 @@
             "$ref": "#/components/schemas/Event.tui.session.select"
           },
           {
-            "$ref": "#/components/schemas/EventMcpToolsChanged"
+            "$ref": "#/components/schemas/EventMcpTools_changed"
           },
           {
             "$ref": "#/components/schemas/EventMcpBrowserOpenFailed"
@@ -19904,7 +19904,7 @@
                   },
                   "type": {
                     "type": "string",
-                    "enum": ["mcp.tools.changed"]
+                    "enum": ["mcp.tools_changed"]
                   },
                   "properties": {
                     "type": "object",
@@ -21535,6 +21535,12 @@
                 "items": {
                   "$ref": "#/components/schemas/ConfigV2ExperimentalPolicy"
                 }
+              },
+              "operator_control_plane": {
+                "type": "boolean"
+              },
+              "offline": {
+                "type": "boolean"
               }
             },
             "additionalProperties": false
@@ -24193,7 +24199,7 @@
             "$ref": "#/components/schemas/TuiSessionSelect"
           },
           {
-            "$ref": "#/components/schemas/McpToolsChanged"
+            "$ref": "#/components/schemas/McpTools_changed"
           },
           {
             "$ref": "#/components/schemas/McpBrowserOpenFailed"
@@ -32925,7 +32931,7 @@
         "required": ["id", "type", "data"],
         "additionalProperties": false
       },
-      "McpToolsChanged": {
+      "McpTools_changed": {
         "type": "object",
         "properties": {
           "id": {
@@ -32937,7 +32943,7 @@
           },
           "type": {
             "type": "string",
-            "enum": ["mcp.tools.changed"]
+            "enum": ["mcp.tools_changed"]
           },
           "durable": {
             "type": "object",
@@ -36140,7 +36146,7 @@
         "required": ["id", "type", "properties"],
         "additionalProperties": false
       },
-      "EventMcpToolsChanged": {
+      "EventMcpTools_changed": {
         "type": "object",
         "properties": {
           "id": {
@@ -36149,7 +36155,7 @@
           },
           "type": {
             "type": "string",
-            "enum": ["mcp.tools.changed"]
+            "enum": ["mcp.tools_changed"]
           },
           "properties": {
             "type": "object",

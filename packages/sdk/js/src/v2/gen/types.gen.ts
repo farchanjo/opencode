@@ -1453,7 +1453,7 @@ export type GlobalEvent = {
       }
     | {
         id: string
-        type: "mcp.tools.changed"
+        type: "mcp.tools_changed"
         properties: {
           server: string
         }
@@ -5834,7 +5834,7 @@ export type McpToolsChanged = {
   metadata?: {
     [key: string]: unknown
   }
-  type: "mcp.tools.changed"
+  type: "mcp.tools_changed"
   durable?: {
     aggregateID: string
     seq: number
@@ -6885,7 +6885,7 @@ export type EventPermissionReplied = {
 
 export type EventMcpToolsChanged = {
   id: string
-  type: "mcp.tools.changed"
+  type: "mcp.tools_changed"
   properties: {
     server: string
   }
