@@ -131,7 +131,7 @@ path.
   FR10, FR17, C6, AC10, AC18). Acceptance: `bun test packages/opencode` asserts sanitization
   strips secrets/paths/`default`/`example`/`const`/`format`, a content-hash change drives upsert
   vs tombstone, `sanitizedFieldsDropped` carries names only, and no raw schema or path is stored.
-- [ ] T007 [S6] Wire the `tools` collection into the existing generic multi-collection
+- [x] T007 [S6] Wire the `tools` collection into the existing generic multi-collection
   lifecycle: thread a tool `LiveDoc` projection input for `runReconcile` into
   `packages/opencode/src/semantic/index-jobs.ts` (already `CollectionKind`-generic) and confirm
   `packages/opencode/src/semantic/cutover-executor.ts` `CutoverInput.collections` carries

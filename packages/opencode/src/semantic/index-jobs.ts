@@ -20,6 +20,7 @@ export * as IndexJobs from "./index-jobs"
 import { Effect } from "effect"
 import { Projection } from "@opencode-ai/core/semantic/projection"
 import type { CollectionKind } from "@opencode-ai/protocol/semantic/commands"
+import type { ToolDoc } from "@opencode-ai/schema/semantic/tool-doc"
 import type { DocumentRow, MilvusGap, MilvusPort } from "./milvus-adapter"
 
 /** A live-core document projected to its content hash and mandatory scalar fields (never a body, C22). */
@@ -65,6 +66,38 @@ export const planMutations = (live: readonly LiveDoc[], indexed: readonly Indexe
 /** Coalesce overlapping triggers to one run per collection (FR13, AC13). */
 export const coalesceTriggers = (collections: readonly CollectionKind[]): readonly CollectionKind[] =>
   [...new Set(collections)]
+
+/** The pinned dense + sparse vectors for one tool document, produced by the reused embedding client (I/O upstream). */
+export interface ToolVectors {
+  readonly dense: readonly number[]
+  readonly terms: readonly string[]
+}
+
+/**
+ * Feature 009 / T007 (S6) — project one sanitized `ToolDoc` into the generic
+ * `LiveDoc` the existing `runReconcile` consumes for the `tools` collection. The
+ * content hash keys the incremental content-hash upsert/tombstone (FR8, AC10); the
+ * mandatory scalar `DocScope` fields become the per-search partition filters so a
+ * tool never crosses a project (FR10, C13). No new lifecycle machinery — `tools`
+ * reuses `planMutations` / `runReconcile` verbatim (C7). The dense/sparse vectors
+ * are injected from the reused embedding client (I/O stays upstream, C2).
+ */
+export const toolLiveDoc = (doc: ToolDoc, vectors: ToolVectors): LiveDoc => ({
+  canonicalId: doc.id,
+  contentHash: doc.identity.content_hash,
+  row: {
+    canonicalId: doc.id,
+    canonicalVersion: doc.identity.content_hash,
+    dense: vectors.dense,
+    terms: vectors.terms,
+    filters: {
+      projectId: doc.scope.project_id,
+      scope: doc.scope.scope,
+      visibility: doc.scope.visibility,
+      permissionRef: doc.scope.permission_ref,
+    },
+  },
+})
 
 /** The injected Feature 005 OutputSpool sink; returns an opaque `OutputRef` for a bounded job log (FR40, C9). */
 export interface OutputSpoolSink {
