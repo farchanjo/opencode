@@ -441,6 +441,34 @@ specScopeGlobs = [
   "packages/protocol/src/smart/**",           # smart.* protocol command module (FR1, FR3)
   "packages/protocol/src/budget/**",          # budget.* protocol command module (FR1, FR4)
   "packages/protocol/src/pools/**",           # pools.* protocol command module (FR1, FR5)
+
+  # Feature 014 implement-phase paths: Complete the operator control plane
+  #   persistence and service. Close the two Feature 013 residuals — operator
+  #   config mutations do not round-trip persist, and several service domains are
+  #   still honest capability gaps. Accept the `operator` config namespace, align
+  #   the Config.update write path with a loader-consumed read path, invalidate the
+  #   config cache (FR1-FR4); convert the last two self-committing command ports
+  #   (langlock, jobs) to the mutation_plan contract (FR5); wire the reachable
+  #   service backends — OutputSpool control store (FR6), MCP admin host (FR7), the
+  #   config-backed semantic registry (FR8) — while Milvus/executor/cancel edges
+  #   stay typed capability gaps (FR9, FR10). Feature 007 stays the sole
+  #   command-registration authority — no catalog id is added and no catalog
+  #   version is bumped (FR13). Nearly the entire surface is ALREADY in scope and is
+  #   NOT re-added (traceability only):
+  #   packages/core/src/v1/config/config.ts (Feature 007 block) — ConfigV1.Info
+  #     operator sub-schema (FR1);
+  #   packages/opencode/src/operator/** (Feature 007) — langlock/jobs mutation_plan
+  #     conversion + stack-live.ts service-backend wiring + lifecycle gap (FR5-FR11);
+  #   packages/opencode/src/outputspool/** (Feature 005) — control store reused (FR6);
+  #   packages/opencode/src/mcp/** (Feature 008) — MCP.Service host reused (FR7);
+  #   packages/opencode/src/semantic/** (Feature 006) — registry/resolver reused (FR8);
+  #   packages/opencode/src/jobs/** (Feature 002) — jobs persistence seam reused (FR9);
+  #   packages/core/src/operator/** (Feature 007) — palette.ts Partial refinement (FR12);
+  #   packages/{opencode/test/operator,core/test/operator}/** — commit/backend/
+  #     availability/parity tests.
+  # Genuinely new implement paths (config round-trip write/read alignment):
+  "packages/opencode/src/config/**",          # operator-key accept + write/read align + cache invalidation (FR1-FR3)
+  "packages/opencode/test/config/**",         # round-trip persistence tests (FR4)
 ]
 
 # Waivers for intentional near-empty files (warnings only; errors are never
