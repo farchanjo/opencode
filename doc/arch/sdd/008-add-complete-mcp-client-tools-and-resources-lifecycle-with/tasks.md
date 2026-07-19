@@ -194,7 +194,7 @@ enforced (see the Traceability reconciliation note).
 
 ### Domain lifecycle engine (Phase 2)
 
-- [ ] T014 [S6] Author `packages/core/src/mcp/connection-lifecycle.ts` implementing the closed
+- [x] T014 [S6] Author `packages/core/src/mcp/connection-lifecycle.ts` implementing the closed
   `configured → connecting → negotiating → recording → connected` machine with additive terminal
   branches `disabled`/`failed`/`needs_auth`/`needs_client_registration` over injected transport/
   clock/config/event ports, recording the negotiated protocol version and full server capability
@@ -203,7 +203,7 @@ enforced (see the Traceability reconciliation note).
   state machine with no I/O in the hot logic (FR7, FR8, C2). Acceptance: `bun test packages/core`
   asserts every legal transition, rejects illegal transitions, confirms the recorded capability
   set is captured at `recording`, and a reconnect diff emits `capabilities_changed`.
-- [ ] T015 [S7] Author `packages/core/src/mcp/reconnect-planner.ts` implementing bounded
+- [x] T015 [S7] Author `packages/core/src/mcp/reconnect-planner.ts` implementing bounded
   exponential backoff with jitter and a capped max delay honoring session resume and
   `Last-Event-ID`, entering `reconnecting` on a Streamable HTTP drop and `failed` on max
   attempts, while a stdio connection restarts under lifecycle control with child cleanup and no
@@ -211,7 +211,7 @@ enforced (see the Traceability reconciliation note).
   Acceptance: `bun test packages/core` asserts the backoff curve is bounded/jittered/capped,
   resume carries `Last-Event-ID`, max attempts reaches `failed`, and stdio restarts without a
   backoff schedule.
-- [ ] T016 [S8] Author `packages/core/src/mcp/catalog-policy.ts` implementing the
+- [x] T016 [S8] Author `packages/core/src/mcp/catalog-policy.ts` implementing the
   `stale → walking → fresh` paginated-walk decision with a **duplicate-cursor guard** (a
   repeated or non-advancing cursor terminates the walk) and a **max-page bound** that enters
   `guard_tripped` and fails closed with a typed error retaining the prior `defs[server]`, so a
@@ -219,7 +219,7 @@ enforced (see the Traceability reconciliation note).
   mirroring the C4 flow (FR10, FR11, C4). Acceptance: `bun test packages/core` asserts a normal
   paginated walk reaches `fresh`, a duplicate/non-advancing cursor and a max-page breach reach
   `guard_tripped` fail-closed retaining prior defs, and `list_changed` restarts at `stale`.
-- [ ] T017 [S9] Author `packages/core/src/mcp/resource-policy.ts` implementing the default
+- [x] T017 [S9] Author `packages/core/src/mcp/resource-policy.ts` implementing the default
   `notify_cache` policy — `resources/updated` coalesces/dedupes/debounces into a bounded queue
   with sequence/correlation, updates UI and cache, and emits `mcp.resource_updated` — with the
   `conditional_reread`/`semantic_reindex`/`wake` steps behind separate per-server opt-in gates,
@@ -228,7 +228,7 @@ enforced (see the Traceability reconciliation note).
   Acceptance: `bun test packages/core` asserts the default path is notify+cache only with no
   re-read/reindex/wake, a burst is coalesced into the bounded queue, and each opt-in step is a
   distinct gate that never auto-fires.
-- [ ] T018 [S10] Author `packages/core/src/mcp/subscription-machine.ts` implementing the closed
+- [x] T018 [S10] Author `packages/core/src/mcp/subscription-machine.ts` implementing the closed
   `unsubscribed → subscribing → subscribed → unsubscribing` machine requiring the server
   `resources.subscribe` capability **and** an operator grant to leave `unsubscribed`, moving an
   unauthorized subscribe or a lost capability to `fail_closed`, so the LLM never subscribes and
@@ -236,7 +236,7 @@ enforced (see the Traceability reconciliation note).
   Acceptance: `bun test packages/core` asserts a subscribe requires capability + operator grant,
   an unauthorized attempt and a lost capability fail closed, and unsubscribe returns to
   `unsubscribed`.
-- [ ] T019 [S11] Author `packages/core/src/mcp/cancel-selector.ts` implementing the wire-path
+- [x] T019 [S11] Author `packages/core/src/mcp/cancel-selector.ts` implementing the wire-path
   selector: a standard (non-task-augmented) in-flight `tools/call` cancels via
   `notifications/cancelled`, a task-augmented call cancels via `tasks/cancel`, the Feature 002
   root tree covers both classes with the correct wire path per child, and an unacknowledged
@@ -245,13 +245,13 @@ enforced (see the Traceability reconciliation note).
   C8 split (FR17, FR18, C8). Acceptance: `bun test packages/core` asserts a standard call selects
   `notifications/cancelled`, a task-augmented call selects `tasks/cancel`, the root tree cancels
   both, and an unacknowledged remote records the typed outcome.
-- [ ] T020 [S12] Author `packages/core/src/mcp/degradation.ts` implementing the typed
+- [x] T020 [S12] Author `packages/core/src/mcp/degradation.ts` implementing the typed
   capability-gap classifier (`none`/`mcp_unavailable` and peers) so a missing SDK/wire feature or
   an unreachable server degrades to a typed gap and the session continues rather than hard-
   failing, never exercising an unadvertised capability, mirroring the C1/C2 degradation stance
   (FR7, C1, C2). Acceptance: `bun test packages/core` asserts each gap code, server unavailability
   yields `mcp_unavailable` not a crash, and the session continues on a degraded capability.
-- [ ] T021 [S13] Author `packages/core/src/mcp/trust-gate.ts` implementing the annotation-trust
+- [x] T021 [S13] Author `packages/core/src/mcp/trust-gate.ts` implementing the annotation-trust
   profile (annotations untrusted unless operator-elevated), the outputSchema tolerant/strict
   decision (tolerant surfaces a typed non-fatal validation warning and still spools/delivers;
   strict converts a mismatch into an `isError`-class failure), the untrusted-content provenance
@@ -260,7 +260,7 @@ enforced (see the Traceability reconciliation note).
   `bun test packages/core` asserts unelevated annotations are ignored for gating, tolerant vs
   strict outputSchema outcomes differ correctly, untrusted content is labeled, and a
   decompression bomb is rejected pre-delivery.
-- [ ] T022 [S14] Author `packages/core/src/mcp/mcp-instruments.ts` adding the `mcp.*` spans
+- [x] T022 [S14] Author `packages/core/src/mcp/mcp-instruments.ts` adding the `mcp.*` spans
   (connect, capability negotiation, list, call, progress, read, subscribe, reconnect, cancel,
   task status/result) linked to the Feature 001 session/routing/LLM/Process-Table job spans, and
   the content-free bounded-enum metrics (latency histograms, progress count, bytes spooled,
@@ -270,7 +270,7 @@ enforced (see the Traceability reconciliation note).
   bounded export never blocks the hot path, mirroring FR54–FR56 and C26 (FR54, FR55, FR56, C26).
   Acceptance: `bun test packages/core` cardinality audit asserts no URI/content/call/session ID
   appears as a metric label and OTEL-down does not block a call.
-- [ ] T023 [S6–S14] Author the barrel `packages/core/src/mcp/index.ts` re-exporting the
+- [x] T023 [S6–S14] Author the barrel `packages/core/src/mcp/index.ts` re-exporting the
   connection-lifecycle, reconnect-planner, catalog-policy, resource-policy, subscription-machine,
   cancel-selector, degradation, trust-gate, and mcp-instruments modules. Acceptance:
   `tsgo --noEmit` on `packages/core` green and the barrel imports without a duplicate-export
