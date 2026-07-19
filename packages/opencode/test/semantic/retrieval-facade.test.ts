@@ -27,6 +27,13 @@ const build = () => {
   const pipeline: RetrievalFacade.PipelineRunnerPort = {
     runAgents: async () => outcome(rows),
     runSkills: async () => outcome([{ canonicalId: "skill-x", canonicalVersion: "1", rerank: null, dense: 0.7, sparse: 0.3 }]),
+    runTools: async () => ({
+      rows: [],
+      degradation: { rung: "full_semantic" },
+      queryFingerprint: { fingerprint: "fp-1", bindingVersion: 4, configHash: "cfg" },
+      cacheHit: true,
+      effective: { embeddingBindingVersion: 4, rerankerBindingVersion: 2, languageTag: "pt-BR" },
+    }),
   }
   const facade = RetrievalFacade.createRetrievalFacade({ pipeline, recorder: { record: (d) => recorded.push(d) } })
   return { facade, recorded }

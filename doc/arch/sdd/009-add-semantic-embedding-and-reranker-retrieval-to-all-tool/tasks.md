@@ -154,7 +154,7 @@ path.
   coalesce to one reindex pass, `mcp_tools_changed` is scoped to one server (never the whole
   corpus), the trigger is independent from the 008 resource trigger, and the native
   registry-change trigger is a documented derived hook.
-- [ ] T009 [S5] Extend `packages/opencode/src/semantic/retrieval-facade.ts` with `retrieveTools`
+- [x] T009 [S5] Extend `packages/opencode/src/semantic/retrieval-facade.ts` with `retrieveTools`
   (composed by the same `createRetrievalFacade` alongside `retrieveAgents`/`retrieveSkills` — a
   sibling port, not a second facade), the injected `runTools` on `ToolPipelineRunnerPort`, the
   reused `budgetError` guard, and the honest `FEATURE_009_TOOL_SELECTION_SEAM` mirroring the
