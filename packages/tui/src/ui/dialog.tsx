@@ -163,6 +163,20 @@ function init() {
         },
       ])
     },
+    // Back-stack primitive (Feature 012 T012, FR7): append a level instead of
+    // resetting the stack, so the escape/ctrl+c binding above pops exactly one
+    // level. The levels beneath stay mounted and are not closed; `replace` remains
+    // for root/reset use. Size is left untouched — a nested level inherits it.
+    push(input: any, onClose?: () => void) {
+      if (store.stack.length === 0) {
+        focus = renderer.currentFocusedRenderable
+        focus?.blur()
+      }
+      setStore("stack", store.stack.length, {
+        element: input,
+        onClose,
+      })
+    },
     get stack() {
       return store.stack
     },

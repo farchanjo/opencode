@@ -7,7 +7,7 @@
  * for the non-interactive (no confirm-dialog) verbs the tests exercise.
  */
 import type { DialogContext } from "../../src/ui/dialog"
-import type { OperatorSlashPort, OperatorSlashDisplay } from "../../src/context/operator-slash"
+import type { OperatorSlashPort, OperatorSlashDisplay, OperatorStructuredResult } from "../../src/context/operator-slash"
 import type { OperatorToast } from "../../src/operator/execute"
 
 export type TryHandleInput = Parameters<OperatorSlashPort["tryHandle"]>[0]
@@ -36,8 +36,16 @@ function display(over: Partial<OperatorSlashDisplay> = {}): OperatorSlashDisplay
  * backend outcome (success, or the typed honest-unavailable envelope). Preflight
  * always succeeds with no existing authority so a plain persisting mutation is
  * not gated by a version conflict.
+ *
+ * `structured` optionally shapes the Feature 012 structured half of the handled
+ * result (the typed `outcome`, an optional `effective` payload, and the version)
+ * that `tui-port.ts` forwards on the SAME return object. Omit it to model a port
+ * that carries no structured result (backward-compatible with existing callers).
  */
-export function createSpyPort(respond: (input: TryHandleInput) => OperatorSlashDisplay = () => display()): SpyPort {
+export function createSpyPort(
+  respond: (input: TryHandleInput) => OperatorSlashDisplay = () => display(),
+  structured?: (input: TryHandleInput) => OperatorStructuredResult | undefined,
+): SpyPort {
   const tryHandleCalls: TryHandleInput[] = []
   const preflightCalls: PreflightInput[] = []
   return {
@@ -46,7 +54,8 @@ export function createSpyPort(respond: (input: TryHandleInput) => OperatorSlashD
     port: {
       async tryHandle(input) {
         tryHandleCalls.push(input)
-        return { handled: true, display: respond(input) }
+        const result = structured?.(input)
+        return { handled: true, display: respond(input), ...(result ? { result } : {}) }
       },
       async preflightMutation(input) {
         preflightCalls.push(input)
@@ -84,6 +93,7 @@ export function createFakeDialog(): DialogContext {
   return {
     clear() {},
     replace(_input: unknown, _onClose?: () => void) {},
+    push(_input: unknown, _onClose?: () => void) {},
     get stack() {
       return []
     },
