@@ -392,6 +392,27 @@ specScopeGlobs = [
   #     lives under this glob).
   # Genuinely new implement path (the top-level palette host, not under any glob):
   "packages/tui/src/app.tsx",                 # collapse the flat listOperatorPaletteEntries spread → one Operator entry (FR1)
+
+  # Feature 012 implement-phase paths: Expose the structured operator command
+  #   result through the TUI. Consumption ONLY — forward the already-typed
+  #   CommandResult.effective across the inbound adapter seam, thread it through
+  #   the TUI context + dispatch into the five read panels and entity pickers, and
+  #   add a Dialog push back-stack primitive. No new dispatch path, no backend
+  #   behavior change, no new command id, no new flag; the Feature 007
+  #   OperatorClient loopback parity invariant (FR9) is preserved. Nearly the
+  #   entire surface is ALREADY in scope and is NOT re-added (traceability only):
+  #   packages/opencode/src/operator/** (Feature 007) — tui-port.ts inbound adapter
+  #     forwards outcome/effective/version on the SAME tryHandle return (FR1); it is
+  #     the ONLY operator-backend file this feature touches;
+  #   packages/tui/src/**/operator/** (Feature 007) — execute.ts return widening
+  #     (FR3), dialog-settings.tsx DialogOperatorReadPanel signal feed (FR5), the
+  #     form/ entity-picker loaders (FR6), and the five {jobs,langlock,output,
+  #     semantic,mcp}/state.ts per-domain projection functions (FR4);
+  #   packages/tui/test/** (Feature 001) — projection, loader, forward/thread,
+  #     navigation, and parity tests (new packages/tui/test/operator/** is covered).
+  # Genuinely new implement paths (not under any existing glob):
+  "packages/tui/src/context/**",              # OperatorSlashHandled optional structured result (FR2)
+  "packages/tui/src/ui/dialog.tsx",           # push(input, onClose?) back-stack primitive (FR7)
 ]
 
 # Waivers for intentional near-empty files (warnings only; errors are never
