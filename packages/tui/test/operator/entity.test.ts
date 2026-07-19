@@ -16,6 +16,7 @@ import {
   entityConsumedConfigureIds,
   entityCreateAvailability,
   listOperatorEntityKinds,
+  operatorEntityAffordances,
   projectEntityRows,
   resolveOperatorEntityScreen,
   type OperatorEntityRow,
@@ -149,6 +150,56 @@ describe("Feature 015 T017 — availability + parity (FR15, FR17)", () => {
     expect(entityConsumedConfigureIds("jobs").has("jobs.run-now")).toBe(true)
     // A view verb is never consumed by the entity screens.
     expect(entityConsumedConfigureIds("jobs").has("jobs.list")).toBe(false)
+  })
+})
+
+describe("Feature 016 T009/T012 — entity-first Configure affordances (FR5)", () => {
+  test("mcp leads with `Add server` + `Servers`, replacing the generic `Manage` row", () => {
+    const aff = operatorEntityAffordances("mcp")
+    expect(aff.map((a) => [a.affordance, a.title, a.commandId])).toEqual([
+      ["create", "Add server", "mcp.server.add"],
+      ["list", "Servers", "mcp.server.list"],
+    ])
+    // the mcp backend is honest-unavailable → the create affordance is marked inert.
+    expect(aff[0].availability).toBe("unavailable")
+    expect(aff[1].availability).toBe("available")
+  })
+
+  test("jobs leads with `Create job` + `Jobs`", () => {
+    const aff = operatorEntityAffordances("jobs")
+    expect(aff.map((a) => [a.affordance, a.title, a.commandId])).toEqual([
+      ["create", "Create job", "jobs.create"],
+      ["list", "Jobs", "jobs.list"],
+    ])
+    // jobs persists → the create affordance is available.
+    expect(aff[0].availability).not.toBe("unavailable")
+  })
+
+  test("semantic leads with `Add provider` then the providers + models lists", () => {
+    const aff = operatorEntityAffordances("semantic")
+    expect(aff.map((a) => [a.affordance, a.title, a.commandId])).toEqual([
+      ["create", "Add provider", "semantic.provider.add"],
+      ["list", "Providers", "semantic.provider.list"],
+      ["list", "Models", "semantic.model.list"],
+    ])
+  })
+
+  test("a non-collection domain surfaces no entity affordances", () => {
+    expect(operatorEntityAffordances("langlock")).toEqual([])
+    expect(operatorEntityAffordances("telemetry")).toEqual([])
+  })
+
+  test("every affordance rides a REAL catalog command id (no new dispatch path, FR6)", () => {
+    for (const domain of ["mcp", "jobs", "semantic"]) {
+      for (const aff of operatorEntityAffordances(domain)) expect(CATALOG_IDS.has(aff.commandId)).toBe(true)
+    }
+  })
+
+  test("the create affordance's id is a Configure verb the domain screen consumes (never rendered twice)", () => {
+    for (const domain of ["mcp", "jobs", "semantic"]) {
+      const create = operatorEntityAffordances(domain).find((a) => a.affordance === "create")!
+      expect(entityConsumedConfigureIds(domain).has(create.commandId)).toBe(true)
+    }
   })
 })
 

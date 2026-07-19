@@ -7,7 +7,13 @@
  */
 import { describe, expect, test } from "bun:test"
 import { buildOperatorDomainPanel, OPERATOR_SETTINGS_DOMAINS } from "@opencode-ai/core/operator"
-import { MAX_STATUS_NODES, plainStatusReadId, toStatusNodes } from "../../src/operator/status"
+import {
+  MAX_STATUS_NODES,
+  plainStatusReadId,
+  statusEmptySummary,
+  toStatusGroups,
+  toStatusNodes,
+} from "../../src/operator/status"
 
 /** Domains whose inline status renders the reused rich panel instead of key/value. */
 const RICH_DOMAINS = new Set(["jobs", "output", "langlock", "semantic", "mcp"])
@@ -47,6 +53,58 @@ describe("Feature 015 T004 — inline status projection (FR4)", () => {
   test("the node count is bounded", () => {
     const big = Object.fromEntries(Array.from({ length: 100 }, (_, i) => [`k${i}`, i]))
     expect(toStatusNodes(big)).toHaveLength(MAX_STATUS_NODES)
+  })
+})
+
+describe("Feature 016 T003/T010 — compact status: populated full, empty collapsed (FR2)", () => {
+  test("classifies each group as populated or empty by its value", () => {
+    const groups = toStatusGroups({
+      servers: [{ id: "a" }],
+      resources: [],
+      experimental: {},
+      calls: null,
+      enabled: false,
+      count: 0,
+    })
+    const byKey = new Map(groups.map((g) => [g.key, g.state]))
+    // a non-empty array/record is populated; a scalar (even false/0) is populated.
+    expect(byKey.get("servers")).toBe("populated")
+    expect(byKey.get("enabled")).toBe("populated")
+    expect(byKey.get("count")).toBe("populated")
+    // an empty array/record/null is the "no <thing>" case → empty.
+    expect(byKey.get("resources")).toBe("empty")
+    expect(byKey.get("experimental")).toBe("empty")
+    expect(byKey.get("calls")).toBe("empty")
+  })
+
+  test("the empty summary names ONLY the empty groups on one line (FR2)", () => {
+    const groups = toStatusGroups({ servers: [{ id: "a" }], resources: [], experimental: {}, calls: null })
+    // populated groups render in full; the empty ones collapse into one line.
+    expect(groups.filter((g) => g.state === "populated").map((g) => g.key)).toEqual(["servers"])
+    expect(statusEmptySummary(groups)).toBe("resources · experimental · calls: empty")
+  })
+
+  test("an all-empty status collapses into a single summary line", () => {
+    const groups = toStatusGroups({ servers: [], resources: [], experimental: {}, calls: null })
+    expect(groups.every((g) => g.state === "empty")).toBe(true)
+    expect(statusEmptySummary(groups)).toBe("servers · resources · experimental · calls: empty")
+  })
+
+  test("when every group is populated no summary line renders (undefined)", () => {
+    const groups = toStatusGroups({ enabled: true, tag: "pt-BR" })
+    expect(groups.every((g) => g.state === "populated")).toBe(true)
+    expect(statusEmptySummary(groups)).toBeUndefined()
+  })
+
+  test("an absent/non-record payload yields the honest empty list and no summary (never throws)", () => {
+    expect(toStatusGroups(undefined)).toEqual([])
+    expect(toStatusGroups("scalar")).toEqual([])
+    expect(statusEmptySummary(toStatusGroups(undefined))).toBeUndefined()
+  })
+
+  test("the group projection is bounded like the node projection", () => {
+    const big = Object.fromEntries(Array.from({ length: 100 }, (_, i) => [`k${i}`, i]))
+    expect(toStatusGroups(big)).toHaveLength(MAX_STATUS_NODES)
   })
 })
 

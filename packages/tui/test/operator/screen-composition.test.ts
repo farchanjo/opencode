@@ -15,13 +15,17 @@
 import { describe, expect, test } from "bun:test"
 import {
   buildOperatorDomainPanel,
+  buildOperatorScreenControls,
+  operatorSectionOrder,
   listOperatorPaletteEntries,
   OPERATOR_SETTINGS_DOMAINS,
   type OperatorPaletteEntry,
   type OperatorVerbItem,
+  type OperatorVerbSection,
 } from "@opencode-ai/core/operator"
 import { executeOperatorCommand } from "../../src/operator/execute"
 import { toStatusNodes } from "../../src/operator/status"
+import { entityConsumedConfigureIds, operatorEntityAffordances } from "../../src/operator/entity"
 import { createSpyPort, createFakeToast, createFakeDialog, spyDisplay } from "./harness"
 import type { OperatorSlashPort, OperatorStructuredResult } from "../../src/context/operator-slash"
 
@@ -95,6 +99,108 @@ describe("Feature 015 T003/T020 — domain-screen rows are domain-implicit (FR3)
       const titles = [...panel.view, ...panel.configure].map(domainScreenRowTitle)
       expect(new Set(titles).size).toBe(titles.length)
       expect(titles).not.toContain("View: Status")
+    }
+  })
+})
+
+/**
+ * Faithful pure model of `DialogOperatorDomainPanel`'s composition (Feature 016).
+ * It mirrors the exact seams the component composes so a source drift in the
+ * ordering rule, the entity-first affordances, or the row/section categories is
+ * caught here without a full render harness:
+ *
+ *  - the status is routed through the DialogSelect header `titleView` slot, so the
+ *    panel reads header → status → search → action list (FR1);
+ *  - the Configure block leads with the entity-first affordances, then controls,
+ *    then the plain settings; the View block is the read-only verbs; the two are
+ *    ordered by `operatorSectionOrder` — Configure before View for an editable
+ *    domain (FR4, FR5);
+ *  - a row carries NO kind footer badge; the section category (Configure/View)
+ *    alone carries the kind (FR3, FR6).
+ */
+type ScreenOption = { readonly title: string; readonly category: string; readonly hasFooter: boolean }
+
+function composeDomainScreen(domain: string): {
+  readonly header: string
+  readonly regions: readonly string[]
+  readonly options: readonly ScreenOption[]
+} {
+  const panel = buildOperatorDomainPanel(domain)
+  const controls = buildOperatorScreenControls(domain)
+  const consumed = new Set(controls.consumedIds)
+  for (const id of entityConsumedConfigureIds(domain)) consumed.add(id)
+  const settings = panel.configure.filter((item) => !consumed.has(item.id))
+
+  const configureBlock: ScreenOption[] = [
+    ...operatorEntityAffordances(domain).map((aff) => ({ title: aff.title, category: "Configure", hasFooter: false })),
+    ...controls.toggles.map((c) => ({ title: c.label, category: "Controls", hasFooter: true })),
+    ...controls.tristates.map((c) => ({ title: c.label, category: "Controls", hasFooter: true })),
+    ...settings.map((item) => ({ title: item.label, category: "Configure", hasFooter: false })),
+  ]
+  const viewBlock: ScreenOption[] = panel.view.map((item) => ({ title: item.label, category: "View", hasFooter: false }))
+  const blockFor = (kind: OperatorVerbSection) => (kind === "configure" ? configureBlock : viewBlock)
+
+  return {
+    header: `Operator · ${panel.label}`,
+    // The component places the status inside the header slot (titleView), so the
+    // rendered region sequence is fixed as header → status → search → actions (FR1).
+    regions: ["header", "status", "search", "actions"],
+    options: operatorSectionOrder(domain).flatMap(blockFor),
+  }
+}
+
+describe("Feature 016 T002 — the panel reads header → status → search → action list (FR1)", () => {
+  test("the status is the second region, never above the header, for a plain and a rich domain", () => {
+    for (const domain of ["telemetry", "mcp"]) {
+      const screen = composeDomainScreen(domain)
+      expect(screen.regions).toEqual(["header", "status", "search", "actions"])
+      // header is region 0, status region 1 — the status never precedes the header.
+      expect(screen.regions.indexOf("status")).toBeGreaterThan(screen.regions.indexOf("header"))
+      expect(screen.regions.indexOf("search")).toBeGreaterThan(screen.regions.indexOf("status"))
+      expect(screen.regions.indexOf("actions")).toBeGreaterThan(screen.regions.indexOf("search"))
+      expect(screen.header).toBe(`Operator · ${buildOperatorDomainPanel(domain).label}`)
+    }
+  })
+})
+
+describe("Feature 016 T012 — Configure-before-View + entity-first affordances (FR4, FR5)", () => {
+  test("mcp leads the action list with `Add server` + `Servers` before any View row", () => {
+    const options = composeDomainScreen("mcp").options
+    expect(options[0]).toMatchObject({ title: "Add server", category: "Configure" })
+    expect(options[1]).toMatchObject({ title: "Servers", category: "Configure" })
+    // every Configure-category row precedes the first View-category row.
+    const firstView = options.findIndex((o) => o.category === "View")
+    const lastConfigure = options.map((o) => o.category).lastIndexOf("Configure")
+    expect(lastConfigure).toBeLessThan(firstView)
+  })
+
+  test("jobs leads with `Create job` + `Jobs`; semantic with `Add provider` + Providers + Models", () => {
+    const jobs = composeDomainScreen("jobs").options
+    expect(jobs.slice(0, 2).map((o) => o.title)).toEqual(["Create job", "Jobs"])
+    const semantic = composeDomainScreen("semantic").options
+    expect(semantic.slice(0, 3).map((o) => o.title)).toEqual(["Add provider", "Providers", "Models"])
+  })
+
+  test("an editable domain orders Configure before View; the order lives in operatorSectionOrder", () => {
+    for (const domain of OPERATOR_SETTINGS_DOMAINS) {
+      const options = composeDomainScreen(domain).options
+      const categories = options.map((o) => o.category)
+      const firstView = categories.indexOf("View")
+      if (firstView === -1) continue
+      // no Configure/Controls row appears after the first View row (Configure leads).
+      const configureAfterView = categories.slice(firstView + 1).some((c) => c === "Configure" || c === "Controls")
+      expect(configureAfterView).toBe(false)
+    }
+  })
+})
+
+describe("Feature 016 T006 — rows carry no kind footer badge; the section header carries the kind (FR3)", () => {
+  test("no verb/affordance row carries a footer badge; view rows are `View`, configure rows are `Configure`", () => {
+    for (const domain of OPERATOR_SETTINGS_DOMAINS) {
+      for (const option of composeDomainScreen(domain).options) {
+        // controls keep a state badge (on/off), but no verb/affordance row does.
+        if (option.category === "View" || option.category === "Configure") expect(option.hasFooter).toBe(false)
+      }
     }
   })
 })

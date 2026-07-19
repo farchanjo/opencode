@@ -13,11 +13,14 @@ import {
   buildOperatorGroupList,
   buildOperatorDomainPanel,
   buildOperatorScreenControls,
+  operatorSectionOrder,
+  operatorRowSubtitle,
   listOperatorSettingsEntries,
   OPERATOR_TOP_TITLE,
   OPERATOR_TOP_SUBTITLE,
   type OperatorPaletteEntry,
   type OperatorVerbItem,
+  type OperatorVerbSection,
   type OperatorToggleControl,
   type OperatorTriStateControl,
 } from "@opencode-ai/core/operator"
@@ -29,7 +32,7 @@ import { useToast } from "../ui/toast"
 import { useOperatorSlash } from "../context/operator-slash"
 import { useRoute } from "../context/route"
 import { executeOperatorCommand } from "./execute"
-import { plainStatusReadId, toStatusNodes } from "./status"
+import { plainStatusReadId, statusEmptySummary, toStatusGroups } from "./status"
 import {
   toggleBadge,
   toggleStateFrom,
@@ -43,7 +46,11 @@ import {
 import { openOperatorForm, resolveOperatorFormField } from "./form"
 import { openOperatorEditModal } from "./form/edit-modal"
 import { openOperatorViewModal } from "./form/view-modal"
-import { entityConsumedConfigureIds, listOperatorEntityKinds, resolveOperatorEntityScreen, type OperatorEntityKind } from "./entity"
+import {
+  entityConsumedConfigureIds,
+  operatorEntityAffordances,
+  type OperatorConfigureAffordance,
+} from "./entity"
 import { openOperatorEntityList } from "./entity-screens"
 import { JobsPanel } from "./jobs"
 import { OutputPanel } from "./output"
@@ -91,14 +98,6 @@ const SUCCESS_OUTCOMES = new Set(["success", "idempotent_replay"])
 /** Result of a silent status/detail read: the effective payload plus its load/availability state. */
 type StatusRead = { readonly value: unknown; readonly loaded: boolean; readonly available: boolean }
 
-/** Short row footer marker derived from the verb's availability/section (FR3). */
-function verbFooter(item: OperatorVerbItem): string {
-  if (item.availability === "unavailable") return "unavailable"
-  if (item.secretRelated) return "secret"
-  if (item.section === "view") return "view"
-  return item.confirmRequired ? "confirm" : "configure"
-}
-
 /**
  * The five built read-side panels, keyed by domain (Feature 012 T009, FR5). Each
  * spec pairs the domain's primary read query with a render closure that projects
@@ -130,19 +129,28 @@ const READ_PANEL_BY_DOMAIN: Readonly<Record<string, ReadPanelSpec>> = {
  */
 function StatusKeyValue(props: { status: () => StatusRead }) {
   const { theme } = useTheme()
-  const nodes = createMemo(() => toStatusNodes(props.status().value))
+  const groups = createMemo(() => toStatusGroups(props.status().value))
+  // Only the populated groups render in full; the empty ones collapse into one
+  // summary line naming them (FR2), keeping the panel bounded and readable.
+  const populated = createMemo(() => groups().filter((group) => group.state === "populated"))
+  const emptySummary = createMemo(() => statusEmptySummary(groups()))
   return (
     <Show when={props.status().loaded} fallback={<text fg={theme.textMuted}>Loading status…</text>}>
       <Show when={props.status().available} fallback={<text fg={theme.textMuted}>Status unavailable</text>}>
-        <Show when={nodes().length > 0} fallback={<text fg={theme.textMuted}>No status reported</text>}>
+        <Show when={groups().length > 0} fallback={<text fg={theme.textMuted}>No status reported</text>}>
           <box flexDirection="column">
-            <For each={nodes()}>
-              {(node) => (
+            <For each={populated()}>
+              {(group) => (
                 <text fg={theme.textMuted} wrapMode="none">
-                  {node.key}: <span style={{ fg: theme.text }}>{node.value}</span>
+                  {group.key}: <span style={{ fg: theme.text }}>{group.value}</span>
                 </text>
               )}
             </For>
+            <Show when={emptySummary()}>
+              <text fg={theme.textMuted} wrapMode="none" attributes={TextAttributes.DIM}>
+                {emptySummary()}
+              </text>
+            </Show>
           </box>
         </Show>
       </Show>
@@ -160,8 +168,11 @@ function StatusKeyValue(props: { status: () => StatusRead }) {
  */
 function OperatorStatusSection(props: { rich: ReadPanelSpec | undefined; status: () => StatusRead }) {
   const { theme } = useTheme()
+  // Rendered inside the DialogSelect header slot below the title (FR1); the header
+  // box already pads horizontally, so this adds none — the status aligns under the
+  // `Operator · <Domain>` header and above the search/action list.
   return (
-    <box paddingLeft={4} paddingRight={4} flexShrink={0}>
+    <box flexShrink={0}>
       <text fg={theme.textMuted} attributes={TextAttributes.DIM}>
         Status
       </text>
@@ -225,7 +236,7 @@ export function DialogOperatorDomainPanel(props: { domain: string }) {
   const route = useRoute()
   const panel = createMemo(() => buildOperatorDomainPanel(props.domain))
   const controls = createMemo(() => buildOperatorScreenControls(props.domain))
-  const entityKinds = createMemo(() => listOperatorEntityKinds(props.domain))
+  const affordances = createMemo(() => operatorEntityAffordances(props.domain))
   const entriesById = createMemo(
     () => new Map(listOperatorSettingsEntries(props.domain).map((entry) => [entry.id, entry])),
   )
@@ -379,16 +390,26 @@ export function DialogOperatorDomainPanel(props: { domain: string }) {
     }
   }
 
-  /** A collection domain's entity list entry: opens the list → item CRUD screen (FR12-FR14). */
-  function entityKindOption(kind: OperatorEntityKind): DialogSelectOption<string> {
-    const screen = resolveOperatorEntityScreen(kind)
+  /**
+   * An entity-first Configure affordance (FR5): `create` opens the existing create
+   * flow through `onSelectSetting` (same command id + loopback), `list` opens the
+   * existing list→item CRUD screen. Rendered as the FIRST rows of the Configure
+   * section, replacing the single generic `Manage <collection>` row.
+   */
+  function affordanceOption(aff: OperatorConfigureAffordance): DialogSelectOption<string> {
     return {
-      title: `Manage ${screen.title}`,
-      description: `${screen.title} list → item CRUD · ${screen.listRead}`,
-      category: "Entities",
-      value: `entity:${kind}`,
-      footer: "manage",
-      onSelect: () => dialog.push(openOperatorEntityList({ kind })),
+      title: aff.title,
+      description: operatorRowSubtitle({ commandId: aff.commandId, availability: aff.availability }),
+      category: "Configure",
+      value: `affordance:${aff.affordance}:${aff.kind}`,
+      onSelect: () => {
+        if (aff.affordance === "list") {
+          dialog.push(openOperatorEntityList({ kind: aff.kind }))
+          return
+        }
+        const entry = entriesById().get(aff.commandId)
+        if (entry) onSelectSetting(entry)
+      },
     }
   }
 
@@ -398,11 +419,13 @@ export function DialogOperatorDomainPanel(props: { domain: string }) {
       // Domain screen = domain-implicit surface: the row title is the action-only
       // verb label ("Status", "Endpoint"), never the domain-qualified entry.title
       // ("Telemetry status") which is reserved for domain-explicit surfaces (FR3).
+      // No kind footer badge — the section header (View/Configure) carries the kind;
+      // the availability marker lives in the subtitle only when not fully available
+      // (FR3). The dotted id is secondary only when it fits without truncation.
       title: item.label,
       description: item.subtitle,
-      category: item.section === "view" ? "View" : "Settings",
+      category: item.section === "view" ? "View" : "Configure",
       value: item.id,
-      footer: verbFooter(item),
       onSelect: () => {
         if (!entry) return
         if (item.section === "view") onSelectView(entry)
@@ -411,34 +434,48 @@ export function DialogOperatorDomainPanel(props: { domain: string }) {
     }
   }
 
-  // Controls (toggles + tri-state) first, then plain settings, then the read-only
-  // views. Depends on `status()` so every badge is live after a refetch (FR6).
-  const options = createMemo<DialogSelectOption<string>[]>(() => [
+  // The Configure block: entity-first affordances (FR5), then controls, then plain
+  // settings. The View block: the read-only verbs. Section order is centralised in
+  // `operatorSectionOrder` (FR4) — Configure leads View for an editable domain, a
+  // pure read-only domain keeps View leading. Depends on `status()` so every badge
+  // is live after a refetch (FR6).
+  const configureBlock = createMemo<DialogSelectOption<string>[]>(() => [
+    ...affordances().map(affordanceOption),
     ...controls().toggles.map(toggleOption),
     ...controls().tristates.map(triStateOption),
-    ...entityKinds().map(entityKindOption),
     ...settings().map(verbOption),
-    ...panel().view.map(verbOption),
   ])
+  const viewBlock = createMemo<DialogSelectOption<string>[]>(() => panel().view.map(verbOption))
+  const blockFor = (kind: OperatorVerbSection): DialogSelectOption<string>[] =>
+    kind === "configure" ? configureBlock() : viewBlock()
+  const options = createMemo<DialogSelectOption<string>[]>(() =>
+    operatorSectionOrder(props.domain).flatMap(blockFor),
+  )
 
   return (
-    <box flexDirection="column" flexGrow={1} gap={1}>
-      {/* Inline status section on top of every domain screen (FR4, FR5). */}
-      <OperatorStatusSection rich={rich} status={status} />
-      <DialogSelect
-        title={`Operator · ${panel().label}`}
-        options={options()}
-        emptyView={
-          <box paddingLeft={2} paddingRight={2}>
-            <text fg={theme.textMuted}>No operator commands for this domain</text>
-          </box>
-        }
-        footerHints={[
-          { title: "esc", label: "back", side: "right" },
-          { title: "enter", label: "run", side: "right" },
-        ]}
-      />
-    </box>
+    <DialogSelect
+      title={`Operator · ${panel().label}`}
+      // The inline status renders inside the header slot, below the title and above
+      // the search — so the panel reads header → status → search → action list (FR1).
+      titleView={
+        <box flexDirection="column" gap={1} flexGrow={1}>
+          <text fg={theme.text} attributes={TextAttributes.BOLD}>
+            {`Operator · ${panel().label}`}
+          </text>
+          <OperatorStatusSection rich={rich} status={status} />
+        </box>
+      }
+      options={options()}
+      emptyView={
+        <box paddingLeft={2} paddingRight={2}>
+          <text fg={theme.textMuted}>No operator commands for this domain</text>
+        </box>
+      }
+      footerHints={[
+        { title: "esc", label: "back", side: "right" },
+        { title: "enter", label: "run", side: "right" },
+      ]}
+    />
   )
 }
 

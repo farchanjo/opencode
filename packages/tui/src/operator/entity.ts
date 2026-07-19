@@ -270,6 +270,60 @@ export function entityCreateAvailability(kind: OperatorEntityKind): OperatorVerb
   return createId ? entityAvailability(createId) : "unavailable"
 }
 
+/** The kind of Configure affordance an entity domain leads with (Feature 016 FR5). */
+export type OperatorAffordanceKind = "create" | "list"
+
+/**
+ * One entity-first Configure affordance surfaced at the head of a domain screen's
+ * Configure section (Feature 016 FR5): a `create` action opening the existing
+ * Feature 015 create flow, or a `list` opening the existing list→item CRUD screen.
+ * Each carries the SAME canonical command id and per-verb availability as slash/CLI
+ * (FR6) — no new dispatch path.
+ */
+export interface OperatorConfigureAffordance {
+  readonly affordance: OperatorAffordanceKind
+  readonly kind: OperatorEntityKind
+  readonly title: string
+  readonly commandId: string
+  readonly availability: OperatorVerbAvailability
+}
+
+/** Human title of the create affordance per kind (Feature 016 FR5). */
+const CREATE_TITLE: Readonly<Record<OperatorEntityKind, string>> = {
+  job: "Create job",
+  provider: "Add provider",
+  model: "Add model",
+  mcp_server: "Add server",
+}
+
+/**
+ * The entity domain's leading Configure affordances (Feature 016 FR5): the primary
+ * kind's create action first, then a list row per managed kind, replacing the
+ * single generic `Manage <collection>` row. `mcp` → `Add server` + `Servers`;
+ * `jobs` → `Create job` + `Jobs`; `semantic` → `Add provider` + `Providers` +
+ * `Models`. A non-collection domain yields `[]`.
+ */
+export function operatorEntityAffordances(domain: string): readonly OperatorConfigureAffordance[] {
+  const kinds = listOperatorEntityKinds(domain)
+  if (kinds.length === 0) return []
+  const affordances: OperatorConfigureAffordance[] = []
+  const primaryCreateId = ENTITY_SPECS[kinds[0]].createId
+  if (primaryCreateId) {
+    affordances.push({
+      affordance: "create",
+      kind: kinds[0],
+      title: CREATE_TITLE[kinds[0]],
+      commandId: primaryCreateId,
+      availability: entityAvailability(primaryCreateId),
+    })
+  }
+  for (const kind of kinds) {
+    const spec = ENTITY_SPECS[kind]
+    affordances.push({ affordance: "list", kind, title: spec.title, commandId: spec.listRead, availability: "available" })
+  }
+  return affordances
+}
+
 /**
  * The Configure verb ids a domain's entity screens own (create + toggle + item
  * actions), so the domain panel drops them from its plain settings list and never
