@@ -81,7 +81,12 @@ describe("v2 pty HttpApi", () => {
     expect(body.data.title).toBe("v2")
 
     // The canonical surface keeps exited sessions observable with their exit code.
-    const deadline = Date.now() + 5_000
+    // The child exits unconditionally, so the `exited` event is guaranteed to
+    // arrive; the poll deadline only guards a genuine hang. Size it as a
+    // fraction (2/3) of the governing `--timeout 30000` suite budget instead of
+    // an arbitrary 5s, so event-loop starvation under parallel contention no
+    // longer trips the poll before the exit event is delivered.
+    const deadline = Date.now() + 20_000
     let info: { status: string; exitCode?: number } | undefined
     while (Date.now() < deadline) {
       const found = await request(`/api/pty/${body.data.id}`, tmp.path)
