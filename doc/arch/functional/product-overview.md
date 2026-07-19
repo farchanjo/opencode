@@ -149,6 +149,18 @@ Acceptance criteria live as prioritized scenarios in each feature `spec.md`.
   false-success `orphaned` and unknown-key `rejected` negatives pinned as honest
   outcomes and the single `mutateAuthority` CAS commit — the Feature 007 parity
   invariant is preserved).
+- **Operator CRUD domain screen lifecycle** — the Feature 015 redesign of the
+  operator TUI into true per-domain CRUD screens (one Operator palette entry with
+  the flat suggested-row spread retired, an inline status section rendered on open
+  instead of a toast, on/off toggle rows with a state badge, a tri-state routing
+  picker, pre-filled edit modals and structural view modals, and true entity CRUD
+  for jobs/semantic/mcp) is modeled in
+  [operator-crud-screen statechart](../statecharts/operator-crud-screen.md)
+  (loading → screen → { view_modal | edit_modal → dispatching | toggling |
+  tristate_picker | entity_list → entity_item } → refetch, with the honest
+  typed-gap affordance surfaced, status refreshed after every mutation, and the
+  same `executeOperatorCommand`/`OperatorClient` loopback dispatch path — the
+  Feature 007 parity invariant is preserved).
 
 ## Phase 2 deferred (explicit)
 
