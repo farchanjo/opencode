@@ -71,8 +71,9 @@ import { createTuiApiAdapters } from "./plugin/adapters"
 import { createTuiApi } from "./plugin/api"
 import { createPluginRuntime, PluginRuntimeProvider, usePluginRuntime, type TuiPluginHost } from "./plugin/runtime"
 import { CommandPaletteDialog } from "./component/command-palette"
-import { operatorPaletteEntries, executeOperatorCommand } from "./operator/execute"
+import { operatorSuggestedEntries, executeOperatorCommand } from "./operator/execute"
 import { DialogOperatorSettingsHome } from "./operator/dialog-settings"
+import { OPERATOR_TOP_TITLE, OPERATOR_TOP_SUBTITLE } from "@opencode-ai/core/operator"
 import { useOperatorSlash } from "./context/operator-slash"
 import {
   COMMAND_PALETTE_COMMAND,
@@ -964,7 +965,8 @@ function App(props: { onSnapshot?: () => Promise<string[]>; pluginHost: TuiPlugi
       },
       {
         name: "operator.settings",
-        title: "Operator settings",
+        title: OPERATOR_TOP_TITLE,
+        desc: OPERATOR_TOP_SUBTITLE,
         category: "Operator",
         suggested: true,
         slashName: "op-settings",
@@ -972,8 +974,11 @@ function App(props: { onSnapshot?: () => Promise<string[]>; pluginHost: TuiPlugi
           dialog.replace(() => <DialogOperatorSettingsHome />)
         },
       },
-      // T035: dynamic palette entries from reserved catalog (same IDs as CLI/API/slash)
-      ...operatorPaletteEntries().map((entry) => ({
+      // Feature 011 (FR1): the flat per-verb wall is gone — it moved under the
+      // grouped Operator entry. Only the curated read-only suggest subset
+      // (status/show) stays as top-level quick access, dispatching the same
+      // command ids through executeOperatorCommand (FR8).
+      ...operatorSuggestedEntries().map((entry) => ({
         name: entry.commandName,
         title: entry.title,
         desc: entry.description,
