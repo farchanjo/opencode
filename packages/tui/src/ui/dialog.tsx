@@ -177,6 +177,17 @@ function init() {
         onClose,
       })
     },
+    // Programmatic single-level unwind (Feature 015 T012, FR9): the complement to
+    // `push`, mirroring the escape binding so a modal can close-on-success back to
+    // the screen beneath instead of `clear`ing the whole operator stack. Runs the
+    // top level's onClose exactly once, like escape does.
+    pop() {
+      if (store.stack.length === 0) return
+      const current = store.stack.at(-1)
+      current?.onClose?.()
+      setStore("stack", store.stack.slice(0, -1))
+      refocus()
+    },
     get stack() {
       return store.stack
     },

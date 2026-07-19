@@ -32,7 +32,7 @@ export type OperatorFormProps = {
   readonly sessionId?: string | null
   readonly dialog: DialogContext
   readonly toast: OperatorToast
-  /** Optional title override (defaults to the verb's centralised `Configure: …` copy). */
+  /** Optional title override (defaults to the verb's centralised `{Domain} {action}` copy). */
   readonly title?: string
   /** Optional value_picker option category label. */
   readonly category?: string
