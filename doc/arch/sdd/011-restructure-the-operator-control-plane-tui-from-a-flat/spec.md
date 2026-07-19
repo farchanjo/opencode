@@ -2,7 +2,7 @@
 id: 019f7993-5d09-75a1-892d-9c2690c85dcf
 number: 011
 slug: restructure-the-operator-control-plane-tui-from-a-flat
-status: analyzed
+status: implemented
 created_at: 2026-07-19T08:52:08.586391Z
 ---
 # Feature Specification: Restructure the Operator Control Plane TUI From a Flat List

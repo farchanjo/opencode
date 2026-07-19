@@ -252,6 +252,22 @@ None required beyond this plan. The navigation ValueObjects
 (`doc/arch/statecharts/operator-menu-navigation.md`) already carry the data model;
 no `research.md`, `data-model.md`, `contracts/`, or `quickstart.md` is added.
 
+## Implementation notes (recorded during implement)
+
+- **Navigation API used `replace`, not `push`.** The in-scope Dialog API
+  (`packages/tui/src/ui/dialog.tsx`, out of the Feature 011 guard scope) exposes
+  only `replace`/`clear`/`stack`, not a `push` primitive. `DialogOperatorSettingsHome`
+  and `DialogOperatorDomainPanel` route via `ctx.replace`, matching the API the
+  prior flat-list code already used. Adding a real `push` is a scope decision for
+  a future feature, not a Feature 011 change (T008 evidence).
+- **Read panels render honest-empty; no structured signal source exists yet.**
+  `OperatorSlashPort` returns display strings only — there is no typed result
+  signal reachable from the five read panels (`jobs`/`output`/`langlock`/
+  `semantic`/`mcp`) today. `DialogOperatorReadPanel` wires each panel with
+  `signal` omitted, so panels fall back to their documented `EMPTY_*_SIGNAL`
+  baseline (FR6 honest-empty behavior, not a stub). Wiring a real signal source
+  is out of scope for this presentation-only feature (T013 evidence).
+
 ## Validation checklist (plan complete when)
 
 - [x] FR1-FR8 mapped to ordered phases
