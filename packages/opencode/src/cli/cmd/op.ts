@@ -84,7 +84,9 @@ export const OpCommand = effectCmd({
       .example(
         "opencode op semantic embedding cutover --expected-version=- --idempotency-key k1 --yes",
         "non-TTY create-path mutation (local operator)",
-      ),
+      )
+      .example("opencode op mcp server list", "list configured MCP servers (human)")
+      .example("opencode op mcp server list --json", "list configured MCP servers (machine envelope)"),
   directory: (args) => (args as OpArgs).directory ?? process.cwd(),
   handler: Effect.fn("Cli.op")(function* (raw) {
     const args = raw as OpArgs

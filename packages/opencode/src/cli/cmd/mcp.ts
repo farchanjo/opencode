@@ -1,3 +1,25 @@
+/**
+ * `opencode mcp <verb>` — legacy standalone MCP CLI (add/list/auth/logout/debug).
+ * Feature 008 / T038 (S25): kept in place as the compatibility shim (C27, FR48,
+ * FR49, FR50) it always was — every handler here already calls `MCP.Service`
+ * directly (see `listState`/`authState`/`McpAuthCommand`/`McpLogoutCommand`
+ * below), the same reworked application host the Feature 007 operator plane
+ * binds. This file adds NO new hardcoded verb parsing for the operator plane.
+ *
+ * `opencode op mcp server|auth|resource|logging|experimental|extension <op>`
+ * dispatches through the generic `opencode op` command (`./op.ts`) — the
+ * registry-generated `cli` alias (`generateAliases` in
+ * `../../operator/application/registry.ts`) resolves `["mcp", <group>, <op>]`
+ * to the reserved `mcp.<group>.<op>` id and runs it through the SAME Feature
+ * 007 dispatcher/registry every other domain (`langlock`, `semantic`, …)
+ * uses; there is no divergent verb table to keep in sync (FR48, FR49, C25).
+ * Both entry points therefore share one adapter (`MCP.Service`) and can never
+ * fork: the legacy path calls it directly for reads/OAuth, and the operator
+ * plane's `mcp.*` domain port (`../../operator/mcp/**`) is composed over the
+ * same host at the composition root (`../../operator/stack-live.ts`). See
+ * `packages/opencode/test/mcp/cli-op-mcp.test.ts` for the coexistence and
+ * parity assertions.
+ */
 import { cmd } from "./cmd"
 import { ConfigV1 } from "@opencode-ai/core/v1/config/config"
 import { effectCmd } from "../effect-cmd"
