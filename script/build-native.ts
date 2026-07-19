@@ -12,6 +12,22 @@
  * Honest provenance (C17): if `cargo` is unavailable, this script reports the typed
  * consequence (native stays absent, the TypeScript fallback serves every tool) and
  * exits non-zero without faking a green build.
+ *
+ * CI note (T021, AC18). CI builds both `cdylib` crates on macOS AND Linux runners and:
+ *   - runs `cargo fmt --all --check` + `cargo clippy --workspace --all-targets
+ *     --all-features -D warnings` (Rust hygiene gates);
+ *   - enforces the toolchain pin from `rust-toolchain.toml` (channel 1.83.0) — the
+ *     build fails on channel drift or on a resolved dependency raising the MSRV above
+ *     the pinned floor;
+ *   - runs the parity suite, the fallback byte-identity suite, and the leak/panic
+ *     stress suite (the stress + panic-containment probes build the debug-featured
+ *     dylib via `--features alloc-stats,panic-probe`);
+ *   - copies the release artifacts into the gitignored bundled dir via this script.
+ * This is never wired into install: Bun `postinstall` does not build Rust. On a runner
+ * that cannot build Rust, the honest consequence is recorded — the exercised platforms
+ * ship the native artifact, every other platform (and win32 always) takes the
+ * byte-identical TypeScript fallback (FR19). Artifact absence is a fallback, never a
+ * failure; a green build is never faked (C17).
  */
 
 import { spawnSync } from "node:child_process"
