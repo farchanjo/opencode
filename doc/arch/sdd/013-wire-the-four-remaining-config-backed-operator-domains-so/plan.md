@@ -258,10 +258,51 @@ None required beyond this plan. The domain ValueObjects
 - [x] TUI availability flipped to persists_today (FR12)
 - [x] specScopeGlobs narrow; only the 3 non-telemetry protocol modules genuinely new
 - [x] Security: SecretRef-only headers, input validation, no fabricated success, parity
-- [ ] `tasks.md` generated and filled
-- [ ] `speckit analyze` clean of new Critical/High/Medium blockers
-- [ ] `speckit validate --json` green (0 new findings on Feature 013 artifacts)
+- [x] `tasks.md` generated and filled
+- [x] `speckit analyze` clean of new Critical/High/Medium blockers
+- [x] `speckit validate --json` green (0 new findings on Feature 013 artifacts)
 
 ## Implementation notes (recorded during implement)
 
-- _(reserved — filled during the implement phase.)_
+- 2026-07-19 — T001-T020 landed per plan: four protocol command modules
+  (`packages/protocol/src/{telemetry,smart,budget,pools}/`) mirroring
+  `protocol/src/langlock/*`; four domain stacks
+  (`packages/opencode/src/operator/{telemetry,smart,budget,pools}/`) replicating
+  the langlock file set over the reused effective-config seams (telemetry over
+  `resolveEffectiveTelemetryConfig`, smart/budget/pools as projections of
+  `RoutingConfig`); wiring into `stack-live.ts` with the four `STATUS_SHOW_IDS`
+  shadow entries dropped; `OPERATOR_PERSISTING_DOMAINS` flipped to the nine
+  domains (FR12); a real bounded OTLP reachability probe for `telemetry.test`
+  (FR6, FR10). No catalog id/version change; Feature 007 stayed the sole
+  registration authority (FR11).
+- 2026-07-19 — **Fix round (adversarial review):** the four domains' mutating
+  verbs originally self-committed a CAS write inside the backend and returned a
+  `query` result, which the Feature 007 dispatcher's `mutates`-descriptor gate
+  rejects — a fabricated `invalid_argument` failure with a real persisted side
+  effect. Converted the four domains' write verbs to the canonical
+  `mutation_plan` contract (`OperatorMutationPlan` added to
+  `application/handler.ts`) so `mutateAuthority` owns the single committed CAS
+  write + FR7 audit correlation and the backend never self-commits. Retired the
+  per-domain `createXPort`/local `auditId` layer accordingly. Full detail in
+  `tasks.md` "Fix round — end-to-end mutation commit path".
+- 2026-07-19 — **Honest residuals (pre-existing, out of Feature 013 scope):**
+  (1) `preflightMutation` (`tui-port.ts`) reads the CAS version under
+  `authorityKeyForCommandId(id)` = the domain name, while these domains write
+  under the telemetry/routing authorities; a repeated TUI mutation that
+  re-preflights an already-configured document can honestly reject with
+  `conflict` (no phantom write) — a shared control-plane concern also affecting
+  langlock/jobs. (2) The payload-carrying Configure verbs
+  (`telemetry.configure`, `budget.set`, `pools.set`) persist correctly via
+  CLI/HTTP/SDK but the grouped TUI has no multi-field form for them yet
+  (`OPERATOR_INPUT_MODES` unchanged); deferred rather than faked with a
+  misleading single-field affordance. (3) `telemetry.test`'s `misconfigured`
+  outcome stays a defensive branch (CUE `#ProbeOutcome` + statechart) that is
+  not reachable under the shipped `Telemetry.EndpointUrl` schema, which
+  pattern-guards every persisted endpoint to a valid `http(s)://` form.
+- 2026-07-19 — Final: `speckit analyze` → 13 features consistent, 0 ADR
+  overlaps; `speckit validate --json` → `ok:true`, `waivedCount:4` (only the 4
+  pre-existing waived `hygiene.empty-file` entries, no new Feature 013
+  findings). Test totals: opencode `test/operator/` 338 pass / 0 fail (33
+  files); core+tui operator 346 pass / 0 fail; dispatcher-adjacent suites 104
+  pass / 0 fail; `bunx tsgo --noEmit` 0 errors; `oxlint` 0 errors (12
+  pre-existing langlock-idiom warnings, unchanged).

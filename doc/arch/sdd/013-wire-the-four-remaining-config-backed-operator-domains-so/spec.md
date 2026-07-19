@@ -2,7 +2,7 @@
 id: 019f7a3b-c0e5-7093-944a-c234532f7016
 number: 013
 slug: wire-the-four-remaining-config-backed-operator-domains-so
-status: analyzed
+status: implemented
 created_at: 2026-07-19T11:56:04.197513Z
 ---
 # Feature Specification: Wire the Four Remaining Config-Backed Operator Domains
