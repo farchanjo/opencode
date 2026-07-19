@@ -1,10 +1,10 @@
 //! opencode-tools-ffi — native filesystem/text tool entry points (Feature 010).
 //!
 //! Phase 2 slices (T004, T005) implement the first two entry points — `oc_read`
-//! and `oc_grep` — each wrapping its body in [`opencode_ffi_abi::protect`] so any
-//! panic becomes the `internal_panic` envelope and never crosses the boundary. The
-//! remaining tools (`oc_write`, `oc_edit`, `oc_apply_patch`, `oc_glob`) land in the
-//! Phase 3 slices (T009–T012).
+//! and `oc_grep` — and Phase 3 (T009–T012) adds `oc_write`, `oc_edit`,
+//! `oc_apply_patch`, and `oc_glob`. Every entry point wraps its body in
+//! [`opencode_ffi_abi::protect`] so any panic becomes the `internal_panic` envelope
+//! and never crosses the boundary.
 //!
 //! This crate also re-exports the shared, panic-safe ABI handshake surface
 //! (`oc_free`, `oc_abi_version`, `oc_version`, and the debug-gated
@@ -16,8 +16,12 @@ use std::ffi::c_char;
 use opencode_ffi_abi::{protect, FfiError, FfiErrorCode};
 use serde::de::DeserializeOwned;
 
+mod edit;
+mod glob;
 mod grep;
+mod patch;
 mod read;
+mod write;
 
 opencode_ffi_abi::export_ffi_abi!();
 
@@ -63,6 +67,56 @@ pub unsafe extern "C" fn oc_grep(req_ptr: *const u8, req_len: usize) -> *mut c_c
     protect(move || {
         let request: grep::GrepRequest = parse_request(req_ptr, req_len)?;
         grep::grep(request)
+    })
+}
+
+/// `oc_write` — atomic create/overwrite at parity with `write.ts` (FR2, AC3).
+///
+/// # Safety
+/// See [`parse_request`]: `req_ptr`/`req_len` describe a caller-owned request buffer.
+#[no_mangle]
+pub unsafe extern "C" fn oc_write(req_ptr: *const u8, req_len: usize) -> *mut c_char {
+    protect(move || {
+        let request: write::WriteRequest = parse_request(req_ptr, req_len)?;
+        write::write(request)
+    })
+}
+
+/// `oc_edit` — exact string replacement with uniqueness at parity with `edit.ts`
+/// (FR3, AC4).
+///
+/// # Safety
+/// See [`parse_request`]: `req_ptr`/`req_len` describe a caller-owned request buffer.
+#[no_mangle]
+pub unsafe extern "C" fn oc_edit(req_ptr: *const u8, req_len: usize) -> *mut c_char {
+    protect(move || {
+        let request: edit::EditRequest = parse_request(req_ptr, req_len)?;
+        edit::edit(request)
+    })
+}
+
+/// `oc_apply_patch` — multi-hunk apply with all-or-nothing context matching at
+/// parity with `apply-patch.ts` (FR4, AC5).
+///
+/// # Safety
+/// See [`parse_request`]: `req_ptr`/`req_len` describe a caller-owned request buffer.
+#[no_mangle]
+pub unsafe extern "C" fn oc_apply_patch(req_ptr: *const u8, req_len: usize) -> *mut c_char {
+    protect(move || {
+        let request: patch::ApplyPatchRequest = parse_request(req_ptr, req_len)?;
+        patch::apply_patch(request)
+    })
+}
+
+/// `oc_glob` — `.gitignore`-aware, mtime-sorted file-pattern search (FR5, AC6).
+///
+/// # Safety
+/// See [`parse_request`]: `req_ptr`/`req_len` describe a caller-owned request buffer.
+#[no_mangle]
+pub unsafe extern "C" fn oc_glob(req_ptr: *const u8, req_len: usize) -> *mut c_char {
+    protect(move || {
+        let request: glob::GlobRequest = parse_request(req_ptr, req_len)?;
+        glob::glob(request)
     })
 }
 
