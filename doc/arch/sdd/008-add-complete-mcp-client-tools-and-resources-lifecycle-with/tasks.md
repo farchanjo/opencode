@@ -480,7 +480,7 @@ enforced (see the Traceability reconciliation note).
   FR48, C3, C8, C16, C25, C26). Acceptance: `bun test packages/schema` and `bun test
   packages/protocol` green with the reconciled vocabulary pinned across CUE, the schema modules,
   the protocol mirror, and `data-model.md`.
-- [ ] T042 [S26] Add integration tests under `packages/opencode/test/mcp/**` driving the reworked
+- [x] T042 [S26] Add integration tests under `packages/opencode/test/mcp/**` driving the reworked
   SDK client against a **fake MCP server per transport** — Streamable HTTP (connect/negotiate/
   record, session resume with `Last-Event-ID`), legacy SSE (deprecation-labeled fallback), and
   stdio (start/stop child cleanup) — covering `tools/list` pagination, `list_changed` refresh,
@@ -489,7 +489,7 @@ enforced (see the Traceability reconciliation note).
   the canonical-adapter parity of top-level vs code-mode (FR7, FR10, FR11, FR14, FR27, FR29, FR31,
   C2, C4, C7, C13, C14, AC1, AC2, AC3, AC4, AC5, AC12, AC14, AC23, AC25). Acceptance:
   `bun test packages/opencode` green against the fake servers per transport.
-- [ ] T043 [S26] Add fault-injection tests under `packages/opencode/test/mcp/**` driving the
+- [x] T043 [S26] Add fault-injection tests under `packages/opencode/test/mcp/**` driving the
   lifecycle-fault matrix (connect timeout, `needs_auth`, `needs_client_registration`, mid-call
   disconnect, `mcp_unavailable` typed gap, capability lost on reconnect → session continues), the
   pagination edges (duplicate/non-advancing cursor, max-page breach fail-closed, empty catalog,
@@ -501,7 +501,7 @@ enforced (see the Traceability reconciliation note).
   FR24, FR30, C4, C8, C9, C22, AC4, AC7, AC9, AC10, AC11, AC12, AC16, AC31). Acceptance:
   `bun test packages/opencode` green with every lifecycle, pagination, storm, reconnect, and
   cancel point asserted.
-- [ ] T044 [S26] Add spool-integration and security/privacy tests under
+- [x] T044 [S26] Add spool-integration and security/privacy tests under
   `packages/opencode/test/mcp/**` through the Feature 005 sandbox and a Permission sandbox: an
   OutputGroup per call/read with a bounded preview + OutputRef never a path, base64/data-URL
   decode-to-spool under MIME/size caps with the 10MB migration baseline and the post-parse spill
@@ -512,7 +512,7 @@ enforced (see the Traceability reconciliation note).
   FR27, FR32, FR33, FR34, FR36, FR51, FR52, FR54, FR55, FR56, C12, C15, C16, C17, C24, C26, AC6,
   AC8, AC13, AC20, AC21, AC22, AC27). Acceptance: `bun test packages/opencode` green with the
   spool, secret, SSRF, trust, and content-free-telemetry points asserted.
-- [ ] T045 [S26] Add contract and consumer-compatibility tests through the Feature 007 sandbox
+- [x] T045 [S26] Add contract and consumer-compatibility tests through the Feature 007 sandbox
   covering the **30** `mcp.*` IDs versus the existing reserved catalog (already at 1.3.0) with
   reserved-id collision rejection and zero admin-time LLM tokens/transcript (AC15), the operator-
   vs-runtime plane separation (an LLM attempt on `mcp.resource.admin.*` or any `mcp.*` id denied,
