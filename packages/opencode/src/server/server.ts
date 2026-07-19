@@ -6,6 +6,7 @@ import { ConfigProvider, Context, Effect, Exit, Layer, Scope } from "effect"
 import { HttpRouter, HttpServer } from "effect/unstable/http"
 import { OpenApi } from "effect/unstable/httpapi"
 import { createServer } from "node:http"
+import net from "node:net"
 import { installOperatorNodeHttpIntercept } from "@/operator/http/client-ip"
 import { MDNS } from "./mdns"
 import { HttpApiApp } from "./routes/instance/httpapi/server"
@@ -171,11 +172,32 @@ function listenerLayer(opts: ListenOptions, port: number) {
   )
 }
 
+// Probe-bind the wildcard address to detect a foreign process that already
+// holds the port. A plain loopback bind spuriously succeeds under SO_REUSEADDR
+// even when another process owns `0.0.0.0:<port>`, so the probe must widen to
+// `0.0.0.0` to observe the conflict. The probe closes immediately; the real
+// listener keeps its configured `opts.hostname` bind.
+function isWildcardPortFree(port: number) {
+  return new Promise<boolean>((resolve) => {
+    const probe = net.createServer()
+    probe.once("error", () => resolve(false))
+    probe.once("listening", () => probe.close(() => resolve(true)))
+    probe.listen(port, "0.0.0.0")
+  })
+}
+
 function startWithPortFallback(opts: ListenOptions) {
   if (opts.port !== 0) return startListener(opts, opts.port)
   // Match the legacy listener port-resolution behavior: explicit `0` prefers
-  // 4096 first, then any free port.
-  return startListener(opts, 4096).pipe(Effect.catch(() => startListener(opts, 0)))
+  // 4096 first, then any free port. Only prefer 4096 when it is genuinely free
+  // at the wildcard level; a foreign `0.0.0.0:4096` occupant must not be
+  // shadowed by a spurious loopback bind. The retained `Effect.catch` still
+  // covers a loopback-specific occupant and the probe/bind TOCTOU window.
+  return Effect.promise(() => isWildcardPortFree(4096)).pipe(
+    Effect.flatMap((free) =>
+      free ? startListener(opts, 4096).pipe(Effect.catch(() => startListener(opts, 0))) : startListener(opts, 0),
+    ),
+  )
 }
 
 function startListener(opts: ListenOptions, port: number) {

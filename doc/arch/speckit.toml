@@ -98,6 +98,20 @@ specScopeGlobs = [
   "packages/tui/src/component/prompt/cwd.ts",
   "packages/opencode/test/config/plugin.test.ts",
 
+  # Repository-health: server listener robustness fix. startWithPortFallback
+  # preferred port 4096 via a spurious loopback bind that succeeds under
+  # SO_REUSEADDR even when a foreign process holds the 0.0.0.0:4096 wildcard,
+  # so opencode claimed a port it did not exclusively own on loopback; and two
+  # PTY route tests carried fixed poll deadlines that flaked under CPU
+  # contention. Narrow, file-exact globs — remove once the corpus is green.
+  # The pre-commit hook cleared inherited GIT_INDEX_FILE/GIT_DIR/GIT_WORK_TREE so
+  # its isolated `git worktree add` validation no longer aborts on direct fcustom
+  # commits (relative `.git/index` broke inside the new worktree).
+  "packages/opencode/src/server/server.ts",
+  "packages/opencode/test/server/httpapi-listen.test.ts",
+  "packages/opencode/test/server/httpapi-v2-pty.test.ts",
+  ".husky/pre-commit",
+
   # Feature 001 implement-phase paths (T001-T039): schema/protocol modules,
   # their test suites, CLI Spec-tree registration, and observability tests.
   "packages/schema/src/routing/**",

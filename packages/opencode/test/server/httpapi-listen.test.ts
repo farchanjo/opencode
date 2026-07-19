@@ -452,7 +452,10 @@ function isPortFree(port: number) {
     const probe = net.createServer()
     probe.once("error", () => resolve(false))
     probe.once("listening", () => probe.close(() => resolve(true)))
-    probe.listen(port, "127.0.0.1")
+    // Widen to the wildcard address so a foreign `0.0.0.0:<port>` occupant is
+    // observed. A loopback-only probe spuriously succeeds under SO_REUSEADDR
+    // and would report the port free while production correctly falls back.
+    probe.listen(port, "0.0.0.0")
   })
 }
 
