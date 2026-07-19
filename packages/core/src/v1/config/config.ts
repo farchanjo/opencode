@@ -1,5 +1,6 @@
 export * as ConfigV1 from "./config"
 
+import { ToolConfig } from "@opencode-ai/schema/semantic/tool-config"
 import { Schema } from "effect"
 import { NonNegativeInt, PositiveInt, type DeepMutable } from "../../schema"
 import { ConfigExperimental } from "../../config/experimental"
@@ -192,6 +193,10 @@ export const Info = Schema.Struct({
       offline: Schema.optional(Schema.Boolean).annotate({
         description:
           "When true, operator treats connectivity as offline (network ops → unavailable). Override with OPENCODE_CONNECTIVITY/OPENCODE_OFFLINE.",
+      }),
+      tool_search: Schema.optional(ToolConfig.ToolSearchConfig).annotate({
+        description:
+          "Feature 009 per-surface semantic tool-search config. Absent, or a surface absent from 'surfaces', keeps the full-set passthrough floor (no narrowing, identical to today).",
       }),
     }),
   ),

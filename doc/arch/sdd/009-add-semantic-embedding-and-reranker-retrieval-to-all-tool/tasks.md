@@ -191,7 +191,7 @@ path.
 
 ### Configuration (Phase 4)
 
-- [ ] T012 [S8] Extend `packages/core/src/config/experimental.ts` with the per-surface
+- [x] T012 [S8] Extend `packages/core/src/config/experimental.ts` with the per-surface
   tool-search config (enable flag per native/mcp/code-mode, `retrieval_top_k`, `rerank_top_k`,
   result bound, retrieval latency budget, cache TTL, per-surface fail-closed switch) and thread
   it through `packages/core/src/v1/config/config.ts` and the `ToolSearchConfigPort.get` read-only

@@ -125,6 +125,13 @@ export const LatencyBudgetMs = Schema.Number.annotate({ identifier: "SemanticVal
 )
 export type LatencyBudgetMs = typeof LatencyBudgetMs.Type
 
+// CacheTtlMs is the Feature 009 bounded safety TTL; version/hash invalidation leads it (FR20, FR21, C8).
+export const CacheTtlMs = Schema.Number.annotate({ identifier: "SemanticValues.CacheTtlMs" }).check(
+  Schema.isInt(),
+  Schema.isGreaterThanOrEqualTo(1),
+)
+export type CacheTtlMs = typeof CacheTtlMs.Type
+
 // --- score-values.cue: REAL-valued score/component/confidence domain ---------
 
 // Score is a normalized composite retrieval score; provenance is carried alongside (FR22).

@@ -106,6 +106,10 @@ import {
   ToolParameter as SemanticToolParameter,
   ToolParameterProjection as SemanticToolParameterProjection,
 } from "../src/semantic/tool-doc"
+import {
+  ToolSearchConfig as SemanticToolSearchConfig,
+  ToolSurfaceConfig as SemanticToolSurfaceConfig,
+} from "../src/semantic/tool-config"
 import { Values as SemanticValues } from "../src/semantic/values"
 import { Capability as McpCapability } from "../src/mcp/capability"
 import { Collections as McpCollections } from "../src/mcp/collections"
@@ -760,6 +764,7 @@ describe("contract hygiene", () => {
       SemanticValues.BatchSize,
       SemanticValues.VectorCount,
       SemanticValues.LatencyBudgetMs,
+      SemanticValues.CacheTtlMs,
       SemanticValues.Score,
       SemanticValues.RerankScore,
       SemanticValues.DenseScore,
@@ -857,6 +862,8 @@ describe("contract hygiene", () => {
       SemanticToolParameter,
       SemanticToolParameterProjection,
       SemanticToolDoc,
+      SemanticToolSurfaceConfig,
+      SemanticToolSearchConfig,
       SemanticProfile.QueryFingerprint,
       SemanticProfile.TaskProfile,
       SemanticRetrieval.RetrievalRequest,
