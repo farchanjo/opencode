@@ -2,7 +2,7 @@
 id: 019f79f2-65a6-7d22-a33b-7a0f1668cc78
 number: 012
 slug: expose-the-structured-operator-command-result-through-the
-status: analyzed
+status: implemented
 created_at: 2026-07-19T10:35:56.710724Z
 ---
 # Feature Specification: Expose the Structured Operator Command Result Through the TUI
@@ -27,11 +27,22 @@ panels consume) into it. The slash interceptor already returns both halves:
 `{ result: CommandResult; display: OperatorSlashDisplay }`
 (`packages/opencode/src/operator/adapters/inbound/slash.ts:51-52`).
 
-The structured half is **dropped at one seam**. The inbound TUI adapter
-`packages/opencode/src/operator/adapters/inbound/tui-port.ts:114-135` builds the
-outbound object from the **display fields plus `currentVersion` only**;
-`result.result.effective` is never forwarded. Everything downstream is therefore
-display-only:
+The structured half is **dropped at every TUI-facing inbound seam**. There are
+**three** inbound slash-port adapters that build the outbound object from the
+**display fields plus `currentVersion` only** — `result.result.effective` is never
+forwarded:
+
+- `packages/opencode/src/operator/adapters/inbound/tui-port.ts` — the local
+  in-process interceptor path (test/embedded stack).
+- `packages/opencode/src/operator/adapters/inbound/rpc-slash-port.ts` — the
+  DEFAULT `opencode tui` path via `wireLocalOperatorSlashPort` →
+  `createWorkerRpcSlashPort` (worker RPC).
+- `packages/opencode/src/operator/adapters/inbound/http-slash-port.ts` — the
+  remote/attach path via `createHttpOperatorSlashPort` (Operator SDK/HTTP).
+
+All three parse the typed `CommandResult` (including its `effective`) and then
+discard the structured half in their `displayHandled` helpers, so everything
+downstream is display-only:
 
 1. **Context is display-only.** `OperatorSlashHandled`
    (`packages/tui/src/context/operator-slash.tsx:22-28`) exposes `display`,
@@ -100,15 +111,19 @@ Priority uses P1 (must have), P2 (should have), and P3 (could have).
 
 ## Functional Requirements
 
-1. **Forward the structured result at the inbound seam (FR1).** The
-   `TuiOperatorSlashPort.tryHandle` return
-   (`packages/opencode/src/operator/adapters/inbound/tui-port.ts`) MUST forward
-   the typed `outcome`, the optional `effective` payload, and the `version` from
-   `result.result` alongside the existing `display` and `currentVersion` fields.
-   This is a widening of the SAME `tryHandle` return object on the SAME dispatch
-   path — no new method, route, or command name is introduced. `tui-port.ts` is
-   the inbound adapter and is the only file under
-   `packages/opencode/src/operator/**` this feature may touch.
+1. **Forward the structured result at every TUI-facing inbound seam (FR1).** The
+   `TuiOperatorSlashPort.tryHandle` return MUST forward the typed `outcome`, the
+   optional `effective` payload, and the `version` from the `CommandResult`
+   alongside the existing `display` and `currentVersion` fields. This applies to
+   **all three** inbound slash-port adapters that implement `TuiOperatorSlashPort`
+   — `tui-port.ts` (local interceptor), `rpc-slash-port.ts` (default worker-RPC
+   `opencode tui` path), and `http-slash-port.ts` (remote/attach) — with
+   byte-identical display fields preserved and identical structured semantics
+   (`outcome`; `effective` only when defined; `version ?? null`). This is a
+   widening of the SAME `tryHandle` return object on the SAME dispatch path — no
+   new method, route, or command name is introduced. These three inbound adapters
+   are the only files under `packages/opencode/src/operator/**` this feature may
+   touch.
 2. **Extend the TUI handled result (FR2).** `OperatorSlashHandled`
    (`packages/tui/src/context/operator-slash.tsx`) MUST carry an **optional**
    structured result — the typed `outcome`, an optional `effective` payload, and
@@ -132,7 +147,10 @@ Priority uses P1 (must have), P2 (should have), and P3 (could have).
    MUST feed the projected `*PanelSignal` into its panel, replacing Feature 011's
    always-omitted `signal` wiring. When the projection outcome is `empty_fallback`
    or `shape_mismatch`, the panel MUST render its documented `EMPTY_*_SIGNAL`
-   baseline. Selecting a View verb MUST dispatch no mutation.
+   baseline. Selecting a View verb MUST dispatch no mutation. The panel-mount read is
+   **auto-issued** and MUST be toast-silent (including on error/unavailable): the
+   panel's honesty is its empty state, not a toast; only user-invoked commands raise
+   toasts.
 6. **Populate entity pickers from read queries (FR6).** The entity-picker option
    loaders MUST issue the corresponding read query through the SAME
    `executeOperatorCommand` path and project its `effective` payload into picker
@@ -142,7 +160,10 @@ Priority uses P1 (must have), P2 (should have), and P3 (could have).
    read returns no `effective` payload or a typed unavailable envelope, the loader
    MUST return an empty option set and the picker MUST render its honest empty view
    (never a fabricated candidate). The option `value` is always the entity id from
-   the payload, never a command id or free-form text.
+   the payload, never a command id or free-form text. The picker-loader read is
+   **auto-issued** and MUST be toast-silent (including on the `invalid_argument`
+   returned by the process/task tree reads today): the honest empty picker is the
+   surface, not a toast.
 7. **Dialog back-stack primitive and adoption (FR7).** `packages/tui/src/ui/dialog.tsx`
    MUST expose a `push(input, onClose?)` primitive that appends a level to the
    internal stack instead of resetting it, complementing `replace`. Operator
@@ -163,7 +184,9 @@ Priority uses P1 (must have), P2 (should have), and P3 (could have).
    `OperatorClient` loopback as slash and CLI; command IDs are unchanged and no new
    dispatch path, parallel registry, or divergent command name is introduced. No
    backend behavior changes: `packages/opencode/src/operator/**` is off-limits
-   except the inbound adapter `tui-port.ts` (FR1).
+   except the three inbound TUI slash-port adapters (`tui-port.ts`,
+   `rpc-slash-port.ts`, `http-slash-port.ts`), which only widen their handled
+   return with the already-parsed structured result (FR1).
 
 ## Non-Functional Requirements
 
@@ -279,8 +302,9 @@ label is exported. Conventions live in `doc/arch/observability/observability.md`
 - Landing the `output`, `semantic`, or `mcp` read backends, or the `jobs`
   mutation backends — they stay honest-unavailable here (a later backend feature).
 - Any new dispatch path, parallel registry, or divergent command name.
-- Backend changes under `packages/opencode/src/operator/**` other than the inbound
-  adapter `tui-port.ts`.
+- Backend changes under `packages/opencode/src/operator/**` other than the three
+  inbound TUI slash-port adapters (`tui-port.ts`, `rpc-slash-port.ts`,
+  `http-slash-port.ts`) widening their handled return (FR1).
 - App/Desktop parity (Feature 007 Phase 2).
 - A new feature flag or an i18n/translation layer.
 

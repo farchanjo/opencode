@@ -12,10 +12,11 @@ Feature 007 delivered the unified native Operator Control Plane, including a typ
 domain's typed payload (the same `@opencode-ai/protocol` shapes the TUI read panels
 consume). Feature 011 restructured the TUI into grouped navigation with editable
 forms and honest availability, but could reach no structured signal: the payload is
-**dropped at one seam** (`packages/opencode/src/operator/adapters/inbound/tui-port.ts:114-135`
-forwards display fields plus `currentVersion` only), so the five read panels render
-their `EMPTY_*_SIGNAL` baseline forever and the entity pickers open with
-`NO_OPTIONS`.
+**dropped at every TUI-facing inbound seam** — all three slash-port adapters
+(`tui-port.ts` local interceptor, `rpc-slash-port.ts` default worker-RPC path,
+`http-slash-port.ts` remote/attach) forward display fields plus `currentVersion`
+only — so the five read panels render their `EMPTY_*_SIGNAL` baseline forever and
+the entity pickers open with `NO_OPTIONS`.
 
 This plan is a **consumption-only** change over the unchanged Feature 007 dispatch:
 forward the already-typed `outcome`/`effective`/`version` across the inbound adapter
@@ -31,9 +32,10 @@ present today; everything else degrades to the honest empty signal.
 - **No new dispatch path (Feature 007 parity, FR9).** The structured result rides
   the SAME `OperatorSlashPort.tryHandle` return through the SAME `OperatorClient`
   loopback as slash/CLI — no parallel registry, divergent name, or new route.
-- **No backend behavior change.** Only the inbound adapter `tui-port.ts` is touched
-  under `packages/opencode/src/operator/**`; the rest of the operator backend is
-  off-limits.
+- **No backend behavior change.** Only the three inbound TUI slash-port adapters
+  (`tui-port.ts`, `rpc-slash-port.ts`, `http-slash-port.ts`) are touched under
+  `packages/opencode/src/operator/**`, each widening its handled return with the
+  already-parsed structured half; the rest of the operator backend is off-limits.
 - **No new command id.** Command IDs are unchanged; the picker read queries
   (`jobs.list`, `process.tree`, `task.tree`) are existing catalog verbs.
 - **No control-plane flag change.** The surface stays behind
@@ -76,12 +78,16 @@ and the statechart in `doc/arch/statecharts/operator-result-projection.md`.
 
 ### Phase 1 — Forward the structured result at the inbound seam (FR1)
 
-- **Widen `tui-port.ts` `tryHandle`.** In the handled branch (lines 114-135), add
-  the typed `outcome`, the optional `effective` payload, and the `version` from
-  `result.result` to the returned object, alongside the existing `display` and
-  `currentVersion`. This is a pure widening of the SAME return object — no new
-  method, route, or command name. `tui-port.ts` is the inbound adapter and the ONLY
-  operator-backend file this feature touches (FR9).
+- **Widen every TUI-facing `tryHandle`.** In each of the three inbound adapters'
+  handled branches add the typed `outcome`, the optional `effective` payload, and
+  the `version` from the parsed `CommandResult` to the returned object, alongside
+  the existing `display` and `currentVersion`. In `tui-port.ts` this reads
+  `result.result`; in `rpc-slash-port.ts` and `http-slash-port.ts` the
+  `displayHandled` helper already holds the `CommandResult` it maps to display, so
+  the same three fields are forwarded there with identical semantics (`outcome`;
+  `effective` only when defined; `version ?? null`). This is a pure widening of the
+  SAME return object — no new method, route, or command name. These three inbound
+  adapters are the ONLY operator-backend files this feature touches (FR9).
 - **Keep the type contract in sync.** Update the `TuiOperatorSlashPort` return type
   so the widened fields are typed at the boundary; the effective payload stays
   `Unknown`/opaque at this layer (it is projected downstream, FR4).
@@ -230,7 +236,7 @@ context type and the Dialog primitive); reused seams are listed for traceability
 "packages/tui/src/context/**",              # OperatorSlashHandled structured result (FR2)
 "packages/tui/src/ui/dialog.tsx",           # push back-stack primitive (FR7)
 # Already in scope (Feature 007 / 011 / 001) — NOT re-added, listed for traceability:
-#   packages/opencode/src/operator/**        → tui-port.ts inbound forward (FR1)
+#   packages/opencode/src/operator/**        → tui-port.ts + rpc-slash-port.ts + http-slash-port.ts inbound forward (FR1)
 #   packages/tui/src/**/operator/**          → execute.ts, dialog-settings.tsx, form/**, five {domain}/state.ts (FR3-FR6)
 #   packages/tui/test/**                     → projection/loader/forward/navigation/parity tests (Phase 7)
 ```
@@ -257,13 +263,54 @@ model; no `research.md`, `data-model.md`, `contracts/`, or `quickstart.md` is ad
 
 - [x] FR1-FR9 mapped to ordered phases
 - [x] No new dispatch path / no backend behavior change / no new command id / no flag
-- [x] Only `tui-port.ts` touched under the operator backend (FR1, FR9)
+- [x] Only the three inbound TUI slash-port adapters (`tui-port.ts`, `rpc-slash-port.ts`, `http-slash-port.ts`) touched under the operator backend (FR1, FR9)
 - [x] Five projections total (projected | empty_fallback | shape_mismatch), never throw
 - [x] Entity picker loaders issue existing read verbs on the same path (FR6)
 - [x] Dialog `push` primitive + operator navigation adoption (FR7)
 - [x] Honest availability everywhere; no fabricated data (FR8)
 - [x] specScopeGlobs narrow; only `context/**` + `ui/dialog.tsx` genuinely new
 - [x] Security: input validation, no de-redaction, no fabricated data, parity
-- [ ] `tasks.md` generated and filled
-- [ ] `speckit analyze` clean of new Critical/High/Medium blockers
-- [ ] `speckit validate --json` green (0 new findings on Feature 012 artifacts)
+- [x] `tasks.md` generated and filled
+- [x] `speckit analyze` clean of new Critical/High/Medium blockers
+- [x] `speckit validate --json` green (0 new findings on Feature 012 artifacts)
+
+## Implementation notes (recorded during implement)
+
+- **Projection wrapper shape.** `packages/tui/src/operator/projection.ts` mirrors
+  CUE `#PanelProjection`/`#ProjectionOutcome` structurally, not field-for-field: the
+  TS `PanelProjection<Signal>` carries `{ outcome, signal }` (the resolved typed
+  panel signal) rather than the CUE `{ domain, outcome, effective? }` (the source
+  payload). The outcome enum (`projected`/`empty_fallback`/`shape_mismatch`) is
+  identical across both; the field-name divergence is intentional — the CUE
+  ValueObject documents the projection contract abstractly, the TS type documents
+  what each of the five call sites actually consumes (T004-T008, T018 evidence).
+- **Entity pickers resolve empty today, honestly.** `process.cancel`/`task.cancel`
+  pickers (T011) read `process.tree`/`task.tree`, but the backend requires a
+  `rootProcessId` the form does not supply, so both reads resolve
+  `invalid_argument` today — no `effective`, so the picker renders honest-empty
+  (FR8). The loader and projection are written total for when a tree `effective`
+  is present in a future feature; no fabricated rows are ever synthesized.
+- **`push` lands in Feature 012, retiring Feature 011's documented gap.** Feature
+  011's plan recorded that only `replace`/`clear` existed on the Dialog API and
+  that `push` was deferred. T012/T013 add `push` and adopt it for Home → domain →
+  panel/form descent, so `escape` now unwinds exactly one level instead of
+  resetting the whole stack.
+- **ADR-0012 stays `proposed`.** Matching ADR-0011's convention in this repository,
+  ADR status is not flipped to `accepted` at implement time; only `spec.md`
+  `status` moves to `implemented`.
+- **Production ports forward too (post-implement correction, T019/T020).** The
+  initial pass widened only `tui-port.ts`, leaving Feature 012 inert on the two
+  production paths: `rpc-slash-port.ts` (the DEFAULT `opencode tui` path via
+  `wireLocalOperatorSlashPort` → `createWorkerRpcSlashPort`) and `http-slash-port.ts`
+  (remote/attach via `createHttpOperatorSlashPort`) both parsed the typed
+  `CommandResult` and then discarded the structured half in their `displayHandled`
+  helpers. Both now forward the same optional `result` field (`outcome`; `effective`
+  only when defined; `version ?? null`) with byte-identical display fields, matching
+  `tui-port.ts` semantics. Covered by the extended production-port assertions in
+  `packages/opencode/test/operator/slash-runtime-wire.test.ts`.
+- **Auto-issued reads are quiet (P1).** Panel-mount and picker-loader dispatches
+  pass an internal `{ silent: true }` option to `executeOperatorCommand` that
+  suppresses the toast for these auto-issued reads (including error toasts — the
+  surface's honesty is the empty state). User-invoked commands keep their toasts,
+  so the newly-live reads never flash a toast (or an `invalid_argument` warning for
+  the process/task pickers) on every panel/picker open.
