@@ -71,10 +71,8 @@ import { createTuiApiAdapters } from "./plugin/adapters"
 import { createTuiApi } from "./plugin/api"
 import { createPluginRuntime, PluginRuntimeProvider, usePluginRuntime, type TuiPluginHost } from "./plugin/runtime"
 import { CommandPaletteDialog } from "./component/command-palette"
-import { operatorSuggestedEntries, executeOperatorCommand } from "./operator/execute"
 import { DialogOperatorSettingsHome } from "./operator/dialog-settings"
 import { OPERATOR_TOP_TITLE, OPERATOR_TOP_SUBTITLE } from "@opencode-ai/core/operator"
-import { useOperatorSlash } from "./context/operator-slash"
 import {
   COMMAND_PALETTE_COMMAND,
   OPENCODE_BASE_MODE,
@@ -393,7 +391,6 @@ function App(props: { onSnapshot?: () => Promise<string[]>; pluginHost: TuiPlugi
   const pluginRuntime = usePluginRuntime()
   const attention = createTuiAttention({ renderer, config: tuiConfig, kv })
   const clipboard = useClipboard()
-  const operatorSlash = useOperatorSlash()
 
   const api = createTuiApi(
     createTuiApiAdapters({
@@ -974,39 +971,11 @@ function App(props: { onSnapshot?: () => Promise<string[]>; pluginHost: TuiPlugi
           dialog.replace(() => <DialogOperatorSettingsHome />)
         },
       },
-      // Feature 011 (FR1): the flat per-verb wall is gone — it moved under the
-      // grouped Operator entry. Only the curated read-only suggest subset
-      // (status/show) stays as top-level quick access, dispatching the same
-      // command ids through executeOperatorCommand (FR8).
-      ...operatorSuggestedEntries().map((entry) => ({
-        name: entry.commandName,
-        title: entry.title,
-        desc: entry.description,
-        category: entry.category,
-        suggested: entry.suggest,
-        enabled: () => entry.executable && !!operatorSlash.port,
-        run: () => {
-          if (!entry.executable) {
-            toast.show({
-              title: "Secret action unavailable",
-              message: `${entry.id} disabled (T019)`,
-              variant: "warning",
-            })
-            return
-          }
-          const sessionId = route.data.type === "session" ? route.data.sessionID : undefined
-          void executeOperatorCommand({
-            entry,
-            port: operatorSlash.port,
-            projectId: project.project(),
-            sessionId,
-            dialog,
-            toast,
-          }).then(() => {
-            if (!entry.mutates) dialog.clear()
-          })
-        },
-      })),
+      // Feature 015 (FR1): exactly one top-level Operator entry. The curated
+      // read-only suggested-row spread is removed and the `suggest` machinery
+      // retired — every read-only verb is reached through the grouped Operator
+      // screen (DialogOperatorSettingsHome), with in-menu keyboard search for
+      // discoverability. No new dispatch path; ids stay canonical (FR1, FR2).
     ].map((command) => ({
       namespace: "palette",
       ...command,

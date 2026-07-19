@@ -5,11 +5,10 @@
  */
 import {
   listOperatorPaletteEntries,
-  listOperatorSuggestedEntries,
   buildOperatorPaletteCommands,
   type OperatorPaletteEntry,
 } from "@opencode-ai/core/operator"
-import type { OperatorSlashPort, OperatorStructuredResult } from "../context/operator-slash"
+import type { OperatorSlashDisplay, OperatorSlashPort, OperatorStructuredResult } from "../context/operator-slash"
 import type { DialogContext } from "../ui/dialog"
 import { DialogConfirm } from "../ui/dialog-confirm"
 
@@ -22,17 +21,13 @@ export function operatorPaletteEntries(): readonly OperatorPaletteEntry[] {
   return listOperatorPaletteEntries()
 }
 
-/**
- * Curated top-level quick-access set (FR1): read-only `status`/`show` queries
- * only. The full flat wall no longer surfaces at top level — it moved under the
- * grouped `Operator` entry (DialogOperatorSettingsHome).
- */
-export function operatorSuggestedEntries(): readonly OperatorPaletteEntry[] {
-  return listOperatorSuggestedEntries()
-}
-
 export function operatorPaletteCommandRegistrations() {
   return buildOperatorPaletteCommands()
+}
+
+/** Synthesize a display for a pre-dispatch failure (preflight/conflict) that carries no port display. */
+function syntheticDisplay(message: string, outcome: string): OperatorSlashDisplay {
+  return { title: "Operator", message, variant: "warning", outcome, auditPending: false, injectTranscript: false }
 }
 
 function mintIdempotencyKey(): string {
@@ -67,7 +62,18 @@ export async function executeOperatorCommand(input: {
    * User-invoked commands leave this unset and keep their toasts.
    */
   silent?: boolean
-}): Promise<{ outcome?: string; cancelled?: boolean; result?: OperatorStructuredResult }> {
+}): Promise<{
+  outcome?: string
+  cancelled?: boolean
+  result?: OperatorStructuredResult
+  /**
+   * The human display (title/message/variant) the dispatch produced, forwarded so
+   * a caller that suppressed toasts (an edit modal surfacing the reason in-modal,
+   * FR9/FR18) can render the same typed, bounded reason. Absent on paths that
+   * carry no display (a refused secret / missing port).
+   */
+  display?: OperatorSlashDisplay
+}> {
   const toast: OperatorToast = input.silent ? { show: () => {} } : input.toast
   if (!input.port) {
     toast.show({
@@ -118,7 +124,7 @@ export async function executeOperatorCommand(input: {
         message: pre.message,
         variant: "warning",
       })
-      return { outcome: pre.code }
+      return { outcome: pre.code, display: syntheticDisplay(pre.message, pre.code) }
     }
 
     let version = input.version
@@ -126,12 +132,13 @@ export async function executeOperatorCommand(input: {
       version = version ?? pre.currentVersion
     }
     if (pre.configured && version === undefined) {
+      const conflictMessage = `${input.entry.id}: authority exists but version missing — refresh status`
       toast.show({
         title: "Operator conflict",
-        message: `${input.entry.id}: authority exists but version missing — refresh status`,
+        message: conflictMessage,
         variant: "warning",
       })
-      return { outcome: "conflict" }
+      return { outcome: "conflict", display: syntheticDisplay(conflictMessage, "conflict") }
     }
 
     const idempotencyKey = mintIdempotencyKey()
@@ -189,14 +196,14 @@ export async function executeOperatorCommand(input: {
           } else {
             showDisplay(toast, second.display)
           }
-          return { outcome: "conflict", result: second.result }
+          return { outcome: "conflict", result: second.result, display: second.display }
         }
         showDisplay(toast, second.display)
-        return { outcome: second.display.outcome, result: second.result }
+        return { outcome: second.display.outcome, result: second.result, display: second.display }
       }
     }
     showDisplay(toast, first.display)
-    return { outcome: first.display.outcome, result: first.result }
+    return { outcome: first.display.outcome, result: first.result, display: first.display }
   }
 
   const result = await input.port.tryHandle(base)
@@ -209,7 +216,7 @@ export async function executeOperatorCommand(input: {
     return { outcome: "invalid_argument" }
   }
   showDisplay(toast, result.display)
-  return { outcome: result.display.outcome, result: result.result }
+  return { outcome: result.display.outcome, result: result.result, display: result.display }
 }
 
 function showDisplay(
