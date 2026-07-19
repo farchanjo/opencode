@@ -130,6 +130,14 @@ Acceptance criteria live as prioritized scenarios in each feature `spec.md`.
   shape_mismatch } and { picker projection: loaded | empty | unavailable }, with
   honest empty fallback everywhere and the same loopback dispatch path — the
   Feature 007 parity invariant is preserved).
+- **Telemetry export reachability probe** — the `telemetry.test` OTLP
+  connectivity probe wired when the four config-backed operator domains
+  (telemetry, smart, budget, pools) move from generic stubs onto real
+  Config-backed ports is modeled in
+  [telemetry-probe statechart](../statecharts/telemetry-probe.md)
+  (requested → { misconfigured | probing → { reachable | unreachable } } →
+  recorded, bounded by a timeout, test-signal only and never blocking the loop —
+  the Feature 007 parity invariant is preserved).
 
 ## Phase 2 deferred (explicit)
 
