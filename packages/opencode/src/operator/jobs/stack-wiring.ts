@@ -23,8 +23,6 @@
 export * as JobsStackWiring from "./stack-wiring"
 
 import { Effect } from "effect"
-import type { JobsPort } from "@opencode-ai/protocol/jobs/ports"
-import { JobsOperatorPort } from "./jobs-port"
 import { JobsCommandPort } from "./jobs-command-port"
 import type { JobsAuditSink, JobsBackend } from "./jobs-port"
 
@@ -37,8 +35,8 @@ export interface JobsDomainWiringDeps {
 
 export interface JobsDomainWiring {
   readonly ports: JobsCommandPort.JobsDomainPorts
-  /** The typed `jobs.*` operator port (also usable directly by the CLI/TUI). */
-  readonly port: JobsPort
+  /** The un-audited jobs backend seam (reads + validated mutation plans). */
+  readonly port: JobsBackend
   /** Symmetry with the lifecycle wiring; nothing background to tear down here. */
   readonly dispose: () => void
 }
@@ -55,11 +53,10 @@ const defaultAuditSink: JobsAuditSink = {
  */
 export function createJobsDomainWiring(deps: JobsDomainWiringDeps): JobsDomainWiring {
   const audit = deps.audit ?? defaultAuditSink
-  const port = JobsOperatorPort.createJobsPort({ backend: deps.backend })
-  const ports = JobsCommandPort.createJobsDomainPorts({ port, audit })
+  const ports = JobsCommandPort.createJobsDomainPorts({ backend: deps.backend, audit })
   return {
     ports,
-    port,
+    port: deps.backend,
     dispose: () => {},
   }
 }

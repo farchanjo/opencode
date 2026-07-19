@@ -20,6 +20,8 @@ import { Effective } from "@opencode-ai/schema/langlock/effective"
 import type { AdvisoryDetector } from "@opencode-ai/core/langlock/advisory-detector"
 import type { OperatorPrincipal } from "@opencode-ai/protocol/langlock/commands"
 import type { LangLockAuthorization } from "@/langlock/authorization"
+import type { OperatorMutationPlan } from "@/operator/application/handler"
+import type { ConfigPort } from "@/operator/application/ports/config-port"
 
 const run = <A, E>(effect: Effect.Effect<A, E>): Promise<A> => Effect.runPromise(effect)
 const exit = <A, E>(effect: Effect.Effect<A, E>) => Effect.runPromiseExit(effect)
@@ -28,65 +30,87 @@ const OPERATOR: OperatorPrincipal = { kind: "operator", id: "operator:root" }
 
 const GRANT_ALL: LangLockAuthorization.OverridePermissionPort = { overrideGranted: () => true }
 
-function backend(permission?: LangLockAuthorization.OverridePermissionPort) {
+const NOW = 1_721_260_800_000
+
+function harness(permission?: LangLockAuthorization.OverridePermissionPort) {
   const config = createMemoryConfigPort()
-  const persistence = createLangLockPersistence({ config, clock: () => 1_721_260_800_000 })
-  return createLiveLangLockBackend({ persistence, permission })
+  const persistence = createLangLockPersistence({ config, clock: () => NOW })
+  const backend = createLiveLangLockBackend({ persistence, permission })
+  return { backend, config }
 }
 
-describe("T040 e2e — resolve/set/reset over the live Config.Service backend (AC13)", () => {
+/**
+ * Commit an `OperatorMutationPlan` against the ConfigPort exactly as the Feature 007
+ * `mutateAuthority` pipeline does (read current → pure `apply` → optimistic CAS). The
+ * langlock backend NEVER self-commits under FR5, so a set/reset only lands once its
+ * plan is committed here — proving the write is owned by the dispatcher, not the backend.
+ */
+const commitPlan = (config: ConfigPort, plan: OperatorMutationPlan) =>
+  Effect.gen(function* () {
+    const current = yield* Effect.promise(() => config.get(plan.authority))
+    const payload = plan.apply(current?.payload ?? null)
+    const res = yield* Effect.promise(() =>
+      config.compareAndSet({ authority: plan.authority, expectedVersion: current?.version ?? null, payload, nowMs: NOW }),
+    )
+    if (!res.ok) return yield* Effect.fail(new Error(`cas ${res.code}`))
+    return res.version
+  })
+
+describe("T040 e2e — resolve/planSet/planReset over the live Config.Service backend (AC13, FR5)", () => {
   test("resolve returns the enabled en-US default for an unconfigured global scope", async () => {
-    const summary = await run(backend().resolve({ scope: "global", scopeId: "" }))
+    const summary = await run(harness().backend.resolve({ scope: "global", scopeId: "" }))
     expect(summary.enabled).toBe(true)
     expect(summary.tag).toBe("en-US")
     expect(summary.displayName).toBe("English (United States)")
   })
 
-  test("set a global tag persists with CAS and reset reverts to en-US", async () => {
-    const b = backend()
-    const set = await run(b.set({ scope: "global", scopeId: "", tag: "pt-BR", expectedVersion: 0, principal: OPERATOR }))
-    expect(set.tag).toBe("pt-BR")
-    const reset = await run(b.reset({ scope: "global", scopeId: "", expectedVersion: 1, principal: OPERATOR }))
-    expect(reset.tag).toBe("en-US")
+  test("a committed planSet persists with CAS and a committed planReset reverts to en-US", async () => {
+    const { backend, config } = harness()
+    await run(commitPlan(config, await run(backend.planSet({ scope: "global", scopeId: "", tag: "pt-BR", expectedVersion: 0, principal: OPERATOR }))))
+    expect((await run(backend.resolve({ scope: "global", scopeId: "" }))).tag).toBe("pt-BR")
+    await run(commitPlan(config, await run(backend.planReset({ scope: "global", scopeId: "", expectedVersion: 1, principal: OPERATOR }))))
+    expect((await run(backend.resolve({ scope: "global", scopeId: "" }))).tag).toBe("en-US")
   })
 
-  test("a non-canonical/non-allowlisted tag is rejected as invalid_tag", async () => {
+  test("planSet does NOT self-commit — resolve is unchanged until the plan is committed (FR5)", async () => {
+    const { backend } = harness()
+    await run(backend.planSet({ scope: "global", scopeId: "", tag: "pt-BR", expectedVersion: 0, principal: OPERATOR }))
+    // The plan was produced but never committed: no phantom write, resolve stays the default.
+    expect((await run(backend.resolve({ scope: "global", scopeId: "" }))).tag).toBe("en-US")
+  })
+
+  test("a non-canonical/non-allowlisted tag is rejected as invalid_tag before any plan", async () => {
     const failure = await exit(
-      backend().set({ scope: "global", scopeId: "", tag: "en-us", expectedVersion: 0, principal: OPERATOR }),
+      harness().backend.planSet({ scope: "global", scopeId: "", tag: "en-us", expectedVersion: 0, principal: OPERATOR }),
     )
     expect(failure._tag).toBe("Failure")
     if (failure._tag === "Failure") expect(JSON.stringify(failure.cause.toJSON())).toContain("invalid_tag")
-  })
-
-  test("a stale expectedVersion is a version_conflict, never a false write", async () => {
-    const failure = await exit(
-      backend().set({ scope: "global", scopeId: "", tag: "pt-BR", expectedVersion: 99, principal: OPERATOR }),
-    )
-    expect(failure._tag).toBe("Failure")
-    if (failure._tag === "Failure") expect(JSON.stringify(failure.cause.toJSON())).toContain("version_conflict")
   })
 })
 
 describe("T040 e2e — project override denied vs allowed (AC5, AC6, Security 1)", () => {
   test("a project override is denied fail-closed when no permission gate is bound (AC5)", async () => {
+    const { backend, config } = harness()
     const failure = await exit(
-      backend().set({ scope: "project", scopeId: "proj1", tag: "pt-BR", expectedVersion: 0, principal: OPERATOR }),
+      backend.planSet({ scope: "project", scopeId: "proj1", tag: "pt-BR", expectedVersion: 0, principal: OPERATOR }),
     )
     expect(failure._tag).toBe("Failure")
     if (failure._tag === "Failure") expect(JSON.stringify(failure.cause.toJSON())).toContain("unauthorized")
+    // Fail-closed at plan time means no authority write ever happened.
+    expect(await config.get("langlock/project/proj1")).toBeNull()
   })
 
-  test("a project override is allowed when the langlock.override grant is present (AC6)", async () => {
-    const summary = await run(
-      backend(GRANT_ALL).set({ scope: "project", scopeId: "proj1", tag: "pt-BR", expectedVersion: 0, principal: OPERATOR }),
-    )
+  test("a committed project override is allowed when the langlock.override grant is present (AC6)", async () => {
+    const { backend, config } = harness(GRANT_ALL)
+    await run(commitPlan(config, await run(backend.planSet({ scope: "project", scopeId: "proj1", tag: "pt-BR", expectedVersion: 0, principal: OPERATOR }))))
+    const summary = await run(backend.resolve({ scope: "project", scopeId: "proj1" }))
     expect(summary.tag).toBe("pt-BR")
     expect(summary.origin).toBe("project")
   })
 
   test("a non-operator principal may never mutate policy (Security 1)", async () => {
     const failure = await exit(
-      backend(GRANT_ALL).set({
+      harness(GRANT_ALL).backend.planSet({
         scope: "project",
         scopeId: "proj1",
         tag: "pt-BR",

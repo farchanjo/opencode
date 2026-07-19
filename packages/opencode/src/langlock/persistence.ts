@@ -77,6 +77,12 @@ export interface LangLockPersistenceDeps {
 
 /** The persistence surface consumed by the operator domain (T033) and authorization (T029). */
 export interface LangLockPersistence {
+  /**
+   * The canonical Config.Service authority key a scope/scopeId maps to. Exposed so a
+   * Feature 014 `OperatorMutationPlan` can name the same authority the reads use, letting
+   * `mutateAuthority` own the single committed CAS write instead of the backend self-committing.
+   */
+  readonly authorityFor: (scope: PersistenceScope, scopeId: string) => string
   readonly readConfig: (
     scope: PersistenceScope,
     scopeId: string,
@@ -182,7 +188,7 @@ export function createLangLockPersistence(deps: LangLockPersistenceDeps): LangLo
       return { effective: toEffective(globalConfig, outcome.resolved), outcome }
     })
 
-  return { readConfig, saveConfig, resolveEffective }
+  return { authorityFor, readConfig, saveConfig, resolveEffective }
 }
 
 // =============================================================================

@@ -1,40 +1,39 @@
 /**
- * Feature 003 / T027 (S15) — the typed `jobs.*` domain implementation backing
- * the Feature 007 operator control plane (C12, FR30–FR32).
+ * Feature 003 / T027 (S15) — the typed `jobs.*` domain seam backing the Feature 007
+ * operator control plane (C12, FR30–FR32), converted to the Feature 014
+ * `OperatorMutationPlan` commit contract (FR5).
  *
- * Feature 007 owns the command REGISTRY, authorization, CAS, idempotency, and
- * the reserved-name guard; Feature 003 supplies ONLY this typed `JobsPort`
- * domain implementation plus its audit events. This port registers NO command
- * ids and makes ZERO provider/model calls, tokens, or cost (FR31, AC14): reads
- * project the bounded, redacted `JobDefinitionSummary`/`Occurrence`/
- * `NotificationEnvelope` views the injected backend seams carry, and every
- * mutation carries an operator principal + explicit scope + version/CAS +
- * idempotency enforced by the backend, returning a Feature 007 audit-correlation
- * id. `run-now` creates a normal occurrence through admission/routing without
- * starting an LLM turn for administration (FR31, AC14); `disable`/`delete`
- * report `unconfirmed`/`unknown` rather than a false kill of mutating work
- * (C17, AC25).
+ * Feature 007 owns the command REGISTRY, authorization, CAS, idempotency, the
+ * reserved-name guard, AND the single committed mutation (`mutateAuthority`);
+ * Feature 003 supplies ONLY this typed `JobsBackend` seam plus its bounded audit
+ * events. This module registers NO command ids and makes ZERO provider/model calls,
+ * tokens, or cost (FR31, AC14): reads project the bounded, redacted
+ * `JobDefinitionSummary`/`Occurrence`/`NotificationEnvelope` views; every mutation
+ * (`create`/`update`/`enable`/`disable`/`delete`/`reschedule`/`run-now`) VALIDATES
+ * and returns an `OperatorMutationPlan` (authority + pure transform) so
+ * `mutateAuthority` owns the one CAS write under the operator's version and emits the
+ * Feature 007 audit correlation — the backend never self-commits. Where the durable
+ * persistence / executor seam is not yet reachable, `planX` honestly degrades to the
+ * typed `JobsError` (Feature 014 T010/T011 wire the real transforms), never a
+ * fabricated success.
  *
  * The backend seams (`JobsBackend`) are the un-audited domain surface the
- * Feature 003 application adapters (`packages/opencode/src/jobs/**`:
- * persistence T022, trigger service T023, notification service T024,
- * authorization T025) collectively provide; the composition root injects the
- * real implementations. This module never resolves Feature 005 output content
- * and never carries secrets/payloads/paths in a view (FR32, C15). The bounded,
- * secret-free operator access audit is emitted at the command-port seam, which
- * carries the Feature 007 principal for every command (`jobs-command-port.ts`).
+ * Feature 003 application adapters (`packages/opencode/src/jobs/**`: persistence
+ * T022, trigger service T023, notification service T024, authorization T025)
+ * collectively provide; the composition root injects the real implementations. This
+ * module never resolves Feature 005 output content and never carries secrets/
+ * payloads/paths in a view (FR32, C15). The bounded, secret-free operator access
+ * audit is emitted at the command-port seam, which carries the Feature 007 principal
+ * for every command (`jobs-command-port.ts`).
  */
 export * as JobsOperatorPort from "./jobs-port"
 
-import { Effect } from "effect"
-import type { Scope, Stream } from "effect"
+import type { Effect, Scope, Stream } from "effect"
+import type { OperatorMutationPlan } from "@/operator/application/handler"
 import type {
-  JobDefinitionSummary,
   JobsCreateInput,
   JobsDeleteInput,
-  JobsDeleteOutput,
   JobsDisableInput,
-  JobsDisableOutput,
   JobsEnableInput,
   JobsError,
   JobsHistoryInput,
@@ -50,9 +49,7 @@ import type {
   JobsUpdateInput,
   JobsWatchEvent,
   JobsWatchInput,
-  Occurrence,
 } from "@opencode-ai/protocol/jobs/commands"
-import type { JobsPort } from "@opencode-ai/protocol/jobs/ports"
 
 // =============================================================================
 // Audit sink (T027) — bounded, secret-free operator access audit
@@ -75,16 +72,12 @@ export interface JobsAuditSink {
 // Backend seams — the un-audited domain surface (packages/opencode/src/jobs/**)
 // =============================================================================
 
-/** Disable resolves the active-occurrence outcome without a false kill (C17, AC25). */
-export interface JobsDisableBackendOutput {
-  readonly definition: JobDefinitionSummary
-  readonly activeOccurrenceOutcome: JobsDisableOutput["activeOccurrenceOutcome"]
-}
-
 /**
- * The narrow domain seam the Feature 003 application adapters provide. Reads
- * return bounded redacted views; mutations return the settled definition (or
- * occurrence) WITHOUT the returned audit id — the operator port authors that.
+ * The narrow domain seam the Feature 003 application adapters provide. Reads return
+ * bounded redacted views; every mutation VALIDATES and returns an
+ * `OperatorMutationPlan` (authority + pure transform) the dispatcher commits via
+ * `mutateAuthority` — the backend never self-commits, and an unreachable seam
+ * honestly degrades to a typed `JobsError`.
  */
 export interface JobsBackend {
   readonly list: (input: JobsListInput) => Effect.Effect<JobsListOutput, JobsError>
@@ -94,62 +87,11 @@ export interface JobsBackend {
   readonly watch: (
     input: JobsWatchInput,
   ) => Effect.Effect<Stream.Stream<JobsWatchEvent, never>, JobsError, Scope.Scope>
-  readonly create: (input: JobsCreateInput) => Effect.Effect<JobDefinitionSummary, JobsError>
-  readonly update: (input: JobsUpdateInput) => Effect.Effect<JobDefinitionSummary, JobsError>
-  readonly enable: (input: JobsEnableInput) => Effect.Effect<JobDefinitionSummary, JobsError>
-  readonly disable: (input: JobsDisableInput) => Effect.Effect<JobsDisableBackendOutput, JobsError>
-  readonly delete: (input: JobsDeleteInput) => Effect.Effect<void, JobsError>
-  readonly reschedule: (input: JobsRescheduleInput) => Effect.Effect<JobDefinitionSummary, JobsError>
-  readonly runNow: (input: JobsRunNowInput) => Effect.Effect<Occurrence, JobsError>
-}
-
-export interface JobsPortDeps {
-  readonly backend: JobsBackend
-}
-
-// =============================================================================
-// Audit-correlation id
-// =============================================================================
-
-const AUDIT_ID_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
-
-/** A fresh Feature 007 audit-correlation id returned by every mutation. */
-function auditId(): string {
-  let rand = ""
-  for (let i = 0; i < 16; i++) rand += AUDIT_ID_ALPHABET[Math.floor(Math.random() * 32)]
-  return `evt_jobsaudit_${rand}`
-}
-
-// =============================================================================
-// Factory
-// =============================================================================
-
-/**
- * Build the typed `JobsPort` over the injected domain backend. Reads pass
- * through the bounded redacted views; each mutation attaches a fresh audit id.
- * Zero provider/model calls (FR31, AC14).
- */
-export function createJobsPort(deps: JobsPortDeps): JobsPort {
-  const b = deps.backend
-  return {
-    list: (input) => b.list(input),
-    status: (input) => b.status(input),
-    show: (input) => b.show(input),
-    history: (input) => b.history(input),
-    watch: (input) => b.watch(input),
-    create: (input) => b.create(input).pipe(Effect.map((definition) => ({ definition, auditId: auditId() }))),
-    update: (input) => b.update(input).pipe(Effect.map((definition) => ({ definition, auditId: auditId() }))),
-    enable: (input) => b.enable(input).pipe(Effect.map((definition) => ({ definition, auditId: auditId() }))),
-    disable: (input) =>
-      b.disable(input).pipe(
-        Effect.map((out) => ({
-          definition: out.definition,
-          activeOccurrenceOutcome: out.activeOccurrenceOutcome,
-          auditId: auditId(),
-        })),
-      ),
-    delete: (input) => b.delete(input).pipe(Effect.map((): JobsDeleteOutput => ({ deleted: true, auditId: auditId() }))),
-    reschedule: (input) => b.reschedule(input).pipe(Effect.map((definition) => ({ definition, auditId: auditId() }))),
-    runNow: (input) => b.runNow(input).pipe(Effect.map((occurrence) => ({ occurrence, auditId: auditId() }))),
-  }
+  readonly planCreate: (input: JobsCreateInput) => Effect.Effect<OperatorMutationPlan, JobsError>
+  readonly planUpdate: (input: JobsUpdateInput) => Effect.Effect<OperatorMutationPlan, JobsError>
+  readonly planEnable: (input: JobsEnableInput) => Effect.Effect<OperatorMutationPlan, JobsError>
+  readonly planDisable: (input: JobsDisableInput) => Effect.Effect<OperatorMutationPlan, JobsError>
+  readonly planDelete: (input: JobsDeleteInput) => Effect.Effect<OperatorMutationPlan, JobsError>
+  readonly planReschedule: (input: JobsRescheduleInput) => Effect.Effect<OperatorMutationPlan, JobsError>
+  readonly planRunNow: (input: JobsRunNowInput) => Effect.Effect<OperatorMutationPlan, JobsError>
 }

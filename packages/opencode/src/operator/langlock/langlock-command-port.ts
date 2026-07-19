@@ -1,23 +1,25 @@
 /**
- * Feature 004 / T033 (S16) — the `langlock.*` inbound command adapter.
+ * Feature 004 / T033 (S16) — the `langlock.*` inbound command adapter, converted to
+ * the Feature 014 `OperatorMutationPlan` commit contract (FR5).
  *
  * Bridges the reserved Feature 007 `langlock.status|show|set|reset` operator
- * command ids to the typed `LangLockPolicyPort` (T033) through the Feature 007
- * dispatcher's `DomainInvoke` seam, exactly like `jobs-command-port.ts`
- * (Feature 003) and `lifecycle-command-port.ts` (Feature 002). Feature 007
- * remains the SOLE registration authority: this adapter registers NO command ids
- * — it only supplies the `langlock` domain `invoke`, replacing the
- * `not_implemented` stub. Reserved-id collisions (`langlock.*`) are rejected by
- * the Feature 007 reserved-name guard, unchanged here (C3).
+ * command ids to the typed `LangLockBackend` seam through the Feature 007
+ * dispatcher's `DomainInvoke` seam, exactly like `telemetry-command-port.ts`.
+ * Feature 007 remains the SOLE registration authority: this adapter registers NO
+ * command ids — it only supplies the `langlock` domain `invoke`, replacing the
+ * `not_implemented` stub. Reserved-id collisions (`langlock.*`) are rejected by the
+ * Feature 007 reserved-name guard, unchanged here (C3).
  *
  * Every command is parsed and dispatched LOCALLY (before any prompt admission):
  * the payload never reaches a model, and every port call is model-independent and
  * zero-cost (FR33, AC13). `status`/`show` project the redacted, content-free
- * effective policy; `set`/`reset` carry an operator principal + explicit scope +
- * version/CAS + idempotency enforced by the backend and return a Feature 007
- * audit-correlation id. This adapter is the single uniform operator access-audit
- * point — it holds the Feature 007 principal for every command — and emits exactly
- * one bounded, secret-free audit event per dispatch.
+ * effective policy; `set`/`reset` VALIDATE and return a `mutation_plan` so the
+ * Feature 007 `mutateAuthority` pipeline owns the single committed CAS write + audit
+ * correlation — the backend never self-commits (a self-committed `query` was
+ * previously persisting a write while the dispatcher rejected the shape). This
+ * adapter is the single uniform operator access-audit point — it holds the Feature
+ * 007 principal for every command — and emits exactly one bounded, secret-free audit
+ * event per dispatch (a successful mutation is audited by the commit, not here).
  */
 export * as LangLockCommandPort from "./langlock-command-port"
 
@@ -28,17 +30,16 @@ import type {
   OperatorPrincipal as LangLockOperatorPrincipal,
   Scope,
 } from "@opencode-ai/protocol/langlock/commands"
-import type { LangLockPolicyPort } from "@opencode-ai/protocol/langlock/ports"
-import type { HandlerContext, HandlerResult, FailureHandlerResult } from "@/operator/application/handler"
+import type { HandlerContext, HandlerResult, FailureHandlerResult, OperatorMutationPlan } from "@/operator/application/handler"
 import type { DomainInvoke } from "@/operator/application/ports/domain-ports"
-import type { LangLockAuditEvent, LangLockAuditSink } from "./langlock-port"
+import type { LangLockAuditEvent, LangLockAuditSink, LangLockBackend } from "./langlock-port"
 
 export interface LangLockDomainPorts {
   readonly langlock: { readonly invoke: DomainInvoke }
 }
 
 export interface LangLockCommandDeps {
-  readonly port: LangLockPolicyPort
+  readonly backend: LangLockBackend
   readonly audit: LangLockAuditSink
 }
 
@@ -75,7 +76,7 @@ function toLangLockOperator(principal: OperatorPrincipalCore): LangLockOperatorP
   return { kind: principal.kind, id: principal.subject }
 }
 
-/** Resolve the CAS `expectedVersion` from the payload or the envelope `version`; defaults to 0 (create). */
+/** Resolve the domain `expectedVersion` from the payload or the envelope `version`; defaults to 0 (create). */
 function resolveExpectedVersion(record: Record<string, unknown>, request: CommandRequest): number {
   const fromPayload = firstNumber(record, ["expectedVersion", "expected_version", "version"])
   if (fromPayload !== undefined) return fromPayload
@@ -137,9 +138,9 @@ function langLockErrorToFailure(error: LangLockPolicyError): FailureHandlerResul
 // =============================================================================
 
 function langLockInvoke(deps: LangLockCommandDeps): DomainInvoke {
-  const { port } = deps
+  const { backend } = deps
 
-  /** Run a port effect, emit exactly one audit event, and shape the result. */
+  /** Run a read effect, emit exactly one audit event, and shape the result. */
   const run = <A>(
     commandId: string,
     principalId: string,
@@ -160,8 +161,31 @@ function langLockInvoke(deps: LangLockCommandDeps): DomainInvoke {
       ),
     )
 
+  /**
+   * Validate a mutation and hand back the `mutation_plan` the dispatcher commits via
+   * `mutateAuthority` (which emits the Feature 007 audit correlation on success).
+   * Only a rejection is audited here — a successful plan is audited by the commit,
+   * so no write is ever persisted while the caller is told it failed.
+   */
+  const runPlan = (
+    commandId: string,
+    principalId: string,
+    target: string,
+    effect: Effect.Effect<OperatorMutationPlan, LangLockPolicyError>,
+  ): Promise<HandlerResult> =>
+    Effect.runPromise(
+      effect.pipe(
+        Effect.matchEffect({
+          onSuccess: (plan): Effect.Effect<HandlerResult> => Effect.succeed({ kind: "mutation_plan", ...plan }),
+          onFailure: (error): Effect.Effect<HandlerResult> =>
+            deps.audit
+              .record({ commandId, principalId, target, outcome: auditOutcome(error) })
+              .pipe(Effect.as(langLockErrorToFailure(error))),
+        }),
+      ),
+    )
+
   const query = (value: unknown): HandlerResult => ({ kind: "query", effective: value })
-  const mutation = (value: unknown): HandlerResult => ({ kind: "query", effective: value })
 
   return (ctx: HandlerContext): Promise<HandlerResult> => {
     const id = String(ctx.descriptor.id)
@@ -174,22 +198,18 @@ function langLockInvoke(deps: LangLockCommandDeps): DomainInvoke {
     switch (id) {
       case "langlock.status":
       case "langlock.show":
-        return run(id, principalId, scopeId, port.resolve({ scope, scopeId }), (out) => query(out.policy))
+        return run(id, principalId, scopeId, backend.resolve({ scope, scopeId }), (summary) => query(summary))
 
       case "langlock.set": {
         const tag = firstString(payload, ["tag", "language", "artifact_language"])
         if (tag === undefined) return Promise.resolve(fail("invalid_argument", "langlock.set requires a tag", { field: "tag" }))
         const expectedVersion = resolveExpectedVersion(payload, ctx.request)
-        return run(id, principalId, scopeId, port.set({ scope, scopeId, tag, expectedVersion, principal }), (out) =>
-          mutation({ policy: out.policy, auditId: out.auditId }),
-        )
+        return runPlan(id, principalId, scopeId, backend.planSet({ scope, scopeId, tag, expectedVersion, principal }))
       }
 
       case "langlock.reset": {
         const expectedVersion = resolveExpectedVersion(payload, ctx.request)
-        return run(id, principalId, scopeId, port.reset({ scope, scopeId, expectedVersion, principal }), (out) =>
-          mutation({ policy: out.policy, auditId: out.auditId }),
-        )
+        return runPlan(id, principalId, scopeId, backend.planReset({ scope, scopeId, expectedVersion, principal }))
       }
 
       default:
@@ -200,7 +220,7 @@ function langLockInvoke(deps: LangLockCommandDeps): DomainInvoke {
 
 /**
  * Build the `langlock` DomainPort override. Wire it into the Feature 007
- * dispatcher via `wireDomainPorts(createLangLockDomainPorts({ port, audit }))` at
+ * dispatcher via `wireDomainPorts(createLangLockDomainPorts({ backend, audit }))` at
  * the composition root — it replaces the `not_implemented` stub without touching
  * the registry.
  */

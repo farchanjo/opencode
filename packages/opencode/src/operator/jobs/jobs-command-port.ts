@@ -1,10 +1,10 @@
 /**
- * Feature 003 / T027 (S15) — the `jobs.*` inbound command adapter.
+ * Feature 003 / T027 (S15) — the `jobs.*` inbound command adapter, converted to the
+ * Feature 014 `OperatorMutationPlan` commit contract (FR5).
  *
  * Bridges the reserved Feature 007 `jobs.*` operator command ids to the typed
- * `JobsPort` (T027) through the Feature 007 dispatcher's `DomainInvoke` seam,
- * exactly like `lifecycle-command-port.ts` (Feature 002) and
- * `routing-command-port.ts` (Feature 001). Feature 007 remains the SOLE
+ * `JobsBackend` seam through the Feature 007 dispatcher's `DomainInvoke` seam,
+ * exactly like `telemetry-command-port.ts`. Feature 007 remains the SOLE
  * registration authority: this adapter registers NO command ids — it only
  * supplies the `jobs` domain `invoke`, replacing the `not_implemented` stub.
  * Reserved-id collisions (`job.*`/`jobs.*`) are rejected by the Feature 007
@@ -13,11 +13,14 @@
  * Every command is parsed and dispatched LOCALLY (before any prompt admission):
  * the payload never reaches a model, and every port call is model-independent
  * and zero-cost (FR31, AC14). Reads project the bounded, redacted operator view;
- * mutations carry an operator principal + explicit scope + version/CAS +
- * idempotency enforced by the backend and return a Feature 007 audit-correlation
- * id. This adapter is the single uniform operator access-audit point — it holds
- * the Feature 007 principal for every command, including the principal-less read
- * ports — and emits exactly one bounded, secret-free audit event per dispatch.
+ * mutations VALIDATE and return a `mutation_plan` so the Feature 007
+ * `mutateAuthority` pipeline owns the single committed CAS write + audit
+ * correlation — the backend never self-commits, and an unreachable seam honestly
+ * degrades to a typed failure with no phantom write. This adapter is the single
+ * uniform operator access-audit point — it holds the Feature 007 principal for
+ * every command, including the principal-less read ports — and emits exactly one
+ * bounded, secret-free audit event per dispatch (a successful mutation is audited by
+ * the commit, not here).
  */
 export * as JobsCommandPort from "./jobs-command-port"
 
@@ -33,18 +36,17 @@ import type {
   OverlapPolicy,
   Schedule,
 } from "@opencode-ai/protocol/jobs/commands"
-import type { JobsPort } from "@opencode-ai/protocol/jobs/ports"
-import type { HandlerContext, HandlerResult, FailureHandlerResult } from "@/operator/application/handler"
+import type { HandlerContext, HandlerResult, FailureHandlerResult, OperatorMutationPlan } from "@/operator/application/handler"
 import type { CommandRequest } from "@opencode-ai/core/operator"
 import type { DomainInvoke } from "@/operator/application/ports/domain-ports"
-import type { JobsAuditEvent, JobsAuditSink } from "./jobs-port"
+import type { JobsAuditEvent, JobsAuditSink, JobsBackend } from "./jobs-port"
 
 export interface JobsDomainPorts {
   readonly jobs: { readonly invoke: DomainInvoke }
 }
 
 export interface JobsCommandDeps {
-  readonly port: JobsPort
+  readonly backend: JobsBackend
   readonly audit: JobsAuditSink
 }
 
@@ -189,9 +191,9 @@ function jobsErrorToFailure(error: JobsError): FailureHandlerResult {
 // =============================================================================
 
 function jobsInvoke(deps: JobsCommandDeps): DomainInvoke {
-  const { port } = deps
+  const { backend } = deps
 
-  /** Run a port effect, emit exactly one audit event, and shape the result. */
+  /** Run a read effect, emit exactly one audit event, and shape the result. */
   const run = <A>(
     commandId: string,
     principalId: string,
@@ -212,6 +214,30 @@ function jobsInvoke(deps: JobsCommandDeps): DomainInvoke {
       ),
     )
 
+  /**
+   * Validate a mutation and hand back the `mutation_plan` the dispatcher commits via
+   * `mutateAuthority` (which emits the Feature 007 audit correlation on success).
+   * Only a rejection is audited here — a successful plan is audited by the commit,
+   * so no write is ever persisted while the caller is told it failed.
+   */
+  const runPlan = (
+    commandId: string,
+    principalId: string,
+    target: string,
+    effect: Effect.Effect<OperatorMutationPlan, JobsError>,
+  ): Promise<HandlerResult> =>
+    Effect.runPromise(
+      effect.pipe(
+        Effect.matchEffect({
+          onSuccess: (plan): Effect.Effect<HandlerResult> => Effect.succeed({ kind: "mutation_plan", ...plan }),
+          onFailure: (error): Effect.Effect<HandlerResult> =>
+            deps.audit
+              .record({ commandId, principalId, target, outcome: auditOutcome(error) })
+              .pipe(Effect.as(jobsErrorToFailure(error))),
+        }),
+      ),
+    )
+
   const query = (value: unknown): HandlerResult => ({ kind: "query", effective: value })
 
   return (ctx: HandlerContext): Promise<HandlerResult> => {
@@ -224,6 +250,18 @@ function jobsInvoke(deps: JobsCommandDeps): DomainInvoke {
       fail("invalid_argument", `${id} requires a jobDefinitionId`, { field: "jobDefinitionId" })
     const requireVersion = (): FailureHandlerResult =>
       fail("invalid_argument", `${id} requires an expectedVersion`, { field: "expectedVersion" })
+    /**
+     * Resolve the CAS guard for a mutating verb. The single committed config CAS is
+     * driven by the envelope `version` (the opaque `cas_vN` token `mutateAuthority`
+     * enforces), so a string token satisfies the requirement even though the numeric
+     * domain `expectedVersion` is `NaN`; only a total absence of both is rejected. The
+     * numeric value is passed through as domain metadata (0 when only the token is set).
+     */
+    const resolveCasVersion = (): FailureHandlerResult | { readonly expectedVersion: number } => {
+      const numeric = resolveExpectedVersion(payload, ctx.request)
+      if (numeric === undefined && ctx.request.version === undefined) return requireVersion()
+      return { expectedVersion: numeric ?? 0 }
+    }
 
     switch (id) {
       case "jobs.list": {
@@ -236,18 +274,18 @@ function jobsInvoke(deps: JobsCommandDeps): DomainInvoke {
           enabledOnly: firstBoolean(payload, ["enabledOnly", "enabled_only"]),
           cursor: firstString(payload, ["cursor"]),
         }
-        return run("jobs.list", principalId, scopeId, port.list(input), query)
+        return run("jobs.list", principalId, scopeId, backend.list(input), query)
       }
 
       case "jobs.status": {
         if (jobDefinitionId === undefined) return Promise.resolve(requireId())
-        return run("jobs.status", principalId, jobDefinitionId, port.status({ jobDefinitionId }), query)
+        return run("jobs.status", principalId, jobDefinitionId, backend.status({ jobDefinitionId }), query)
       }
 
       case "jobs.show": {
         if (jobDefinitionId === undefined) return Promise.resolve(requireId())
         const occurrenceLimit = firstNumber(payload, ["occurrenceLimit", "occurrence_limit"]) ?? 20
-        return run("jobs.show", principalId, jobDefinitionId, port.show({ jobDefinitionId, occurrenceLimit }), query)
+        return run("jobs.show", principalId, jobDefinitionId, backend.show({ jobDefinitionId, occurrenceLimit }), query)
       }
 
       case "jobs.history": {
@@ -257,7 +295,7 @@ function jobsInvoke(deps: JobsCommandDeps): DomainInvoke {
           limit: firstNumber(payload, ["limit"]) ?? 50,
           cursor: firstString(payload, ["cursor"]),
         }
-        return run("jobs.history", principalId, jobDefinitionId, port.history(input), query)
+        return run("jobs.history", principalId, jobDefinitionId, backend.history(input), query)
       }
 
       case "jobs.watch": {
@@ -265,7 +303,7 @@ function jobsInvoke(deps: JobsCommandDeps): DomainInvoke {
         // Request/response surface: return the bounded current definition frame;
         // the CLI/TUI attach the live `job.*` stream over the observation seam
         // (T030). This keeps watch honest and zero-model.
-        return run("jobs.watch", principalId, jobDefinitionId, port.status({ jobDefinitionId }), (out) =>
+        return run("jobs.watch", principalId, jobDefinitionId, backend.status({ jobDefinitionId }), (out) =>
           query({ definition: out.definition, streaming: "observation-surface" }),
         )
       }
@@ -294,62 +332,61 @@ function jobsInvoke(deps: JobsCommandDeps): DomainInvoke {
           payloadRef,
           principal,
         }
-        return run("jobs.create", principalId, name, port.create(input), query)
+        return runPlan("jobs.create", principalId, name, backend.planCreate(input))
       }
 
       case "jobs.update": {
         if (jobDefinitionId === undefined) return Promise.resolve(requireId())
-        const expectedVersion = resolveExpectedVersion(payload, ctx.request)
-        if (expectedVersion === undefined) return Promise.resolve(requireVersion())
+        const cas = resolveCasVersion()
+        if ("kind" in cas) return Promise.resolve(cas)
         const input: JobsUpdateInput = {
           jobDefinitionId,
-          expectedVersion,
+          expectedVersion: cas.expectedVersion,
           patch: buildUpdatePatch(payload),
           principal,
         }
-        return run("jobs.update", principalId, jobDefinitionId, port.update(input), query)
+        return runPlan("jobs.update", principalId, jobDefinitionId, backend.planUpdate(input))
       }
 
       case "jobs.enable": {
         if (jobDefinitionId === undefined) return Promise.resolve(requireId())
-        const expectedVersion = resolveExpectedVersion(payload, ctx.request)
-        if (expectedVersion === undefined) return Promise.resolve(requireVersion())
-        return run("jobs.enable", principalId, jobDefinitionId, port.enable({ jobDefinitionId, expectedVersion, principal }), query)
+        const cas = resolveCasVersion()
+        if ("kind" in cas) return Promise.resolve(cas)
+        return runPlan("jobs.enable", principalId, jobDefinitionId, backend.planEnable({ jobDefinitionId, expectedVersion: cas.expectedVersion, principal }))
       }
 
       case "jobs.disable": {
         if (jobDefinitionId === undefined) return Promise.resolve(requireId())
-        const expectedVersion = resolveExpectedVersion(payload, ctx.request)
-        if (expectedVersion === undefined) return Promise.resolve(requireVersion())
-        return run("jobs.disable", principalId, jobDefinitionId, port.disable({ jobDefinitionId, expectedVersion, principal }), query)
+        const cas = resolveCasVersion()
+        if ("kind" in cas) return Promise.resolve(cas)
+        return runPlan("jobs.disable", principalId, jobDefinitionId, backend.planDisable({ jobDefinitionId, expectedVersion: cas.expectedVersion, principal }))
       }
 
       case "jobs.delete": {
         if (jobDefinitionId === undefined) return Promise.resolve(requireId())
-        const expectedVersion = resolveExpectedVersion(payload, ctx.request)
-        if (expectedVersion === undefined) return Promise.resolve(requireVersion())
-        return run("jobs.delete", principalId, jobDefinitionId, port.delete({ jobDefinitionId, expectedVersion, principal }), query)
+        const cas = resolveCasVersion()
+        if ("kind" in cas) return Promise.resolve(cas)
+        return runPlan("jobs.delete", principalId, jobDefinitionId, backend.planDelete({ jobDefinitionId, expectedVersion: cas.expectedVersion, principal }))
       }
 
       case "jobs.reschedule": {
         if (jobDefinitionId === undefined) return Promise.resolve(requireId())
-        const expectedVersion = resolveExpectedVersion(payload, ctx.request)
-        if (expectedVersion === undefined) return Promise.resolve(requireVersion())
+        const cas = resolveCasVersion()
+        if ("kind" in cas) return Promise.resolve(cas)
         const schedule = parseSchedule(payload)
         if (schedule === undefined)
           return Promise.resolve(fail("invalid_argument", "jobs.reschedule requires a cronExpression and ianaTimezone", { field: "schedule" }))
-        return run(
+        return runPlan(
           "jobs.reschedule",
           principalId,
           jobDefinitionId,
-          port.reschedule({ jobDefinitionId, expectedVersion, schedule, principal }),
-          query,
+          backend.planReschedule({ jobDefinitionId, expectedVersion: cas.expectedVersion, schedule, principal }),
         )
       }
 
       case "jobs.run-now": {
         if (jobDefinitionId === undefined) return Promise.resolve(requireId())
-        return run("jobs.run-now", principalId, jobDefinitionId, port.runNow({ jobDefinitionId, principal }), query)
+        return runPlan("jobs.run-now", principalId, jobDefinitionId, backend.planRunNow({ jobDefinitionId, principal }))
       }
 
       default:
@@ -360,7 +397,7 @@ function jobsInvoke(deps: JobsCommandDeps): DomainInvoke {
 
 /**
  * Build the `jobs` DomainPort override. Wire it into the Feature 007 dispatcher
- * via `wireDomainPorts(createJobsDomainPorts(port, audit))` at the composition
+ * via `wireDomainPorts(createJobsDomainPorts({ backend, audit }))` at the composition
  * root — it replaces the `not_implemented` stub without touching the registry.
  */
 export function createJobsDomainPorts(deps: JobsCommandDeps): JobsDomainPorts {

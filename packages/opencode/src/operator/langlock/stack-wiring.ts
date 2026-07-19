@@ -21,8 +21,6 @@
 export * as LangLockStackWiring from "./stack-wiring"
 
 import { Effect } from "effect"
-import type { LangLockPolicyPort } from "@opencode-ai/protocol/langlock/ports"
-import { LangLockOperatorPort } from "./langlock-port"
 import { LangLockCommandPort } from "./langlock-command-port"
 import type { LangLockAuditSink, LangLockBackend } from "./langlock-port"
 
@@ -35,8 +33,8 @@ export interface LangLockDomainWiringDeps {
 
 export interface LangLockDomainWiring {
   readonly ports: LangLockCommandPort.LangLockDomainPorts
-  /** The typed `langlock.*` operator port (also usable directly by the CLI/TUI). */
-  readonly port: LangLockPolicyPort
+  /** The un-audited langlock backend seam (reads + validated mutation plans). */
+  readonly port: LangLockBackend
   /** Symmetry with the jobs wiring; nothing background to tear down here. */
   readonly dispose: () => void
 }
@@ -53,11 +51,10 @@ const defaultAuditSink: LangLockAuditSink = {
  */
 export function createLangLockDomainWiring(deps: LangLockDomainWiringDeps): LangLockDomainWiring {
   const audit = deps.audit ?? defaultAuditSink
-  const port = LangLockOperatorPort.createLangLockPort({ backend: deps.backend })
-  const ports = LangLockCommandPort.createLangLockDomainPorts({ port, audit })
+  const ports = LangLockCommandPort.createLangLockDomainPorts({ backend: deps.backend, audit })
   return {
     ports,
-    port,
+    port: deps.backend,
     dispose: () => {},
   }
 }

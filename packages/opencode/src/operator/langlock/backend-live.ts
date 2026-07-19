@@ -1,28 +1,32 @@
 /**
- * Feature 004 / T033 (S16) — live `LangLockBackend` composition for the operator stack.
+ * Feature 004 / T033 (S16) — live `LangLockBackend` composition for the operator
+ * stack, converted to the Feature 014 `OperatorMutationPlan` commit contract (FR5).
  *
  * Turns the committed Feature 004 application adapters into the un-audited
- * `LangLockBackend` seam that `createLangLockPort` (T033) consumes, following the
- * `createLiveJobsBackend` precedent in `operator/jobs/backend-live.ts`. It is
- * HONEST about what the operator `AppRuntime` reaches:
+ * `LangLockBackend` seam the `langlock` command adapter consumes. It is HONEST
+ * about what the operator `AppRuntime` reaches:
  *
- *   - **Reachable and wired for real:** `resolve`, `set`, and `reset`. Lang Lock
- *     policy is a simple content-free document (no external assembler), so all
+ *   - **Reachable and wired for real:** `resolve`, `planSet`, and `planReset`. Lang
+ *     Lock policy is a simple content-free document (no external assembler), so all
  *     three ride the real Config.Service durable authority through the reused
  *     `LangLockPersistence` (T025). `resolve` projects the redacted effective
- *     summary; `set`/`reset` are optimistic CAS writes that also run the domain
- *     tag validation (T016) and, for a project scope, the `langlock.override`
- *     authorization gate (T029). Nothing is fabricated.
+ *     summary; `planSet`/`planReset` VALIDATE the mutation (tag allowlist T016 and,
+ *     for a project scope, the `langlock.override` gate T029) and return an
+ *     `OperatorMutationPlan` (authority + pure transform) so the Feature 007
+ *     `mutateAuthority` pipeline owns the single committed CAS write — the backend
+ *     never self-commits, so a rejected mutation leaves no persisted write. Nothing
+ *     is fabricated.
  *
  *   - **Fail-closed override authorization (Security 1).** The injected
  *     `OverridePermissionPort` defaults to DENY when a real Feature 007
  *     Permission/Policy gate is not bound, so an unconfigured project override is
- *     rejected as `unauthorized` — never a fabricated grant. The global
- *     hard-policy floor is never relaxed (the gate reuses the domain resolver).
+ *     rejected as `unauthorized` at PLAN time — never a fabricated grant and never a
+ *     phantom write. The global hard-policy floor is never relaxed (the gate reuses
+ *     the domain resolver).
  *
- * Every method returns the port's typed `LangLockPolicyError` on failure, so a
- * caller always sees an honest capability gap and never a false success. Zero
- * provider/model calls, tokens, or cost (FR33, AC13).
+ * Every method returns the typed `LangLockPolicyError` on failure, so a caller
+ * always sees an honest capability gap and never a false success. Zero provider/
+ * model calls, tokens, or cost (FR33, AC13).
  */
 export * as LangLockBackendLive from "./backend-live"
 
@@ -32,6 +36,7 @@ import { LangLockPersistence } from "@/langlock/persistence"
 import { LangLockAuthorization } from "@/langlock/authorization"
 import { Config as ConfigSchema } from "@opencode-ai/schema/langlock/config"
 import { Schema } from "effect"
+import type { OperatorMutationPlan } from "@/operator/application/handler"
 import type {
   LangLockPolicyError,
   LangLockPolicySummary,
@@ -61,6 +66,19 @@ function persistenceError(error: LangLockPersistence.LangLockPersistenceError): 
 }
 
 const DISPLAY_NAME_FALLBACK = "English (United States)"
+
+const decodeConfigSync = Schema.decodeUnknownSync(ConfigSchema.LangLockConfig)
+const encodeConfigSync = Schema.encodeSync(ConfigSchema.LangLockConfig)
+
+/** Decode a raw persisted authority payload into a `LangLockConfig`; null when absent/undecodable. */
+function decodeCurrent(current: unknown): ConfigSchema.LangLockConfig | null {
+  if (current === null || current === undefined) return null
+  try {
+    return decodeConfigSync(current)
+  } catch {
+    return null
+  }
+}
 
 /** Project the resolved effective config plus the global base onto the operator summary (FR7, C4). */
 function toSummary(
@@ -107,53 +125,48 @@ export function createLiveLangLockBackend(deps: LiveLangLockBackendDeps): LangLo
   const resolve = (input: PolicyResolveInput): Effect.Effect<LangLockPolicySummary, LangLockPolicyError> =>
     summaryFor(input, Date.now())
 
-  const set = (input: PolicySetInput): Effect.Effect<LangLockPolicySummary, LangLockPolicyError> =>
+  /**
+   * Validate a `set` (tag allowlist + the fail-closed override gate) at PLAN time and
+   * hand the dispatcher an `OperatorMutationPlan`. The CAS write + audit run once via
+   * `mutateAuthority`, never here — a rejected validation returns before any plan, so
+   * no write is ever persisted. The pure `apply` bumps the content-free document's
+   * domain `policy_version` off the committed `current` payload (CAS ordering makes
+   * `current` the plan-time base).
+   */
+  const planSet = (input: PolicySetInput): Effect.Effect<OperatorMutationPlan, LangLockPolicyError> =>
     Effect.gen(function* () {
       const validation = TagValidation.validateTag(input.tag, allowlist)
       if (!validation.ok) return yield* Effect.fail<LangLockPolicyError>({ type: "invalid_tag", tag: input.tag })
 
       const scope = input.scope === "project" ? "project" : "global"
-      const current = yield* persistence
-        .readConfig(scope, input.scopeId)
-        .pipe(Effect.mapError(persistenceError))
-      const currentVersion = current?.config.version ?? 0
-      if (input.expectedVersion !== currentVersion) {
-        return yield* Effect.fail<LangLockPolicyError>({
-          type: "version_conflict",
-          expectedVersion: input.expectedVersion,
-          actualVersion: currentVersion,
-        })
-      }
-
       const globalPersisted = yield* persistence.readConfig("global", "").pipe(Effect.mapError(persistenceError))
       const globalConfig = globalPersisted?.config ?? LangLockPersistence.defaultConfig
       const overrideAuthorized = yield* authorizeSet(input, scope, globalConfig)
 
-      const nextConfig = buildConfig({ tag: validation.tag, scope, currentVersion, overrideAuthorized, base: current?.config ?? globalConfig })
-      yield* persistence
-        .saveConfig({ scope, scopeId: input.scopeId, config: nextConfig, expectedVersion: current?.casVersion ?? null })
-        .pipe(Effect.mapError(persistenceError))
-      return yield* summaryFor(input, Date.now())
+      const tag = validation.tag
+      const apply = (current: unknown): unknown => {
+        const decoded = decodeCurrent(current)
+        const nextConfig = buildConfig({
+          tag,
+          scope,
+          currentVersion: decoded?.version ?? 0,
+          overrideAuthorized,
+          base: decoded ?? globalConfig,
+        })
+        return encodeConfigSync(nextConfig)
+      }
+      return { authority: persistence.authorityFor(scope, input.scopeId), apply }
     })
 
-  const reset = (input: PolicyResetInput): Effect.Effect<LangLockPolicySummary, LangLockPolicyError> =>
-    Effect.gen(function* () {
-      const scope = input.scope === "project" ? "project" : "global"
-      const current = yield* persistence.readConfig(scope, input.scopeId).pipe(Effect.mapError(persistenceError))
-      const currentVersion = current?.config.version ?? 0
-      if (input.expectedVersion !== currentVersion) {
-        return yield* Effect.fail<LangLockPolicyError>({
-          type: "version_conflict",
-          expectedVersion: input.expectedVersion,
-          actualVersion: currentVersion,
-        })
-      }
-      const nextConfig = resetConfig(scope, currentVersion)
-      yield* persistence
-        .saveConfig({ scope, scopeId: input.scopeId, config: nextConfig, expectedVersion: current?.casVersion ?? null })
-        .pipe(Effect.mapError(persistenceError))
-      return yield* summaryFor(input, Date.now())
-    })
+  /** Plan a reset-to-default write; validation-free, so `mutateAuthority` owns the sole CAS write. */
+  const planReset = (input: PolicyResetInput): Effect.Effect<OperatorMutationPlan, LangLockPolicyError> => {
+    const scope = input.scope === "project" ? "project" : "global"
+    const apply = (current: unknown): unknown => {
+      const decoded = decodeCurrent(current)
+      return encodeConfigSync(resetConfig(scope, decoded?.version ?? 0))
+    }
+    return Effect.succeed({ authority: persistence.authorityFor(scope, input.scopeId), apply })
+  }
 
   /** Run the T029 override gate for a project set; a global set needs only a trusted principal. */
   const authorizeSet = (
@@ -190,7 +203,7 @@ export function createLiveLangLockBackend(deps: LiveLangLockBackendDeps): LangLo
       return scope === "project"
     })
 
-  return { resolve, set, reset }
+  return { resolve, planSet, planReset }
 }
 
 /** Build the next `LangLockConfig` document for a `set` (content-free, version bumped). */

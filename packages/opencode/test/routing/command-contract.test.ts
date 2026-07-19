@@ -36,7 +36,10 @@ const SURFACE: ReadonlyArray<readonly [string, boolean, boolean]> = [
   ["telemetry.on", true, true],
   ["telemetry.off", true, true],
   ["telemetry.configure", true, true],
-  ["telemetry.test", true, false],
+  // A reachability probe is read-only (returns a `query`, like `routing.test`);
+  // the prior `mutates:true` made the dispatcher reject every dispatch (Feature 014
+  // fix round). offlineCapable stays false — it dials the OTLP endpoint.
+  ["telemetry.test", false, false],
 ]
 
 function ctx(id: string, payload?: unknown): HandlerContext {
