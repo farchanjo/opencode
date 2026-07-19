@@ -311,6 +311,19 @@ macro_rules! export_ffi_abi {
 mod tests {
     use super::*;
     use std::ffi::CStr;
+    use std::sync::{Mutex, MutexGuard};
+
+    /// Serializes tests that observe the process-global alloc/free counters, so
+    /// their deltas are exact even though the harness runs tests in parallel and
+    /// the counters are shared static state.
+    static COUNTER_LOCK: Mutex<()> = Mutex::new(());
+
+    /// Acquire the counter lock, tolerating poisoning from an unrelated failure.
+    fn counter_guard() -> MutexGuard<'static, ()> {
+        COUNTER_LOCK
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+    }
 
     /// Reclaim a boundary pointer and return its JSON payload as an owned String.
     fn take(ptr: *mut c_char) -> String {
@@ -322,12 +335,14 @@ mod tests {
 
     #[test]
     fn success_envelope_matches_cue_shape() {
+        let _guard = counter_guard();
         let ptr = protect(|| Ok(serde_json::json!({ "content": "hi" })));
         assert_eq!(take(ptr), r#"{"status":"ok","result":{"content":"hi"}}"#);
     }
 
     #[test]
     fn error_envelope_matches_cue_shape() {
+        let _guard = counter_guard();
         let ptr = protect(|| Err(FfiError::new(FfiErrorCode::NotFound, "nope")));
         assert_eq!(
             take(ptr),
@@ -362,6 +377,7 @@ mod tests {
 
     #[test]
     fn panic_body_yields_internal_panic_without_leaking_details() {
+        let _guard = counter_guard();
         let ptr = protect(|| -> Result<Value, FfiError> { panic!("secret backtrace 0xdeadbeef") });
         let json = take(ptr);
         assert!(json.contains(r#""code":"internal_panic""#), "got {json}");
@@ -371,6 +387,7 @@ mod tests {
 
     #[test]
     fn alloc_counter_returns_to_at_rest_after_free() {
+        let _guard = counter_guard();
         let before = allocations();
         let freed_before = frees();
         let ptr = protect(|| Ok(serde_json::json!({ "x": 1 })));
@@ -383,6 +400,7 @@ mod tests {
 
     #[test]
     fn free_is_a_no_op_on_null() {
+        let _guard = counter_guard();
         let before = frees();
         free(std::ptr::null_mut());
         assert_eq!(frees(), before, "null free must not touch the counter");
@@ -409,6 +427,7 @@ mod tests {
 
     #[test]
     fn alloc_stats_json_is_balanced_at_rest() {
+        let _guard = counter_guard();
         // Drain any in-flight pointer this test makes, then assert the reported
         // counters agree with the live accessors.
         let ptr = protect(|| Ok(Value::Null));
