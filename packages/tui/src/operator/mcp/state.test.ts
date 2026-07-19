@@ -11,9 +11,29 @@ import {
   EMPTY_MCP_PANEL_SIGNAL,
   MAX_VISIBLE_CALLS,
   MAX_VISIBLE_SERVERS,
+  projectMcpSignal,
   resolveMcpExpandAction,
   type McpPanelSignal,
 } from "./state"
+
+function capabilitySet(serverId: string): NegotiatedCapabilitySet {
+  return {
+    serverId,
+    protocolVersion: "2025-11-25",
+    tools: true,
+    toolsListChanged: false,
+    resources: false,
+    resourcesSubscribe: false,
+    resourcesListChanged: false,
+    prompts: false,
+    promptsListChanged: false,
+    logging: false,
+    roots: false,
+    experimentalTasks: false,
+    experimentalContentStream: false,
+    recordedAt: "2026-07-18T00:00:00.000Z",
+  }
+}
 
 function server(id: string, overrides: Partial<McpServerProfile> = {}): McpServerProfile {
   return {
@@ -146,5 +166,36 @@ describe("mcp-panel signal + projections (FR29, FR48, FR57, C14, C24)", () => {
     }
     expect(derivePanelPageView(signal, "outref_1")?.text).toBe("hi")
     expect(derivePanelPageView(signal, "outref_missing")).toBeNull()
+  })
+})
+
+describe("projectMcpSignal — total structured-result projection (Feature 012 T008, FR4, FR8)", () => {
+  test("an mcp.server.list effective projects the servers (projected)", () => {
+    const result = projectMcpSignal({ servers: [server("server_1"), server("server_2")] })
+    expect(result.outcome).toBe("projected")
+    expect(result.signal.servers.map((s) => s.id)).toEqual(["server_1", "server_2"])
+  })
+
+  test("an mcp.server.capabilities effective keys the negotiated set and gap by serverId", () => {
+    const result = projectMcpSignal({ capabilities: capabilitySet("server_1"), degradationGap: { code: "mcp_unavailable", reason: "reset" } })
+    expect(result.outcome).toBe("projected")
+    expect(result.signal.capabilities.server_1?.tools).toBe(true)
+    expect(result.signal.degradation.server_1?.code).toBe("mcp_unavailable")
+  })
+
+  test("an absent effective degrades to the honest empty baseline (empty_fallback) — mcp is unavailable today", () => {
+    for (const absent of [undefined, null]) {
+      const result = projectMcpSignal(absent)
+      expect(result.outcome).toBe("empty_fallback")
+      expect(result.signal).toBe(EMPTY_MCP_PANEL_SIGNAL)
+    }
+  })
+
+  test("a malformed effective degrades to the honest empty baseline without throwing (shape_mismatch)", () => {
+    for (const bad of [9, "mcp", [], {}, { servers: [{ id: 1 }] }, { capabilities: { serverId: 1 } }]) {
+      const result = projectMcpSignal(bad)
+      expect(result.outcome).toBe("shape_mismatch")
+      expect(result.signal).toBe(EMPTY_MCP_PANEL_SIGNAL)
+    }
   })
 })

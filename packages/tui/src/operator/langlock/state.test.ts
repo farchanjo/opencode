@@ -5,6 +5,7 @@ import {
   deriveVisibleAdvisories,
   EMPTY_LANGLOCK_PANEL_SIGNAL,
   MAX_VISIBLE_ADVISORIES,
+  projectLangLockSignal,
   type LangLockPanelSignal,
 } from "./state"
 
@@ -61,5 +62,36 @@ describe("langlock-panel signal + projections (FR31, FR32, C13)", () => {
   test("advisory order is preserved", () => {
     const signal: LangLockPanelSignal = { policy: null, advisories: [advisory("a1"), advisory("a2")] }
     expect(deriveVisibleAdvisories(signal).map((v) => v.advisoryId)).toEqual(["a1", "a2"])
+  })
+})
+
+describe("projectLangLockSignal — total structured-result projection (Feature 012 T004, FR4, FR8)", () => {
+  test("a valid langlock.status effective policy projects (projected)", () => {
+    const result = projectLangLockSignal(policy())
+    expect(result.outcome).toBe("projected")
+    expect(result.signal.policy?.tag).toBe("pt-BR")
+    expect(result.signal.advisories).toEqual([])
+  })
+
+  test("a { policy, advisories } combined effective projects both sections", () => {
+    const result = projectLangLockSignal({ policy: policy(), advisories: [advisory("a1"), advisory("a2")] })
+    expect(result.outcome).toBe("projected")
+    expect(result.signal.advisories.map((a) => a.advisoryId)).toEqual(["a1", "a2"])
+  })
+
+  test("an absent effective degrades to the honest empty baseline (empty_fallback)", () => {
+    for (const absent of [undefined, null]) {
+      const result = projectLangLockSignal(absent)
+      expect(result.outcome).toBe("empty_fallback")
+      expect(result.signal).toBe(EMPTY_LANGLOCK_PANEL_SIGNAL)
+    }
+  })
+
+  test("a malformed effective degrades to the honest empty baseline without throwing (shape_mismatch)", () => {
+    for (const bad of [42, "policy", [], { tag: "pt-BR" }, { policy: { tag: 1 } }]) {
+      const result = projectLangLockSignal(bad)
+      expect(result.outcome).toBe("shape_mismatch")
+      expect(result.signal).toBe(EMPTY_LANGLOCK_PANEL_SIGNAL)
+    }
   })
 })

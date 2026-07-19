@@ -12,6 +12,7 @@
 import type { OutputStat } from "@opencode-ai/protocol/outputspool/commands"
 import { deriveEntryCardView, type OutputEntryCardView } from "./card"
 import { derivePageView, type LoadedOutputPage, type OutputPageView } from "./page"
+import { emptyFallback, isPresent, isRecord, projected, shapeMismatch, type PanelProjection } from "../projection"
 
 /** One channel entry plus the Feature 002 Session it is a direct child of (FR38, AC20). */
 export interface OutputPanelEntry {
@@ -101,6 +102,46 @@ export function resolveExpandAction(
   if (loaded === undefined) return { kind: "load" }
   if (!loaded.page.eof && loaded.cursor) return { kind: "resume", cursor: loaded.cursor }
   return { kind: "loaded" }
+}
+
+// =============================================================================
+// Structured-result projection (Feature 012 / T006, FR4, FR8)
+// =============================================================================
+
+/** Content-free `OutputStat` guard; validates the redacted ref + channel + byte fields. */
+function isOutputStat(value: unknown): value is OutputStat {
+  return (
+    isRecord(value) &&
+    typeof value.outputRef === "string" &&
+    typeof value.channel === "string" &&
+    typeof value.state === "string" &&
+    typeof value.committedBytes === "number" &&
+    typeof value.updatedAt === "string"
+  )
+}
+
+/** One panel entry guard: a direct-child Session ref plus a valid `OutputStat`. */
+function isOutputPanelEntry(value: unknown): value is OutputPanelEntry {
+  return isRecord(value) && typeof value.parentSessionId === "string" && isOutputStat(value.stat)
+}
+
+/**
+ * Total projection of an `output.stat`/`read` structured-result `effective`
+ * payload onto the `OutputPanelSignal` (FR4, FR8). `output` reads are honest-
+ * unavailable today (FR8), so the runtime path resolves to `empty_fallback` until
+ * a later backend feature; the projection is written total regardless. Absent →
+ * `empty_fallback`; a malformed shape → `shape_mismatch`; both degrade to
+ * `EMPTY_OUTPUT_PANEL_SIGNAL`. Never throws, never fetches a page. `pages` stays
+ * empty: a stat/read list never carries loaded page bodies — the panel loads them
+ * lazily on an authorized expand (see `resolveExpandAction`, C23).
+ */
+export function projectOutputSignal(effective: unknown): PanelProjection<OutputPanelSignal> {
+  if (!isPresent(effective)) return emptyFallback(EMPTY_OUTPUT_PANEL_SIGNAL)
+  if (!isRecord(effective) || typeof effective.currentSessionId !== "string" || !Array.isArray(effective.entries)) {
+    return shapeMismatch(EMPTY_OUTPUT_PANEL_SIGNAL)
+  }
+  if (!effective.entries.every(isOutputPanelEntry)) return shapeMismatch(EMPTY_OUTPUT_PANEL_SIGNAL)
+  return projected({ currentSessionId: effective.currentSessionId, entries: effective.entries, pages: {} })
 }
 
 export * as OutputPanelState from "./state"

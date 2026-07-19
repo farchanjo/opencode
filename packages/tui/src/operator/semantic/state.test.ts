@@ -10,6 +10,7 @@ import {
   isEmbeddingEligible,
   isRerankerEligible,
   MAX_VISIBLE_MODELS,
+  projectSemanticSignal,
   type SemanticPanelSignal,
 } from "./state"
 
@@ -84,5 +85,37 @@ describe("semantic-panel signal + projections (FR29, FR30, C16, AC34)", () => {
     expect(candidates.map((c) => c.modelDescriptorIdText)).toEqual(["reranker-eligible"])
     expect(isRerankerEligible(models[1]!)).toBe(false)
     expect(isEmbeddingEligible(models[0]!)).toBe(false)
+  })
+})
+
+describe("projectSemanticSignal — total structured-result projection (Feature 012 T007, FR4, FR8)", () => {
+  test("a semantic.model.list effective projects the descriptors (projected)", () => {
+    const result = projectSemanticSignal({ descriptors: [descriptor("model_a"), descriptor("model_b")] })
+    expect(result.outcome).toBe("projected")
+    expect(result.signal.models.map((m) => m.id)).toEqual(["model_a", "model_b"])
+  })
+
+  test("a semantic.binding.status effective projects the pinned bindings and degradation", () => {
+    const result = projectSemanticSignal({ embedding: binding("embedding"), reranker: binding("reranker"), degradation: { rung: "full_semantic" } })
+    expect(result.outcome).toBe("projected")
+    expect(result.signal.embeddingBinding?.slot).toBe("embedding")
+    expect(result.signal.rerankerBinding?.slot).toBe("reranker")
+    expect(result.signal.degradation?.rung).toBe("full_semantic")
+  })
+
+  test("an absent effective degrades to the honest empty baseline (empty_fallback) — semantic is unavailable today", () => {
+    for (const absent of [undefined, null]) {
+      const result = projectSemanticSignal(absent)
+      expect(result.outcome).toBe("empty_fallback")
+      expect(result.signal).toBe(EMPTY_SEMANTIC_PANEL_SIGNAL)
+    }
+  })
+
+  test("a malformed effective degrades to the honest empty baseline without throwing (shape_mismatch)", () => {
+    for (const bad of [3, "semantic", [], {}, { descriptors: [{ id: 1 }] }, { descriptors: "x" }]) {
+      const result = projectSemanticSignal(bad)
+      expect(result.outcome).toBe("shape_mismatch")
+      expect(result.signal).toBe(EMPTY_SEMANTIC_PANEL_SIGNAL)
+    }
   })
 })

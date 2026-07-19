@@ -36,6 +36,7 @@ import {
   type ServerCardView,
 } from "./card"
 import { derivePageView, type LoadedOutputPage, type OutputPageView } from "../output/page"
+import { emptyFallback, isPresent, isRecord, projected, shapeMismatch, type PanelProjection } from "../projection"
 
 /**
  * Raw MCP signal the caller assembles from the Feature 007 registry's
@@ -147,6 +148,56 @@ export function resolveMcpExpandAction(signal: McpPanelSignal, expandedRef: stri
   if (loaded === undefined) return { kind: "load" }
   if (!loaded.page.eof && loaded.cursor) return { kind: "resume", cursor: loaded.cursor }
   return { kind: "loaded" }
+}
+
+// =============================================================================
+// Structured-result projection (Feature 012 / T008, FR4, FR8)
+// =============================================================================
+
+/** Server-profile guard; validates the identity + transport + connection fields (credential-free). */
+function isServerProfile(value: unknown): value is McpServerProfile {
+  return (
+    isRecord(value) &&
+    typeof value.id === "string" &&
+    typeof value.name === "string" &&
+    typeof value.transportKind === "string" &&
+    typeof value.connectionState === "string" &&
+    typeof value.enabled === "boolean"
+  )
+}
+
+/** Negotiated-capability-set guard; validates the server key + protocol fields. */
+function isCapabilitySet(value: unknown): value is NegotiatedCapabilitySet {
+  return isRecord(value) && typeof value.serverId === "string" && typeof value.protocolVersion === "string" && typeof value.tools === "boolean"
+}
+
+/** Degradation-gap guard; validates the typed code + reason fields. */
+function isDegradationGap(value: unknown): value is DegradationGap {
+  return isRecord(value) && typeof value.code === "string" && typeof value.reason === "string"
+}
+
+/**
+ * Total projection of an `mcp.server.list`/`server.capabilities` structured-result
+ * `effective` payload onto the `McpPanelSignal` (FR4, FR8). `mcp` reads are honest-
+ * unavailable today (FR8) → runtime `empty_fallback` until a later backend feature;
+ * the projection is written total. A `server.list` populates `servers`; a
+ * `server.capabilities` keys the negotiated set (and any degradation gap) by its
+ * own `serverId`. Absent → `empty_fallback`; a malformed shape → `shape_mismatch`;
+ * both degrade to `EMPTY_MCP_PANEL_SIGNAL`. Never throws, never fetches a page.
+ */
+export function projectMcpSignal(effective: unknown): PanelProjection<McpPanelSignal> {
+  if (!isPresent(effective)) return emptyFallback(EMPTY_MCP_PANEL_SIGNAL)
+  if (!isRecord(effective)) return shapeMismatch(EMPTY_MCP_PANEL_SIGNAL)
+  if (Array.isArray(effective.servers)) {
+    if (!effective.servers.every(isServerProfile)) return shapeMismatch(EMPTY_MCP_PANEL_SIGNAL)
+    return projected({ ...EMPTY_MCP_PANEL_SIGNAL, servers: effective.servers })
+  }
+  if (isCapabilitySet(effective.capabilities)) {
+    const capabilitySet = effective.capabilities
+    const degradation = isDegradationGap(effective.degradationGap) ? { [capabilitySet.serverId]: effective.degradationGap } : {}
+    return projected({ ...EMPTY_MCP_PANEL_SIGNAL, capabilities: { [capabilitySet.serverId]: capabilitySet }, degradation })
+  }
+  return shapeMismatch(EMPTY_MCP_PANEL_SIGNAL)
 }
 
 export * as McpPanelState from "./state"

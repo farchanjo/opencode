@@ -6,6 +6,7 @@
 import type { DegradationOutcome, SemanticModelBinding, SemanticModelDescriptor } from "@opencode-ai/protocol/semantic/commands"
 import { deriveBindingCardView, type BindingCardView } from "./card"
 import { deriveModelBadgeRowView, type ModelBadgeRowView } from "./badges"
+import { emptyFallback, isPresent, isRecord, projected, shapeMismatch, type PanelProjection } from "../projection"
 
 /**
  * Raw semantic signal the caller assembles from the Feature 007 registry's
@@ -76,6 +77,63 @@ export function deriveEmbeddingSelectorCandidates(signal: SemanticPanelSignal): 
 /** The reranker selector's eligible candidates only — excludes profile C (`embedding-similarity`) (FR30, C16, AC34). */
 export function deriveRerankerSelectorCandidates(signal: SemanticPanelSignal): readonly ModelBadgeRowView[] {
   return signal.models.filter(isRerankerEligible).slice(0, MAX_VISIBLE_MODELS).map(deriveModelBadgeRowView)
+}
+
+// =============================================================================
+// Structured-result projection (Feature 012 / T007, FR4, FR8)
+// =============================================================================
+
+/** Model-descriptor guard; validates the identity + capability + probe fields. */
+function isModelDescriptor(value: unknown): value is SemanticModelDescriptor {
+  return (
+    isRecord(value) &&
+    typeof value.id === "string" &&
+    typeof value.displayName === "string" &&
+    Array.isArray(value.capabilityKinds) &&
+    typeof value.probeState === "string" &&
+    typeof value.enabled === "boolean"
+  )
+}
+
+/** Binding guard; validates the SSOT identity + slot + state fields. */
+function isModelBinding(value: unknown): value is SemanticModelBinding {
+  return isRecord(value) && typeof value.id === "string" && typeof value.slot === "string" && typeof value.state === "string"
+}
+
+/** Degradation-outcome guard; validates the bounded `rung` field. */
+function isDegradationOutcome(value: unknown): value is DegradationOutcome {
+  return isRecord(value) && typeof value.rung === "string"
+}
+
+/** Collect the descriptors from a `semantic.model.list` (`descriptors[]`) effective; null on a present-but-malformed array, [] when absent. */
+function collectDescriptors(value: unknown): readonly SemanticModelDescriptor[] | null {
+  if (value === undefined) return []
+  if (!Array.isArray(value)) return null
+  return value.every(isModelDescriptor) ? value : null
+}
+
+/**
+ * Total projection of a `semantic.model.list`/`binding.status` structured-result
+ * `effective` payload onto the `SemanticPanelSignal` (FR4, FR8). `semantic` reads
+ * are honest-unavailable today (FR8) → runtime `empty_fallback` until a later
+ * backend feature; the projection is written total. Absent → `empty_fallback`; a
+ * payload that names neither read (no `descriptors`/`embedding`/`reranker`/
+ * `degradation`) or a malformed one → `shape_mismatch`; both degrade to
+ * `EMPTY_SEMANTIC_PANEL_SIGNAL`. Never re-embeds, never substitutes a binding.
+ */
+export function projectSemanticSignal(effective: unknown): PanelProjection<SemanticPanelSignal> {
+  if (!isPresent(effective)) return emptyFallback(EMPTY_SEMANTIC_PANEL_SIGNAL)
+  if (!isRecord(effective)) return shapeMismatch(EMPTY_SEMANTIC_PANEL_SIGNAL)
+  const names = "descriptors" in effective || "embedding" in effective || "reranker" in effective || "degradation" in effective
+  if (!names) return shapeMismatch(EMPTY_SEMANTIC_PANEL_SIGNAL)
+  const models = collectDescriptors(effective.descriptors)
+  if (models === null) return shapeMismatch(EMPTY_SEMANTIC_PANEL_SIGNAL)
+  return projected({
+    models,
+    ...(isModelBinding(effective.embedding) ? { embeddingBinding: effective.embedding } : {}),
+    ...(isModelBinding(effective.reranker) ? { rerankerBinding: effective.reranker } : {}),
+    ...(isDegradationOutcome(effective.degradation) ? { degradation: effective.degradation } : {}),
+  })
 }
 
 export * as SemanticPanelState from "./state"

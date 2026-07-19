@@ -6,6 +6,7 @@
 import type { AdvisoryRecord, LangLockPolicySummary } from "@opencode-ai/protocol/langlock/commands"
 import { deriveAdvisoryRowView, type AdvisoryRowView } from "./history"
 import { derivePolicyCardView, type LangLockPolicyCardView } from "./card"
+import { emptyFallback, isPresent, isRecord, projected, shapeMismatch, type PanelProjection } from "../projection"
 
 /**
  * Raw langlock signal the caller assembles from the Feature 007 registry's
@@ -45,6 +46,53 @@ export function derivePolicyView(signal: LangLockPanelSignal): LangLockPolicyCar
 /** Bounded, order-preserving advisory history row list. */
 export function deriveVisibleAdvisories(signal: LangLockPanelSignal): readonly AdvisoryRowView[] {
   return signal.advisories.slice(0, MAX_VISIBLE_ADVISORIES).map(deriveAdvisoryRowView)
+}
+
+// =============================================================================
+// Structured-result projection (Feature 012 / T004, FR4, FR8)
+// =============================================================================
+
+/** Structural guard for the redacted `LangLockPolicySummary` carried on `langlock.status`/`show` effective. */
+function isPolicySummary(value: unknown): value is LangLockPolicySummary {
+  return (
+    isRecord(value) &&
+    typeof value.enabled === "boolean" &&
+    typeof value.tag === "string" &&
+    typeof value.displayName === "string" &&
+    typeof value.scope === "string" &&
+    typeof value.origin === "string" &&
+    typeof value.policyVersion === "number" &&
+    typeof value.enforcementMode === "string" &&
+    typeof value.hardPolicyFloorTag === "string" &&
+    typeof value.overrideAuthorized === "boolean" &&
+    typeof value.updatedAt === "string"
+  )
+}
+
+/** Content-free advisory guard; validates the discriminating id + lifecycle fields only. */
+function isAdvisoryRecord(value: unknown): value is AdvisoryRecord {
+  return (
+    isRecord(value) &&
+    typeof value.advisoryId === "string" &&
+    typeof value.policyVersion === "number" &&
+    typeof value.state === "string" &&
+    typeof value.remediationStatus === "string"
+  )
+}
+
+/**
+ * Total projection of a `langlock.status`/`show` structured-result `effective`
+ * payload onto the `LangLockPanelSignal` (FR4, FR8). The read effective is a bare
+ * redacted `LangLockPolicySummary`; a combined read may wrap it as `{ policy,
+ * advisories }`. Absent → `empty_fallback`; a payload with no valid policy →
+ * `shape_mismatch`; both degrade to `EMPTY_LANGLOCK_PANEL_SIGNAL`. Never throws.
+ */
+export function projectLangLockSignal(effective: unknown): PanelProjection<LangLockPanelSignal> {
+  if (!isPresent(effective)) return emptyFallback(EMPTY_LANGLOCK_PANEL_SIGNAL)
+  const policy = isPolicySummary(effective) ? effective : isRecord(effective) && isPolicySummary(effective.policy) ? effective.policy : null
+  if (policy === null) return shapeMismatch(EMPTY_LANGLOCK_PANEL_SIGNAL)
+  const advisories = isRecord(effective) && Array.isArray(effective.advisories) ? effective.advisories.filter(isAdvisoryRecord) : []
+  return projected({ policy, advisories })
 }
 
 export * as LangLockPanelState from "./state"

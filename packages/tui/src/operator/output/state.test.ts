@@ -5,6 +5,7 @@ import {
   derivePanelPageView,
   EMPTY_OUTPUT_PANEL_SIGNAL,
   MAX_VISIBLE_ENTRIES,
+  projectOutputSignal,
   resolveExpandAction,
   type OutputPanelEntry,
   type OutputPanelSignal,
@@ -88,5 +89,30 @@ describe("output-panel signal + projections (FR38, FR41, C22, C23, AC20)", () =>
     }
     expect(derivePanelPageView(signal, "outref_1")?.text).toBe("hi")
     expect(derivePanelPageView(signal, "outref_missing")).toBeNull()
+  })
+})
+
+describe("projectOutputSignal — total structured-result projection (Feature 012 T006, FR4, FR8)", () => {
+  test("a well-formed output effective projects its direct-child entries (projected)", () => {
+    const result = projectOutputSignal({ currentSessionId: "session_a", entries: [entry("outref_1", "session_a")], pages: {} })
+    expect(result.outcome).toBe("projected")
+    expect(result.signal.currentSessionId).toBe("session_a")
+    expect(deriveDirectChildEntries(result.signal).length).toBe(1)
+  })
+
+  test("an absent effective degrades to the honest empty baseline (empty_fallback) — output is unavailable today", () => {
+    for (const absent of [undefined, null]) {
+      const result = projectOutputSignal(absent)
+      expect(result.outcome).toBe("empty_fallback")
+      expect(result.signal).toBe(EMPTY_OUTPUT_PANEL_SIGNAL)
+    }
+  })
+
+  test("a malformed effective degrades to the honest empty baseline without throwing (shape_mismatch)", () => {
+    for (const bad of [1, "output", [], {}, { currentSessionId: 1, entries: [] }, { currentSessionId: "s", entries: [{ stat: {} }] }]) {
+      const result = projectOutputSignal(bad)
+      expect(result.outcome).toBe("shape_mismatch")
+      expect(result.signal).toBe(EMPTY_OUTPUT_PANEL_SIGNAL)
+    }
   })
 })
