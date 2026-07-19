@@ -170,10 +170,23 @@ export {
   listOperatorSettingsEntries,
   listAllOperatorSettingsDomains,
   buildOperatorPaletteCommands,
+  buildOperatorGroupList,
+  buildOperatorDomainPanel,
   isOperatorSecretRelatedId,
   isOperatorSecretMutationId,
   OPERATOR_SETTINGS_DOMAINS,
+  OPERATOR_PERSISTING_DOMAINS,
+  OPERATOR_INPUT_MODES,
+  OPERATOR_TOP_TITLE,
+  OPERATOR_TOP_SUBTITLE,
   type OperatorPaletteEntry,
+  type OperatorDomainGroup,
+  type OperatorDomainPanel,
+  type OperatorVerbItem,
+  type OperatorVerbSection,
+  type OperatorVerbAvailability,
+  type OperatorInputMode,
+  type OperatorPersistenceClass,
 } from "./palette"
 
 export {
