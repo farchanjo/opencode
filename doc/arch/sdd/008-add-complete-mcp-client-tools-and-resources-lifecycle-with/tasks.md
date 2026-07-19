@@ -419,7 +419,7 @@ enforced (see the Traceability reconciliation note).
   `bun test packages/opencode` asserts logging notifications are redacted and rate-limited into
   native logging, retention follows the native policy, and `mcp.logging.level.set` changes the
   level via Feature 007 only with audit.
-- [ ] T037 [S13–S23] Author the barrel `packages/opencode/src/mcp/index.ts` re-exports (extend
+- [x] T037 [S13–S23] Author the barrel `packages/opencode/src/mcp/index.ts` re-exports (extend
   the reworked service module) to surface the progress-sink, catalog walker, spool-bridge,
   resource-adapter, secret-bridge, experimental adapters, reindex-trigger, and logging-bridge
   modules, and wire `publishMcpEvent` into `packages/opencode/src/event-v2-bridge.ts` (mirroring

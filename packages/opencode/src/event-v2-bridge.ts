@@ -20,6 +20,8 @@ import { Events as OutputSpoolEvents } from "@opencode-ai/schema/outputspool/eve
 import { EventDefinitions as OutputSpoolEventDefinitions } from "@opencode-ai/schema/outputspool/event-definitions"
 import type { Events as SemanticEvents } from "@opencode-ai/schema/semantic/events"
 import { DurableEvents } from "@/semantic/durable-events"
+import type { Events as McpEvents } from "@opencode-ai/schema/mcp/events"
+import { McpDurableEvents } from "@/mcp/durable-events"
 
 // =============================================================================
 // Feature 001 / T031 — routing, hierarchy and capability EventV2 definitions
@@ -264,6 +266,28 @@ export interface Interface extends EventV2.Interface {
    */
   readonly publishSemanticEvent: (
     event: SemanticEvents.SemanticEvent,
+    options?: EventV2.PublishOptions,
+  ) => Effect.Effect<EventV2.Payload>
+
+  /**
+   * Feature 008 / T037 — bridge one `McpEvents.McpEvent` member (the closed
+   * 15-member `mcp.*` vocabulary, `packages/schema/src/mcp/events.ts`, C3) onto the
+   * EventV2 bus through the location-aware `publish` above, mirroring
+   * `publishSemanticEvent`. Each member publishes through its own wire `Definition`
+   * from `@opencode-ai/schema/mcp/event-definitions` (the single canonical copy the
+   * durable manifest also joins, T009); no raw tagged union is ever wired to the bus
+   * (C3). The ten durable members additionally carry a top-level `correlation_id`,
+   * projected from `envelope.ordering.correlation_id` (the `durable.aggregate` key);
+   * the five live signals (`mcp.call.started`/`mcp.call.progress`/
+   * `mcp.call.cancel_requested`/`mcp.task.status`/`mcp.log`) omit it, commit no
+   * sequence, and MAY be dropped under `allBounded` load without affecting durable
+   * connection/catalog/subscription state. Every payload is content-free — opaque
+   * ids and redacted metadata only, never a body, URI-as-content, secret, or path
+   * (FR38, FR56, C3, C26). The `mcp.*` EventV2 prefix is distinct from the Feature
+   * 007 `mcp.*` operator command domain and this bridge never touches it (C25, C26).
+   */
+  readonly publishMcpEvent: (
+    event: McpEvents.McpEvent,
     options?: EventV2.PublishOptions,
   ) => Effect.Effect<EventV2.Payload>
 }
@@ -754,6 +778,17 @@ const layer = Layer.effect(
       return publish(projected.definition, projected.data, options)
     }
 
+    // Feature 008 / T037 — one boundary for the closed 15-member mcp.* vocabulary
+    // (C3). The projection (mcp/durable-events.ts) resolves the wire Definition and,
+    // for the ten durable members, carries the top-level `correlation_id` (the
+    // durable aggregate key) projected from `envelope.ordering.correlation_id`; the
+    // five live members omit it and commit no sequence. Content-free: opaque ids +
+    // redacted metadata only, never a body, URI-as-content, secret, or path.
+    const publishMcpEvent: Interface["publishMcpEvent"] = (event, options) => {
+      const projected = McpDurableEvents.projectForPublish(event)
+      return publish(projected.definition, projected.data, options)
+    }
+
     const unsubscribe = yield* events.listen((event) =>
       Effect.gen(function* () {
         const ctx = yield* InstanceRef
@@ -784,7 +819,7 @@ const layer = Layer.effect(
     )
     yield* Effect.addFinalizer(() => unsubscribe)
 
-    return Service.of({ ...events, publish, publishRoutingEvent, publishLifecycleEvent, publishTodoEvent, publishJobEvent, publishLangLockEvent, publishOutputEvent, publishSemanticEvent })
+    return Service.of({ ...events, publish, publishRoutingEvent, publishLifecycleEvent, publishTodoEvent, publishJobEvent, publishLangLockEvent, publishOutputEvent, publishSemanticEvent, publishMcpEvent })
   }),
 )
 

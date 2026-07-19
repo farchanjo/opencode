@@ -1007,3 +1007,21 @@ export const node = LayerNode.make({
 })
 
 export * as MCP from "."
+
+// Feature 008 / T037 (S23) — additive re-exports surfacing the reworked host's new
+// application modules (the SDK probe, the real progress sink, the spool bridge, the
+// resource adapter, the secret bridge, the experimental Tasks/sampling/elicitation
+// adapters, the reindex-trigger seam, the logging bridge, and the durable-event
+// projection) without changing the existing `MCP.Service` seams (C27). The durable
+// `mcp.*` events reach the EventV2 bridge once via `publishMcpEvent`.
+export { McpSdkProbe } from "./sdk-probe"
+export { McpProgressSink } from "./progress-sink"
+export { McpSpoolBridge } from "./spool-bridge"
+export { McpResourceAdapter } from "./resource-adapter"
+export { McpSecretBridge } from "./secret-bridge"
+export { McpReindexTrigger } from "./reindex-trigger"
+export { McpLoggingBridge } from "./logging-bridge"
+export { McpDurableEvents } from "./durable-events"
+export { McpTasks } from "./experimental/tasks"
+export { McpSampling } from "./experimental/sampling"
+export { McpElicitation } from "./experimental/elicitation"
