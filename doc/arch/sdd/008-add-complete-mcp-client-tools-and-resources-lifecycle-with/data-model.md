@@ -771,6 +771,22 @@ export type McpEvent = Schema.Schema.Type<typeof McpEvent>
 | Durable (10) | `mcp.server.status`, `mcp.server.capabilities_changed`, `mcp.tools_changed`, `mcp.resources_changed`, `mcp.resource_updated`, `mcp.call.settled`, `mcp.call.cancelled`, `mcp.task.settled`, `mcp.subscription.subscribed`, `mcp.subscription.unsubscribed` | `durable {version, aggregate}`; persist for reindex and audit correlation (FR38, C3) |
 | Live (5) | `mcp.call.started`, `mcp.call.progress`, `mcp.call.cancel_requested`, `mcp.task.status`, `mcp.log` | bounded live channel; coalesced and droppable under load; never required to persist (FR14, FR38, C3, C7) |
 
+**Reconciliation resolution (`mcp.call.cancel_requested` durable/live; C8 audit).** The
+CUE corpus (`event-types.cue` + `events-live.cue`) is the wire-shape authority and classes
+`mcp.call.cancel_requested` **live** — this data-model mirrors it (10 durable / 5 live, 15
+members). An earlier `contracts/ports.ts` draft classed the request signal **durable** (and
+carried an extra `mcp.subscription.fail_closed` durable member) with an inline comment
+flagging the gap. That draft is reconciled to CUE: `mcp.call.cancel_requested` stays a
+**live pre-settlement signal**, and the C8 audit requirement — an unacknowledged-remote
+cancel outcome must be **recorded** — is satisfied by the **durable** `mcp.call.cancelled`
+settlement member, whose `CancelOutcome` (`acknowledged` / `cancel_requested` /
+`unknown_remote`) is the persisted audit record. `mcp.subscription.*` is exactly the two
+durable transitions `subscribed` / `unsubscribed`; the subscription `fail_closed` posture is
+a `SubscriptionState` value, not a persisted event. No audit trail is lost and no dual
+spelling or dual authority survives (FR17, FR38, C3, C8). T012 re-derives the protocol port
+members from the schema enums; T041 pins the parity across CUE, the schema modules, the
+protocol mirror, and this data-model.
+
 ---
 
 ## Parameters

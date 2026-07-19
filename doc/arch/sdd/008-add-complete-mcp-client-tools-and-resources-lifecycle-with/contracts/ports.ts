@@ -241,15 +241,21 @@ export type ReservedMcpCommandId = (typeof RESERVED_MCP_COMMAND_IDS)[number]
 
 /**
  * Durable event classes: carry the EventV2 `durable {version, aggregate}`
- * annotation and persist for reindex/audit correlation (C3). Reconciliation
- * note: FR38 lists `mcp.call.cancel_requested` but C3's explicit durable
- * enumeration omits it; C8 requires the unacknowledged-remote outcome to be
- * **recorded** (`cancel-requested` / `unknown-remote`) for audit, so it is
- * classified durable here to satisfy C8 without contradicting FR38's
- * normative set — flagged for the ADR/plan to reconcile explicitly rather
- * than left as a silent gap. `mcp.subscription.*` expands to the three
- * {@link SubscriptionState} transitions that matter for audit
- * (`subscribed`/`unsubscribed`/`fail_closed`).
+ * annotation and persist for reindex/audit correlation (C3).
+ *
+ * Reconciliation (resolved; authority = the CUE corpus `event-types.cue` +
+ * `events-live.cue`, mirrored by `data-model.md`): the closed vocabulary is
+ * **15 members — 10 durable / 5 live**. `mcp.call.cancel_requested` is a
+ * **live** pre-settlement signal, not durable: the unacknowledged-remote
+ * outcome C8 requires for audit is recorded by the **durable**
+ * `mcp.call.cancelled` settlement member, whose {@link CancelOutcome} carries
+ * `cancel_requested` / `unknown_remote`, so keeping the request signal live
+ * loses no audit trail while matching FR38's normative set. `mcp.subscription.*`
+ * is exactly the two durable audit transitions `subscribed` / `unsubscribed`;
+ * the subscription `fail_closed` posture is a {@link SubscriptionState} value,
+ * not a separately persisted event member. This module now matches CUE and the
+ * data-model exactly (no dual authority); T012 re-derives these members from the
+ * `packages/schema/src/mcp` enums and T041 pins the parity.
  */
 export const DURABLE_MCP_EVENT_TYPES = [
   "mcp.server.status",
@@ -258,20 +264,19 @@ export const DURABLE_MCP_EVENT_TYPES = [
   "mcp.resources_changed",
   "mcp.resource_updated",
   "mcp.call.settled",
-  "mcp.call.cancel_requested",
   "mcp.call.cancelled",
   "mcp.task.settled",
   "mcp.subscription.subscribed",
   "mcp.subscription.unsubscribed",
-  "mcp.subscription.fail_closed",
 ] as const
 
 /**
  * Live event classes: omit `durable` (no sequence, no replay); MAY be
  * dropped under `allBounded` load without affecting durable connection/
- * catalog/subscription state (C3).
+ * catalog/subscription state (C3). `mcp.call.cancel_requested` is the live
+ * pre-settlement cancel signal (its durable audit is `mcp.call.cancelled`).
  */
-export const LIVE_MCP_EVENT_TYPES = ["mcp.call.started", "mcp.call.progress", "mcp.task.status", "mcp.log"] as const
+export const LIVE_MCP_EVENT_TYPES = ["mcp.call.started", "mcp.call.progress", "mcp.call.cancel_requested", "mcp.task.status", "mcp.log"] as const
 
 export type DurableMcpEventType = (typeof DURABLE_MCP_EVENT_TYPES)[number]
 export type LiveMcpEventType = (typeof LIVE_MCP_EVENT_TYPES)[number]
