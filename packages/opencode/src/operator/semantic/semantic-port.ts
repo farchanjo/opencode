@@ -26,6 +26,7 @@ export * as SemanticOperatorPort from "./semantic-port"
 
 import type { BindingPort, IndexPort, ModelPort, ProviderPort } from "@opencode-ai/protocol/semantic/ports"
 import type { Effect } from "effect"
+import type { SemanticRegistryBackend } from "./registry-backend"
 
 /** A bounded, secret-free operator audit event (never a query/secret/endpoint/path, C22). */
 export interface SemanticAuditEvent {
@@ -50,6 +51,15 @@ export interface SemanticBackend {
   readonly model: ModelPort
   readonly binding: BindingPort
   readonly index: IndexPort
+  /**
+   * The config-backed registry half (Feature 014 T009). When bound, the command
+   * adapter routes the config-backed reads + mutations (`provider.*` except `test`,
+   * `model.list|register|disable`, `binding.status|history`, `embedding|reranker`
+   * `show|select`) through it as CAS round-trip plans; the Milvus/provider-probe
+   * ops stay the typed capability gap on the four ports above (FR8). Unset falls
+   * back to the honest gap on the ports (backward-compatible).
+   */
+  readonly registry?: SemanticRegistryBackend
 }
 
 /** The typed operator port; a thin pass-through over the injected backend (mirrors outputspool-port). */

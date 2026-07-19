@@ -20,12 +20,24 @@
 export * as SemanticBackendLive from "./backend-live"
 
 import { Effect } from "effect"
+import { createConfigBackedRegistry } from "./registry-backend"
 import type { BindingPort, IndexPort, ModelPort, ProviderPort } from "@opencode-ai/protocol/semantic/ports"
+import type { ConfigPort } from "@/operator/application/ports/config-port"
 import type { SemanticBackend } from "./semantic-port"
+import type { SemanticRegistryBackend } from "./registry-backend"
 
 export interface LiveSemanticBackendDeps {
   /** Real per-port implementations the composition root injects as the stack is bound; unset falls back to the honest gap. */
   readonly override?: Partial<SemanticBackend>
+  /**
+   * The `Config.Service` seam backing the config-backed registry half (Feature 014
+   * T009). When bound, the registry reads + CAS round-trip plans are wired real; the
+   * Milvus/provider-probe ops still degrade to the typed gap. Unset keeps the
+   * whole domain an honest capability gap (the pre-014 behaviour).
+   */
+  readonly config?: ConfigPort
+  /** Optional pre-built registry (tests inject a double); defaults to the config-backed registry when `config` is set. */
+  readonly registry?: SemanticRegistryBackend
 }
 
 const NOT_BOUND = "semantic Milvus/provider stack is not bound to the operator runtime in this wave"
@@ -74,10 +86,11 @@ const indexGap: IndexPort = {
 
 const gapBackend: SemanticBackend = { provider: providerGap, model: modelGap, binding: bindingGap, index: indexGap }
 
-/** Build the live backend: the honest gap default overlaid with any injected real ports. */
+/** Build the live backend: the honest gap default overlaid with any injected real ports + the config-backed registry. */
 export const createLiveSemanticBackend = (deps: LiveSemanticBackendDeps = {}): SemanticBackend => ({
   provider: deps.override?.provider ?? gapBackend.provider,
   model: deps.override?.model ?? gapBackend.model,
   binding: deps.override?.binding ?? gapBackend.binding,
   index: deps.override?.index ?? gapBackend.index,
+  registry: deps.registry ?? deps.override?.registry ?? (deps.config ? createConfigBackedRegistry({ config: deps.config }) : undefined),
 })

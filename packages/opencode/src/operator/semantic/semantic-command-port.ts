@@ -28,9 +28,10 @@ export * as SemanticCommandPort from "./semantic-command-port"
 import { Effect } from "effect"
 import type { OperatorPrincipal as OperatorPrincipalCore } from "@opencode-ai/core/operator"
 import type { CapabilityKind, CollectionKind, EndpointMode, OperatorPrincipal, RerankProfile, Scope } from "@opencode-ai/protocol/semantic/commands"
-import type { FailureHandlerResult, HandlerContext, HandlerResult } from "@/operator/application/handler"
+import type { FailureHandlerResult, HandlerContext, HandlerResult, OperatorMutationPlan } from "@/operator/application/handler"
 import type { DomainInvoke } from "@/operator/application/ports/domain-ports"
 import type { SemanticAuditEvent, SemanticAuditSink, SemanticPort } from "./semantic-port"
+import type { SemanticRegistryBackend } from "./registry-backend"
 
 /** The 30 reserved `semantic.*` operator ids (catalog 1.3.0); a plugin/MCP collision is rejected (C15). */
 export const RESERVED_SEMANTIC_IDS: ReadonlySet<string> = new Set([
@@ -103,21 +104,38 @@ function mapError(error: { readonly type: string }): { outcome: SemanticAuditEve
 
 const query = (value: unknown): HandlerResult => ({ kind: "query", effective: value })
 
-/** Run a port effect, emit exactly one audit event, and shape the result (mirrors outputspool). */
+/**
+ * Bind the audit-and-shape helpers for one dispatch. `run` shapes a read/probe port
+ * effect (query on success); `plan` shapes a config-backed mutation into the
+ * `mutation_plan` the dispatcher commits via `mutateAuthority` — a successful plan
+ * is audited by the commit, only a rejection is audited here, so no write is ever
+ * persisted while the caller is told it failed (FR5, FR14).
+ */
 function runner(deps: SemanticCommandDeps, commandId: string, principalId: string, target: string) {
-  return <A>(effect: Effect.Effect<A, { readonly type: string }>, onSuccess: (value: A) => HandlerResult): Promise<HandlerResult> =>
+  const auditFailure = (error: { readonly type: string }): Effect.Effect<HandlerResult> => {
+    const mapped = mapError(error)
+    return deps.audit.record({ commandId, principalId, target, outcome: mapped.outcome }).pipe(Effect.as(mapped.failure))
+  }
+  const run = <A>(effect: Effect.Effect<A, { readonly type: string }>, onSuccess: (value: A) => HandlerResult): Promise<HandlerResult> =>
     Effect.runPromise(
       effect.pipe(
         Effect.matchEffect({
           onSuccess: (value): Effect.Effect<HandlerResult> =>
             deps.audit.record({ commandId, principalId, target, outcome: "ok" }).pipe(Effect.as(onSuccess(value))),
-          onFailure: (error): Effect.Effect<HandlerResult> => {
-            const mapped = mapError(error)
-            return deps.audit.record({ commandId, principalId, target, outcome: mapped.outcome }).pipe(Effect.as(mapped.failure))
-          },
+          onFailure: auditFailure,
         }),
       ),
     )
+  const plan = (effect: Effect.Effect<OperatorMutationPlan, { readonly type: string }>): Promise<HandlerResult> =>
+    Effect.runPromise(
+      effect.pipe(
+        Effect.matchEffect({
+          onSuccess: (value): Effect.Effect<HandlerResult> => Effect.succeed({ kind: "mutation_plan", ...value }),
+          onFailure: auditFailure,
+        }),
+      ),
+    )
+  return { run, plan }
 }
 
 interface Ctx {
@@ -126,86 +144,123 @@ interface Ctx {
   readonly principal: OperatorPrincipal
   readonly scope: Scope
   readonly scopeId: string
-  readonly run: ReturnType<typeof runner>
+  /** The config-backed registry half when bound; unset routes every verb to the port (honest gap). */
+  readonly registry?: SemanticRegistryBackend
+  readonly io: ReturnType<typeof runner>
 }
 
 function providerInvoke(port: SemanticPort, c: Ctx): Promise<HandlerResult> | null {
   const p = port.provider
+  const reg = c.registry
   const id = str(c.payload, ["id"]) ?? ""
   const version = num(c.payload, ["expectedVersion", "expected_version", "version"]) ?? 0
+  const addInput = {
+    scope: c.scope, scopeId: c.scopeId, name: str(c.payload, ["name"]) ?? "", baseUrl: str(c.payload, ["baseUrl", "base_url"]) ?? "",
+    transportPolicy: { tlsRequired: c.payload.tlsRequired !== false, allowInsecureLocalProfile: bool(c.payload, "allowInsecureLocalProfile") },
+    secretRef: str(c.payload, ["secretRef", "secret_ref"]), residency: (str(c.payload, ["residency"]) ?? "unrestricted") as never, principal: c.principal,
+  }
   switch (c.id) {
-    case "semantic.provider.list": return c.run(p.list({ scope: c.scope, scopeId: c.scopeId }), (o) => query(o))
-    case "semantic.provider.add": return c.run(p.add({
-      scope: c.scope, scopeId: c.scopeId, name: str(c.payload, ["name"]) ?? "", baseUrl: str(c.payload, ["baseUrl", "base_url"]) ?? "",
-      transportPolicy: { tlsRequired: c.payload.tlsRequired !== false, allowInsecureLocalProfile: bool(c.payload, "allowInsecureLocalProfile") },
-      secretRef: str(c.payload, ["secretRef", "secret_ref"]), residency: (str(c.payload, ["residency"]) ?? "unrestricted") as never, principal: c.principal,
-    }), (o) => query(o))
-    case "semantic.provider.update": return c.run(p.update({ id, expectedVersion: version, patch: asRecord(c.payload.patch) as never, principal: c.principal }), (o) => query(o))
-    case "semantic.provider.test": return c.run(p.test({ id, principal: c.principal }), (o) => query(o))
-    case "semantic.provider.disable": return c.run(p.disable({ id, expectedVersion: version, principal: c.principal }), (o) => query(o))
-    case "semantic.provider.delete": return c.run(p.delete({ id, expectedVersion: version, confirmed: bool(c.payload, "confirmed"), principal: c.principal }), (o) => query(o))
-    case "semantic.provider.rotate-secret": return c.run(p.rotateSecret({ id, expectedVersion: version, newSecretRef: str(c.payload, ["newSecretRef", "new_secret_ref"]) ?? "", principal: c.principal }), (o) => query(o))
+    // Reads + config-backed mutations ride the registry round-trip when bound; provider.test stays the gated live probe.
+    case "semantic.provider.list": return reg ? c.io.run(reg.listProviders({ scope: c.scope, scopeId: c.scopeId }), query) : c.io.run(p.list({ scope: c.scope, scopeId: c.scopeId }), query)
+    case "semantic.provider.add": return reg ? c.io.plan(reg.planAddProvider(addInput)) : c.io.run(p.add(addInput), query)
+    case "semantic.provider.update": {
+      const upd = { id: id as never, expectedVersion: version, patch: asRecord(c.payload.patch) as never, principal: c.principal }
+      return reg ? c.io.plan(reg.planUpdateProvider(upd)) : c.io.run(p.update(upd), query)
+    }
+    case "semantic.provider.test": return c.io.run(p.test({ id: id as never, principal: c.principal }), query)
+    case "semantic.provider.disable": {
+      const dis = { id: id as never, expectedVersion: version, principal: c.principal }
+      return reg ? c.io.plan(reg.planDisableProvider(dis)) : c.io.run(p.disable(dis), query)
+    }
+    case "semantic.provider.delete": {
+      const del = { id: id as never, expectedVersion: version, confirmed: bool(c.payload, "confirmed"), principal: c.principal }
+      return reg ? c.io.plan(reg.planDeleteProvider(del)) : c.io.run(p.delete(del), query)
+    }
+    case "semantic.provider.rotate-secret": {
+      const rot = { id: id as never, expectedVersion: version, newSecretRef: (str(c.payload, ["newSecretRef", "new_secret_ref"]) ?? "") as never, principal: c.principal }
+      return reg ? c.io.plan(reg.planRotateSecret(rot)) : c.io.run(p.rotateSecret(rot), query)
+    }
     default: return null
   }
 }
 
 function modelInvoke(port: SemanticPort, c: Ctx): Promise<HandlerResult> | null {
   const m = port.model
+  const reg = c.registry
   const id = str(c.payload, ["id"]) ?? ""
   const provider = str(c.payload, ["providerProfileId", "provider_profile_id"]) ?? ""
+  const registerInput = {
+    providerProfileId: provider as never, modelRef: str(c.payload, ["modelRef", "model_ref"]) ?? "", displayName: str(c.payload, ["displayName", "display_name"]) ?? "",
+    endpointMode: (str(c.payload, ["endpointMode", "endpoint_mode"]) ?? "embeddings") as EndpointMode,
+    declaredCapabilityKinds: ((c.payload.declaredCapabilityKinds ?? []) as readonly CapabilityKind[]), principal: c.principal,
+  }
   switch (c.id) {
-    case "semantic.model.list": return c.run(m.list({ scope: c.scope, scopeId: c.scopeId, providerProfileId: str(c.payload, ["providerProfileId", "provider_profile_id"]) }), (o) => query(o))
-    case "semantic.model.discover": return c.run(m.discover({ providerProfileId: provider, principal: c.principal }), (o) => query(o))
-    case "semantic.model.register": return c.run(m.register({
-      providerProfileId: provider, modelRef: str(c.payload, ["modelRef", "model_ref"]) ?? "", displayName: str(c.payload, ["displayName", "display_name"]) ?? "",
-      endpointMode: (str(c.payload, ["endpointMode", "endpoint_mode"]) ?? "embeddings") as EndpointMode,
-      declaredCapabilityKinds: ((c.payload.declaredCapabilityKinds ?? []) as readonly CapabilityKind[]), principal: c.principal,
-    }), (o) => query(o))
-    case "semantic.model.validate": return c.run(m.validate({ id, principal: c.principal }), (o) => query(o))
-    case "semantic.model.disable": return c.run(m.disable({ id, expectedVersion: num(c.payload, ["expectedVersion", "version"]) ?? 0, principal: c.principal }), (o) => query(o))
+    // list/register/disable ride the registry round-trip; discover/validate stay the gated live probes.
+    case "semantic.model.list": {
+      const listInput = { scope: c.scope, scopeId: c.scopeId, providerProfileId: str(c.payload, ["providerProfileId", "provider_profile_id"]) as never }
+      return reg ? c.io.run(reg.listModels(listInput), query) : c.io.run(m.list(listInput), query)
+    }
+    case "semantic.model.discover": return c.io.run(m.discover({ providerProfileId: provider as never, principal: c.principal }), query)
+    case "semantic.model.register": return reg ? c.io.plan(reg.planRegisterModel(registerInput)) : c.io.run(m.register(registerInput), query)
+    case "semantic.model.validate": return c.io.run(m.validate({ id: id as never, principal: c.principal }), query)
+    case "semantic.model.disable": {
+      const dis = { id: id as never, expectedVersion: num(c.payload, ["expectedVersion", "version"]) ?? 0, principal: c.principal }
+      return reg ? c.io.plan(reg.planDisableModel(dis)) : c.io.run(m.disable(dis), query)
+    }
     default: return null
   }
 }
 
 function embeddingInvoke(port: SemanticPort, c: Ctx): Promise<HandlerResult> | null {
   const b = port.binding
+  const reg = c.registry
   const id = str(c.payload, ["id"]) ?? ""
   const cas = str(c.payload, ["casToken", "cas_token"]) ?? ""
+  const select = { slot: "embedding" as const, modelDescriptorId: (str(c.payload, ["modelDescriptorId", "model_descriptor_id"]) ?? "") as never, compatibilityMode: "embedding" as const, principal: c.principal }
   switch (c.id) {
-    case "semantic.embedding.show": return c.run(b.showEmbedding({ scope: c.scope, scopeId: c.scopeId }), (o) => query(o))
-    case "semantic.embedding.select": return c.run(b.selectEmbedding({ slot: "embedding", modelDescriptorId: str(c.payload, ["modelDescriptorId", "model_descriptor_id"]) ?? "", compatibilityMode: "embedding", principal: c.principal }), (o) => query(o))
-    case "semantic.embedding.validate": return c.run(b.validateEmbedding({ id, principal: c.principal }), (o) => query(o))
-    case "semantic.embedding.reindex": return c.run(b.reindexEmbedding({ id, principal: c.principal }), (o) => query(o))
-    case "semantic.embedding.cutover": return c.run(b.cutoverEmbedding({ id, generationId: str(c.payload, ["generationId", "generation_id"]) ?? "", casToken: cas, confirmed: bool(c.payload, "confirmed"), principal: c.principal }), (o) => query(o))
-    case "semantic.embedding.rollback": return c.run(b.rollbackEmbedding({ slot: "embedding", targetBindingVersion: num(c.payload, ["targetBindingVersion", "target_binding_version"]) ?? 0, casToken: cas, confirmed: bool(c.payload, "confirmed"), principal: c.principal }), (o) => query(o))
+    // show/select ride the registry round-trip; validate/reindex/cutover/rollback stay the gated Milvus ops.
+    case "semantic.embedding.show": return reg ? c.io.run(reg.showEmbedding({ scope: c.scope, scopeId: c.scopeId }), query) : c.io.run(b.showEmbedding({ scope: c.scope, scopeId: c.scopeId }), query)
+    case "semantic.embedding.select": return reg ? c.io.plan(reg.planSelectEmbedding(select)) : c.io.run(b.selectEmbedding(select), query)
+    case "semantic.embedding.validate": return c.io.run(b.validateEmbedding({ id: id as never, principal: c.principal }), query)
+    case "semantic.embedding.reindex": return c.io.run(b.reindexEmbedding({ id: id as never, principal: c.principal }), query)
+    case "semantic.embedding.cutover": return c.io.run(b.cutoverEmbedding({ id: id as never, generationId: (str(c.payload, ["generationId", "generation_id"]) ?? "") as never, casToken: cas as never, confirmed: bool(c.payload, "confirmed"), principal: c.principal }), query)
+    case "semantic.embedding.rollback": return c.io.run(b.rollbackEmbedding({ slot: "embedding", targetBindingVersion: num(c.payload, ["targetBindingVersion", "target_binding_version"]) ?? 0, casToken: cas as never, confirmed: bool(c.payload, "confirmed"), principal: c.principal }), query)
     default: return null
   }
 }
 
 function rerankerInvoke(port: SemanticPort, c: Ctx): Promise<HandlerResult> | null {
   const b = port.binding
+  const reg = c.registry
   const id = str(c.payload, ["id"]) ?? ""
   const cas = str(c.payload, ["casToken", "cas_token"]) ?? ""
+  const select = { slot: "reranker" as const, modelDescriptorId: (str(c.payload, ["modelDescriptorId", "model_descriptor_id"]) ?? "") as never, compatibilityMode: (str(c.payload, ["compatibilityMode", "compatibility_mode"]) ?? "native-rerank") as RerankProfile, principal: c.principal }
   switch (c.id) {
-    case "semantic.reranker.show": return c.run(b.showReranker({ scope: c.scope, scopeId: c.scopeId }), (o) => query(o))
-    case "semantic.reranker.select": return c.run(b.selectReranker({ slot: "reranker", modelDescriptorId: str(c.payload, ["modelDescriptorId", "model_descriptor_id"]) ?? "", compatibilityMode: (str(c.payload, ["compatibilityMode", "compatibility_mode"]) ?? "native-rerank") as RerankProfile, principal: c.principal }), (o) => query(o))
-    case "semantic.reranker.validate": return c.run(b.validateReranker({ id, principal: c.principal }), (o) => query(o))
-    case "semantic.reranker.cutover": return c.run(b.cutoverReranker({ id, casToken: cas, confirmed: bool(c.payload, "confirmed"), principal: c.principal }), (o) => query(o))
-    case "semantic.reranker.rollback": return c.run(b.rollbackReranker({ slot: "reranker", targetBindingVersion: num(c.payload, ["targetBindingVersion", "target_binding_version"]) ?? 0, casToken: cas, confirmed: bool(c.payload, "confirmed"), principal: c.principal }), (o) => query(o))
+    // show/select ride the registry round-trip; validate/cutover/rollback stay the gated Milvus ops.
+    case "semantic.reranker.show": return reg ? c.io.run(reg.showReranker({ scope: c.scope, scopeId: c.scopeId }), query) : c.io.run(b.showReranker({ scope: c.scope, scopeId: c.scopeId }), query)
+    case "semantic.reranker.select": return reg ? c.io.plan(reg.planSelectReranker(select)) : c.io.run(b.selectReranker(select), query)
+    case "semantic.reranker.validate": return c.io.run(b.validateReranker({ id: id as never, principal: c.principal }), query)
+    case "semantic.reranker.cutover": return c.io.run(b.cutoverReranker({ id: id as never, casToken: cas as never, confirmed: bool(c.payload, "confirmed"), principal: c.principal }), query)
+    case "semantic.reranker.rollback": return c.io.run(b.rollbackReranker({ slot: "reranker", targetBindingVersion: num(c.payload, ["targetBindingVersion", "target_binding_version"]) ?? 0, casToken: cas as never, confirmed: bool(c.payload, "confirmed"), principal: c.principal }), query)
     default: return null
   }
 }
 
 function bindingIndexInvoke(port: SemanticPort, c: Ctx): Promise<HandlerResult> | null {
+  const reg = c.registry
   const collection = (str(c.payload, ["collection"]) ?? "agents") as CollectionKind
   switch (c.id) {
-    case "semantic.binding.status": return c.run(port.binding.status({ scope: c.scope, scopeId: c.scopeId }), (o) => query(o))
-    case "semantic.binding.history": return c.run(port.binding.history({ slot: (str(c.payload, ["slot"]) ?? "embedding") as never, scope: c.scope, scopeId: c.scopeId, limit: num(c.payload, ["limit"]) ?? 20 }), (o) => query(o))
-    case "semantic.index.status": return c.run(port.index.status({ collection, scope: c.scope, scopeId: c.scopeId }), (o) => query(o))
-    case "semantic.index.test": return c.run(port.index.test({ principal: c.principal }), (o) => query(o))
-    case "semantic.index.reindex": return c.run(port.index.reindex({ collection, principal: c.principal }), (o) => query(o))
-    case "semantic.index.reconcile": return c.run(port.index.reconcile({ collection, scheduledOccurrenceId: str(c.payload, ["scheduledOccurrenceId", "scheduled_occurrence_id"]) }), (o) => query(o))
-    case "semantic.index.show-collections": return c.run(port.index.showCollections({ scope: c.scope, scopeId: c.scopeId }), (o) => query(o))
+    // binding.status/history ride the registry read; every index.* op stays the gated Milvus capability gap.
+    case "semantic.binding.status": return reg ? c.io.run(reg.bindingStatus({ scope: c.scope, scopeId: c.scopeId }), query) : c.io.run(port.binding.status({ scope: c.scope, scopeId: c.scopeId }), query)
+    case "semantic.binding.history": {
+      const hist = { slot: (str(c.payload, ["slot"]) ?? "embedding") as never, scope: c.scope, scopeId: c.scopeId, limit: num(c.payload, ["limit"]) ?? 20 }
+      return reg ? c.io.run(reg.bindingHistory(hist), query) : c.io.run(port.binding.history(hist), query)
+    }
+    case "semantic.index.status": return c.io.run(port.index.status({ collection, scope: c.scope, scopeId: c.scopeId }), query)
+    case "semantic.index.test": return c.io.run(port.index.test({ principal: c.principal }), query)
+    case "semantic.index.reindex": return c.io.run(port.index.reindex({ collection, principal: c.principal }), query)
+    case "semantic.index.reconcile": return c.io.run(port.index.reconcile({ collection, scheduledOccurrenceId: str(c.payload, ["scheduledOccurrenceId", "scheduled_occurrence_id"]) }), query)
+    case "semantic.index.show-collections": return c.io.run(port.index.showCollections({ scope: c.scope, scopeId: c.scopeId }), query)
     default: return null
   }
 }
@@ -218,7 +273,15 @@ function semanticInvoke(deps: SemanticCommandDeps): DomainInvoke {
     const principal = toOperator(ctx.request.principal)
     const scope: Scope = ctx.request.scope.kind === "global" ? "global" : "project"
     const scopeId = ctx.request.scope.ref ?? ""
-    const c: Ctx = { id, payload, principal, scope, scopeId, run: runner(deps, id, principal.id, str(payload, ["id", "collection", "scopeId"]) ?? scopeId) }
+    const c: Ctx = {
+      id,
+      payload,
+      principal,
+      scope,
+      scopeId,
+      registry: deps.port.registry,
+      io: runner(deps, id, principal.id, str(payload, ["id", "collection", "scopeId"]) ?? scopeId),
+    }
     return (
       providerInvoke(deps.port, c) ??
       modelInvoke(deps.port, c) ??
