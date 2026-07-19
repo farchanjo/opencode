@@ -19,12 +19,46 @@ export type OperatorSlashNeedsConfirm = {
   readonly message: string
 }
 
+/**
+ * Operator outcome carried on the structured handled result (Feature 012 FR2).
+ * Mirrors the Feature 007 `Operator.Outcome` and the CUE `#ResultOutcome`
+ * (`doc/arch/schemas/operator-result-signal/enums.cue`).
+ */
+export type OperatorResultOutcome =
+  | "success"
+  | "idempotent_replay"
+  | "conflict"
+  | "unauthorized"
+  | "forbidden_scope"
+  | "invalid_argument"
+  | "reserved_name"
+  | "confirmation_required"
+  | "unavailable"
+  | "secret_backend"
+  | "transport_error"
+  | "not_implemented"
+  | "audit_pending"
+
+/**
+ * Structured half of the handled result (Feature 012 FR2), kept structurally
+ * separate from the human `display`. Mirrors `#StructuredHandledResult`
+ * (`doc/arch/schemas/operator-result-signal/handled-result.cue`): the typed
+ * `outcome`, an optional `effective` payload (opaque, projected downstream), and
+ * the version. Absence of `effective` is representable and is not an error.
+ */
+export type OperatorStructuredResult = {
+  readonly outcome: OperatorResultOutcome
+  readonly effective?: unknown
+  readonly version?: string | null
+}
+
 export type OperatorSlashHandled = {
   readonly handled: true
   readonly display: OperatorSlashDisplay
   readonly needsConfirmation?: OperatorSlashNeedsConfirm
   readonly cancelled?: boolean
   readonly currentVersion?: string | null
+  readonly result?: OperatorStructuredResult
 }
 
 export type OperatorSlashPass = { readonly handled: false }

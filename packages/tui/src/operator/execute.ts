@@ -9,7 +9,7 @@ import {
   buildOperatorPaletteCommands,
   type OperatorPaletteEntry,
 } from "@opencode-ai/core/operator"
-import type { OperatorSlashPort } from "../context/operator-slash"
+import type { OperatorSlashPort, OperatorStructuredResult } from "../context/operator-slash"
 import type { DialogContext } from "../ui/dialog"
 import { DialogConfirm } from "../ui/dialog-confirm"
 
@@ -59,9 +59,18 @@ export async function executeOperatorCommand(input: {
    * behavior).
    */
   payload?: Record<string, unknown>
-}): Promise<{ outcome?: string; cancelled?: boolean }> {
+  /**
+   * Suppress ALL toasts for an auto-issued read (Feature 012 P1). Panel-mount and
+   * picker-loader dispatches set this so a newly-live read never flashes a toast
+   * (or an `invalid_argument`/`unavailable` warning) on every panel/picker open.
+   * Errors are silent too: the surface's honesty is its empty state, not a toast.
+   * User-invoked commands leave this unset and keep their toasts.
+   */
+  silent?: boolean
+}): Promise<{ outcome?: string; cancelled?: boolean; result?: OperatorStructuredResult }> {
+  const toast: OperatorToast = input.silent ? { show: () => {} } : input.toast
   if (!input.port) {
-    input.toast.show({
+    toast.show({
       title: "Operator unavailable",
       message: "Operator control plane is not available in this TUI session",
       variant: "warning",
@@ -70,7 +79,7 @@ export async function executeOperatorCommand(input: {
   }
 
   if (!input.entry.executable || input.entry.secretRelated) {
-    input.toast.show({
+    toast.show({
       title: "Secret action unavailable",
       message: `${input.entry.id} disabled until T019 keychain (no plaintext)`,
       variant: "warning",
@@ -89,7 +98,7 @@ export async function executeOperatorCommand(input: {
   if (input.entry.mutates || input.entry.confirmRequired) {
     // Preflight always required for mutations — no blind mutate
     if (!input.port.preflightMutation) {
-      input.toast.show({
+      toast.show({
         title: "Operator unavailable",
         message: "Mutation preflight not supported by this port",
         variant: "warning",
@@ -104,7 +113,7 @@ export async function executeOperatorCommand(input: {
       rootTreeRef: input.rootTreeRef,
     })
     if (!pre.ok) {
-      input.toast.show({
+      toast.show({
         title: "Operator preflight failed",
         message: pre.message,
         variant: "warning",
@@ -117,7 +126,7 @@ export async function executeOperatorCommand(input: {
       version = version ?? pre.currentVersion
     }
     if (pre.configured && version === undefined) {
-      input.toast.show({
+      toast.show({
         title: "Operator conflict",
         message: `${input.entry.id}: authority exists but version missing — refresh status`,
         variant: "warning",
@@ -132,7 +141,7 @@ export async function executeOperatorCommand(input: {
       idempotencyKey,
     })
     if (!first.handled) {
-      input.toast.show({
+      toast.show({
         title: "Operator",
         message: "Reserved operator command was not handled",
         variant: "error",
@@ -148,7 +157,7 @@ export async function executeOperatorCommand(input: {
       )
       if (!ok) {
         input.port.cancelConfirmation?.(first.needsConfirmation.token)
-        input.toast.show({
+        toast.show({
           title: "Operator cancelled",
           message: `${input.entry.id} cancelled`,
           variant: "info",
@@ -172,35 +181,35 @@ export async function executeOperatorCommand(input: {
             rootTreeRef: input.rootTreeRef,
           })
           if (refresh.ok) {
-            input.toast.show({
+            toast.show({
               title: "Operator conflict",
               message: `CAS conflict — current version=${refresh.currentVersion ?? "null"}; re-confirm required`,
               variant: "warning",
             })
           } else {
-            showDisplay(input.toast, second.display)
+            showDisplay(toast, second.display)
           }
-          return { outcome: "conflict" }
+          return { outcome: "conflict", result: second.result }
         }
-        showDisplay(input.toast, second.display)
-        return { outcome: second.display.outcome }
+        showDisplay(toast, second.display)
+        return { outcome: second.display.outcome, result: second.result }
       }
     }
-    showDisplay(input.toast, first.display)
-    return { outcome: first.display.outcome }
+    showDisplay(toast, first.display)
+    return { outcome: first.display.outcome, result: first.result }
   }
 
   const result = await input.port.tryHandle(base)
   if (!result.handled) {
-    input.toast.show({
+    toast.show({
       title: "Operator",
       message: "Reserved operator command was not handled",
       variant: "error",
     })
     return { outcome: "invalid_argument" }
   }
-  showDisplay(input.toast, result.display)
-  return { outcome: result.display.outcome }
+  showDisplay(toast, result.display)
+  return { outcome: result.display.outcome, result: result.result }
 }
 
 function showDisplay(
