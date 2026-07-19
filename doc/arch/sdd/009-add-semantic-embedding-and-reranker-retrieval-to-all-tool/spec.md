@@ -2,7 +2,7 @@
 id: 019f7712-e70c-73d1-b7b3-e767562f7df0
 number: 009
 slug: add-semantic-embedding-and-reranker-retrieval-to-all-tool
-status: specified
+status: clarified
 created_at: 2026-07-18T21:12:35.34095Z
 ---
 # Feature Specification: Semantic Tool Search (Embeddings + Reranker)
@@ -456,3 +456,210 @@ Feature 005 spool holds large reindex job outputs as refs only.
 | Degradation ladder no silent swap  | FR18–FR20    | 5–7, 14, 19            | 1     |
 | Configuration + reused operator IDs| FR21–FR22    | 17, 19                 | 1     |
 | Observability / evaluation         | FR23–FR25    | 15, 20                 | 2     |
+
+## Clarifications
+
+### Session 2026-07-18
+
+Declarative resolutions for the Feature 009 clarify phase. Each decision closes one or
+more Clarification Questions (CQ1–CQ12 above) or an inline ambiguity surfaced against
+the **now-implemented** Feature 006 and Feature 008 code, without reopening confirmed
+Feature 006 ownership of the single semantic stack, the pinned `SemanticModelBinding`
+slots, the nine-stage pipeline order and tie-break contract, the C10 shared
+query-embedding cache, the C12 blue/green cutover, or the content-free telemetry
+posture; Feature 007 native-only operator authority and the reserved `semantic.*`
+catalog; Feature 008 MCP catalog/lifecycle authority and the `mcp.tools_changed` event;
+Feature 004 Lang Lock provenance; Feature 001 ranking/selection authority. Feature 009
+adds only the `tools` collection, the tool document projection, the tool-scoped
+retrieval seam, and the ToolRegistry/MCP/code-mode integration points. Topology
+constants, numeric limits, and thresholds this feature defers are resolved here as
+explicit deferrals to `plan` and to [ADR-0007](../../adr/0007-add-semantic-embedding-and-reranker-retrieval-to-all-tool.md),
+each with a provisional stance and a named acceptance-test hook (AC = Acceptance
+Scenario above), never as open placeholders. Where the original spec assumed a paper
+006/008, this session pins the decision to the real seams that now exist —
+`packages/core/src/semantic/pipeline.ts`, `packages/opencode/src/semantic/{retrieval-facade,cutover-executor}.ts`,
+`packages/schema/src/semantic/{enums-state,documents,retrieval}.ts`,
+`packages/opencode/src/mcp/reindex-trigger.ts`, and `packages/core/src/operator/catalog.ts`.
+
+**C1 — Structured query that drives tool retrieval (CQ1, FR14, FR16–FR17).** Tool
+retrieval reuses the **Feature 006 structured `TaskProfile` / `QueryFingerprint`**
+(`packages/schema/src/semantic/profile.ts`, threaded as stage 1 of
+`pipeline.ts`), not the raw last user turn and not a second dedicated tool-selection
+query. The original query text is preserved for embedding with no mandatory translation
+LLM call (FR16, FR17); the same fingerprint that drives the agent and skill passes drives
+the tool pass, which is what makes the C8 shared-embedding cache reuse honest. A
+dedicated tool-selection query is out of scope for V1. Acceptance hooks AC1, AC2, AC12.
+
+**C2 — Tool retrieval pass API and pipeline-stage reuse (CQ1, FR11, FR12, NFR5).** The
+tool pass extends the Feature 006 retrieval seam rather than forking a router: a
+**`retrieveTools` method added to the existing `RetrievalPort`** (or a sibling
+`ToolRetrievalPort` composed by the same `createRetrievalFacade`,
+`packages/opencode/src/semantic/retrieval-facade.ts`) — decided at `plan` against the
+facade's shape, with no second facade and no second pipeline. The tool pass reuses
+pipeline stages **1 profile → 2 filter → 3 recall → 4 reduce → 5 rerank → 6 score** and
+the deterministic **9 revalidate**, and **omits stages 7 select_agent / 8 skill_pass**
+(those are agent/skill-only in `pipeline.ts`): a tool pass produces a bounded ranked
+tool list, never an Agent selection or a constrained skill sub-pass. This is a single-pass
+retrieval over `collection: "tools"` (the `RetrievalRequest.collection` field already
+carries the target), not the two-pass agent→skill flow. Exact port signature is a
+provisional plan constant with acceptance hooks AC1, AC13.
+
+**C3 — Ranking contract and tie-break reuse (CQ4, FR13).** Feature 009 reuses the
+**exact Feature 006 deterministic tie-break total order verbatim** —
+`rerank score → dense score → sparse/lexical score → canonical id → version` — as
+implemented in `packages/core/src/semantic/tie-break.ts` (descending by relevance,
+canonical id/version ascending, absent rerank treated as `NEGATIVE_INFINITY`). Feature
+009 does NOT define a new tie-break: the canonical id here is the composed tool id and
+the version is the tool content hash/version, but the comparator is the same code. Result
+count is bounded by config (C5) and never unbounded. Acceptance hooks AC8, AC13.
+
+**C4 — Sparse/lexical signal for tools (CQ3, FR12).** The sparse signal **reuses/extends
+the existing Wildcard name-and-id matching** already applied at the tool boundary
+(`Permission.visibleTools`, `registry.ts` `tools()`) as the lexical recall component;
+V1 does NOT stand up an external lexical index and does NOT require BM25-in-Milvus. Dense
+recall uses the Feature 006 pinned query embedding; the two fuse through the existing
+`hybrid-fusion.ts` weighted strategy at stage 4. Whether sparse is served as a
+Milvus scalar/BM25 field or as an in-process wildcard rank over the recall window is a
+provisional plan constant; the fixed requirement is one hybrid recall bounded by
+`retrieval_top_k` with rerank only over the reduced set (FR11, FR12). Acceptance hooks
+AC1, AC6.
+
+**C5 — Default retrieval/rerank/result bounds and latency budget (CQ2, FR13, FR21,
+NFR1, NFR3).** V1 provisional defaults, all Config.Service-tunable and server-capped:
+`retrieval_top_k` and `rerank_top_k` **inherit the Feature 006 `Values.TopK` bounds**
+(rerank window ≤ retrieval window, enforced by the facade `budgetError` guard), the
+tool result bound is a small bounded list (provisional single-digit-to-low-tens window),
+and the retrieval latency budget is a bounded per-pass budget whose expiry triggers the
+C14 degradation ladder rather than blocking exposure (NFR1). Exact numeric defaults are
+provisional plan constants with acceptance hooks AC13; the fixed requirement is that
+every window is bounded and no result list is unbounded (FR13).
+
+**C6 — Tool document (`ToolDoc`) corpus shape and parameter-schema projection (CQ6,
+FR6, FR7, FR18).** One canonical `ToolDoc` projection (a new document mirroring the
+`documents.ts` `DocIdentity` / `DocScope` / `DocAvailability` shared parts, to be added
+under the Feature 009 CUE corpus) carries: composed tool id, display name, source
+(`native` | `mcp` | `custom` | `plugin`), MCP server id when applicable, sanitized
+description, a **bounded parameter-schema projection** (parameter names, types, and
+descriptions only), permission pattern/visibility metadata, Feature 004 language tag,
+and content hash — mirroring how `AgentClassification`/`SkillDescriptor` carry sanitized
+name+description with taxonomy as ranking-only signal. The schema projection **strips
+`default`/`example`/`const` values, formats, paths, and any free-form string that could
+carry a secret**; only names, JSON-Schema types, and descriptions survive, bounded by a
+size cap. Descriptions and schemas are already available at the boundary
+(`registry.ts` `tools()` → `description` + `jsonSchema`; `mcp/catalog.ts` `convertTool`
+→ `description` + `inputSchema`). No secrets, credentials, prompts, reasoning, payloads,
+or filesystem paths are ever indexed (FR7). Exact allowlist and cap are provisional plan
+constants with acceptance hooks AC18.
+
+**C7 — `tools` collection lifecycle: shared binding generation and blue/green cutover
+(CQ5, FR9, FR12).** The `tools` collection **shares the single Feature 006 embedding
+binding generation and cuts over atomically with `agents`/`skills`/`skill_chunks`** — it
+is NOT an independent generation. Verified against the real code: the `Collection`
+literal already includes `"tools"`
+(`packages/schema/src/semantic/enums-state.ts`), `SemanticIndexGeneration` /
+`CollectionAlias` already map any conceptual collection into one binding generation
+(`index-generation.ts`), and the implemented cutover executor already swaps
+**every collection in the generation together under one CAS token** and names the
+`tools` extension explicitly (`packages/opencode/src/semantic/cutover-executor.ts`
+`CutoverInput.collections: readonly CollectionKind[]`). So `tools` requires **no new
+lifecycle machinery** — it joins the existing generic multi-collection cutover. Embedding
+binding/dimension changes follow `semantic.embedding.cutover`; `select`/`reindex` alone
+never activate the live alias (FR9, C12). Acceptance hooks AC9, AC10.
+
+**C8 — Query-embedding cache vs tool-corpus cache TTL and invalidation (CQ9, FR14, FR20,
+NFR4).** The **shared query embedding reuses the Feature 006 C10 cache verbatim** — keyed
+by `fingerprint + binding_version + config_hash`
+(`packages/core/src/semantic/query-cache.ts`), reused across the native, MCP, and
+code-mode tool surfaces while valid, invalidated by binding version and config hash, with
+no per-token/per-turn remote loop (NFR4). The **tool corpus** is a separate concern:
+document freshness is content-hash upsert/tombstone (FR8), and the local last-known
+index-metadata cache invalidates by binding version and config hash (FR20). The two are
+distinct caches with distinct keys; neither has a wall-clock TTL that overrides
+content-hash/binding-version invalidation. Exact TTLs are provisional plan constants with
+acceptance hooks AC12, AC16.
+
+**C9 — Per-surface enablement defaults for V1 (CQ8, FR21).** Enablement is a
+**per-surface Config.Service flag (native / MCP / code-mode)**, and V1 **defaults all
+three to the full-set passthrough floor** (semantic ranking disabled by default) so tool
+exposure is at least as capable as today and no surface silently narrows the model's tool
+list before the feature is deliberately turned on (FR18, FR21). Operators opt each surface
+in independently. Exact default enum is a provisional plan constant; the fixed requirement
+is a floor no worse than today (FR18). Acceptance hooks AC7, AC14.
+
+**C10 — code-mode `describeCatalog` consumption (CQ7, FR5, FR11).** When the code-mode
+surface flag is enabled, `describeCatalog`
+(`packages/opencode/src/tool/code-mode.ts`, reached via
+`registry.ts` `describeCodeMode`) consumes the **ranked, bounded tool subset from the
+same retrieval seam**, not the entire MCP catalog — so all three surfaces share one
+corpus and one ranking contract (FR5). When the flag is off (default, C9), it renders the
+current full permission-visible catalog unchanged. The retrieval subset is applied
+**after** `Permission.visibleTools`, never widening it (FR3). Acceptance hooks AC1, AC13.
+
+**C11 — Indexing triggers, coalescing, and Feature 008 resource-index interaction (CQ10,
+FR8).** Tool reindex is triggered by **(a) ToolRegistry corpus change, (b) the Feature
+008 `mcp.tools_changed` event for the affected server only, and (c) tool-relevant
+Config.Service changes**, always incremental content-hash upsert/tombstone, never a full
+rebuild per change (FR8). Triggers **coalesce** per affected server/scope within a bounded
+window so a burst of catalog churn yields one reindex pass (NFR2). Feature 009's **tool**
+trigger is **separate from and parallel to** Feature 008's optional **resource**-index
+opt-in seam (`packages/opencode/src/mcp/reindex-trigger.ts`, which gates on
+operator opt-in + Feature 006 classification + resource policy): they are **two
+independent triggers over the same event stream**, not one merged trigger — tools and
+resources are distinct document kinds and Feature 009 MUST NOT re-specify or duplicate the
+008 resource opt-in. Acceptance hooks AC9, AC10.
+
+**C12 — Fail-closed scope (CQ11, FR18, FR21).** The optional fail-closed switch is a
+**per-surface** Config.Service option, defaulting **off** (degrade, never hard-fail). An
+operator MAY fail-closed a specific surface (e.g. code-mode) while leaving others on the
+honest degradation ladder; there is no single global-only switch, because per-surface
+enablement (C9) already partitions the surfaces. When a surface is fail-closed and the
+semantic stack is unavailable, that surface returns a typed capability-gap error instead
+of degrading (FR18). Acceptance hooks AC19.
+
+**C13 — Tenant/project scalar model and multi-root behavior (CQ12, FR10).** The `tools`
+collection reuses the **Feature 006 scalar `DocScope`** — `project_id` (partition key),
+`scope`, `visibility`, `permission_ref`
+(`packages/schema/src/semantic/documents.ts`) — with **mandatory scalar filters on every
+search** and **no per-project collections** (a scalar project key, never collection
+explosion), matching Feature 006 C6. Multi-root workspaces map each root to a scalar
+project key; cross-project tool documents are never returned (FR10). Acceptance hooks
+AC11.
+
+**C14 — Degradation ladder third rung and no silent model swap (FR18, FR19, NFR1).** The
+tool-search ladder reuses the Feature 006 C20 posture with a third, tool-specific floor:
+**Full semantic** (hybrid + rerank) → **Lexical-only** (wildcard/name signal, typed
+degraded reason, when embedder/reranker/Milvus is unavailable/stale/timed-out) →
+**Full-set passthrough** (the entire permission-visible tool set, unranked — today's
+behavior — as the absolute floor). No automatic substitution of another embedding or
+reranker model ever occurs (Feature 006 FR24/FR31); binding state surfaces as `degraded`
+or `unavailable` (FR19). The passthrough floor is what makes "never a hard failure of tool
+availability" true unless the operator opted a surface into fail-closed (C12). Acceptance
+hooks AC5, AC6, AC7, AC14, AC19.
+
+**C15 — Honest V1 live-consumption seam (FR1, FR11, NFR5).** V1 delivers the tool
+retrieval **module + facade + a DOCUMENTED wiring point** where `session/tools.ts`
+`resolve()` / `registry.ts` `tools()` would consume the ranked subset — mirroring the
+implemented `FEATURE_001_SELECTION_SEAM` and the langlock injection-seam precedent — and
+does **NOT** silently rewrite the live LLM tool list by default. The live tool list is
+gated by the per-surface enablement flags (C9): with a surface disabled (V1 default) the
+seam is present, typed, and covered by a seam test but not invoked on the hot path; with
+a surface enabled the ranked subset is applied **after** `Permission.visibleTools` and
+never widens it (FR3). This keeps the feature's V1 claim honest: the retrieval engine and
+its integration point are real and tested; live consumption is deliberate operator opt-in,
+not a hidden default narrowing of the model's tools. Acceptance hooks AC1, AC7, AC14.
+
+**C16 — Content-free telemetry, tool-id labels, and offline eval extension (CQ8, FR23–
+FR25).** Retrieval telemetry reuses the Feature 006 / ADR-0001 content-free posture
+verbatim: stable enum span names (`embed.query` shared, `retrieve.tools`, `rerank.tools`,
+`semantic.fallback`) and bounded metrics (candidates before/after, cache hit,
+fallback/stale, rerank delta, selected rank, latency). **Tool ids are NOT emitted as
+labels even though they are a bounded set** — the spec (FR24) and Security/Privacy
+sections forbid tool ids, MCP server names, session ids, query text, vectors, and paths
+as labels; selected-tool rank is exported as a **bounded rank bucket**, never the id
+itself, to keep cardinality bounded and avoid leaking which tools a session used. Offline
+evaluation **extends the implemented Feature 006 golden harness**
+(`packages/opencode/src/semantic/eval-harness.ts` — recall@k/nDCG/MRR per pt-BR/es/en
+locale with fixed zero-tolerance permission-leakage) with a **tool-retrieval golden set**
+(query→tool relevance, multilingual, permission-leakage), reusing the same `EvalPort` and
+zero-leakage gate; online self-optimizing ranking stays out of scope for V1. Acceptance
+hooks AC15, AC20.
