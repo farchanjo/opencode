@@ -219,7 +219,7 @@ path.
   audit asserts no tool-id/server/session/query/vector/path label and selected rank is a bounded
   bucket, and the tool golden set records per-locale recall/nDCG/MRR, fails on any leakage, and
   mutates no binding.
-- [ ] T014 [S13] Add pure deterministic unit tests under `packages/core/test/semantic/**` (tool
+- [x] T014 [S13] Add pure deterministic unit tests under `packages/core/test/semantic/**` (tool
   pass stage order 1–6+9 with no 7/8, tie-break with tool id/version, no invented tool on empty
   recall) and schema/protocol tests under `packages/schema/test/semantic/**` and
   `packages/protocol/test/semantic/**` (the closed 4-member `ToolSource`, the `ToolDoc` redaction —
