@@ -293,7 +293,7 @@ enforced (see the Traceability reconciliation note).
   migration not a silent bump (FR7, C1). Acceptance: `bun test packages/opencode` asserts the
   probe emits a typed present/gap finding per required surface and no path hard-fails routing on
   a missing optional wire feature.
-- [ ] T025 [S15] Rework `packages/opencode/src/mcp/index.ts` (`MCP.Service`) in place as the
+- [x] T025 [S15] Rework `packages/opencode/src/mcp/index.ts` (`MCP.Service`) in place as the
   application host: instantiate the SDK client and transport adapters (prefer Streamable HTTP,
   keep the existing StreamableHTTP→SSE fallback with an operator-visible **deprecation label** on
   SSE, stdio start/stop with the existing `pgrep -P` SIGTERM child-cleanup finalizer), delegate

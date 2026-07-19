@@ -326,7 +326,23 @@ const layer = Layer.effect(
             return Effect.void
           }),
         )
-        if (result) return { client: result.client, status: { status: "connected" } as Status }
+        if (result) {
+          // T025 (C14): a successful SSE connection is the legacy fallback — surface an
+          // operator-visible deprecation label. Streamable HTTP is preferred; SSE is
+          // kept for a window and marked deprecated so the operator can migrate.
+          if (result.transportName === "SSE") {
+            yield* Effect.logWarning("MCP server connected over deprecated SSE transport", { key })
+            yield* events
+              .publish(TuiEvent.ToastShow, {
+                title: "MCP Transport Deprecated",
+                message: `Server "${key}" connected over legacy SSE. Prefer Streamable HTTP; SSE support is deprecated.`,
+                variant: "warning",
+                duration: 8000,
+              })
+              .pipe(Effect.ignore)
+          }
+          return { client: result.client, status: { status: "connected" } as Status }
+        }
         // If this was an auth error, stop trying other transports
         if (lastStatus?.status === "needs_auth" || lastStatus?.status === "needs_client_registration") break
       }
