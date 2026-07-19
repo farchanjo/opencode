@@ -177,7 +177,7 @@ path.
   a wildcard-denied tool never appears, the default-off path renders the full permission-visible
   set unchanged, and `describeCatalog` consumes the ranked subset only when the code-mode flag
   is on.
-- [ ] T011 [S11] Extend the degradation posture by reusing `packages/core/src/semantic/degradation.ts`
+- [x] T011 [S11] Extend the degradation posture by reusing `packages/core/src/semantic/degradation.ts`
   with the tool-specific third rung: the `ToolRetrievalRung`
   `full_semantic → lexical_only → full_set_passthrough` ladder, dropping to `lexical_only` with a
   typed reused `DegradationGapCode` on any Milvus/embedding/reranker outage, staleness, timeout,
