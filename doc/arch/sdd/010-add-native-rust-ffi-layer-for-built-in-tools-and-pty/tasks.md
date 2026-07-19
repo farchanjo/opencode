@@ -88,7 +88,7 @@ symbols are pinned by `plan.md`, not provisional.
 
 ### PoC — `read` + `grep` native, loader, wrapper seam, parity harness (Phase 2)
 
-- [ ] T004 [S2] Author `crates/opencode-tools-ffi/Cargo.toml` (cdylib, inheriting the abi
+- [x] T004 [S2] Author `crates/opencode-tools-ffi/Cargo.toml` (cdylib, inheriting the abi
   rlib and workspace deps) and `crates/opencode-tools-ffi/src/lib.rs` + `src/read.rs` with
   `oc_read`: 1-based offset/limit windowing, the `MAX_READ_LINES`/`MAX_READ_BYTES` page caps,
   the 2000-char line cap with the `... (line truncated to 2000 chars)` suffix, the
@@ -100,7 +100,7 @@ symbols are pinned by `plan.md`, not provisional.
   point `catch_unwind`-wrapped (FR1, C7, C16, AC2). Acceptance: `cargo build --release
   -p opencode-tools-ffi`, `cargo clippy` clean, and `cargo test -p opencode-tools-ffi` assert
   the windowing/caps/truncation/binary/UTF-8/offset paths against the mirrored constants.
-- [ ] T005 [S3] Author `crates/opencode-tools-ffi/src/grep.rs` and wire `oc_grep` into
+- [x] T005 [S3] Author `crates/opencode-tools-ffi/src/grep.rs` and wire `oc_grep` into
   `lib.rs` using the embedded `grep-searcher`/`grep-regex`/`grep-matcher`/`ignore` engine —
   **no external `rg` spawn** — supporting the files-with-matches, content-with-line-numbers-
   and-context, and count output modes at parity with `packages/core/src/ripgrep.ts` output
@@ -108,7 +108,7 @@ symbols are pinned by `plan.md`, not provisional.
   `cargo build --release -p opencode-tools-ffi`, `cargo clippy` clean, and
   `cargo test -p opencode-tools-ffi` assert each output mode, `.gitignore`-aware walking, and
   the `invalid_pattern` code, with no subprocess spawn in the code path.
-- [ ] T006 [S4] Author `packages/core/src/tool/native/loader.ts`: the discovery ladder
+- [x] T006 [S4] Author `packages/core/src/tool/native/loader.ts`: the discovery ladder
   (env override `OPENCODE_NATIVE_LIB_DIR` / per-crate `OPENCODE_TOOLS_FFI_PATH` /
   `OPENCODE_PTY_FFI_PATH` → bundled `packages/core/native/<platform>-<arch>/` → typed
   `native_unavailable`), lazy `dlopen` (cached after first success) reusing the `bun:ffi`
@@ -121,7 +121,7 @@ symbols are pinned by `plan.md`, not provisional.
   C19, AC13, AC14). Acceptance: `bun run typecheck` on `packages/core` green and
   `bun test packages/core/test/tool/native` asserts each discovery rung, a cached second load,
   the ABI-mismatch gap, and `win32` never attempting `dlopen`.
-- [ ] T007 [S5] Author `packages/core/src/tool/native/read.native.ts` and
+- [x] T007 [S5] Author `packages/core/src/tool/native/read.native.ts` and
   `grep.native.ts` mirroring each tool's input schema, output schema, and `toModelOutput` so
   the native backend is transparent to the model; add the per-call native-vs-TS selection
   gated by `experimental.nativeTools` (the boolean introduced here in
@@ -133,7 +133,7 @@ symbols are pinned by `plan.md`, not provisional.
   `packages/core` green and `bun test packages/core/test/tool/native` asserts the wrappers
   preserve the tool interface, select native only when the flag is on, translate every
   `error.code` to the exact TS `ToolFailure`, and fall back through the Ripgrep seam.
-- [ ] T008 [S6] Author the shared fixtures `packages/core/test/fixtures/native-parity/`
+- [x] T008 [S6] Author the shared fixtures `packages/core/test/fixtures/native-parity/`
   (binary, CRLF/LF, `>50 KiB` paged, 2000-char lines, non-ASCII UTF-8) and the parity harness
   under `packages/core/test/tool/native/` running `read` and `grep` through **both** backends
   and asserting byte-identity, with repo-level `grep` equivalence over the opencode repo
