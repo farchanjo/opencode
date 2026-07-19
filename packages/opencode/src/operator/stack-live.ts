@@ -55,6 +55,15 @@ import { SemanticStackWiring } from "./semantic/stack-wiring"
 import { SemanticBackendLive } from "./semantic/backend-live"
 import { McpStackWiring } from "./mcp/stack-wiring"
 import { McpBackendLive } from "./mcp/backend-live"
+import { TelemetryStackWiring } from "./telemetry/stack-wiring"
+import { TelemetryBackendLive } from "./telemetry/backend-live"
+import { TelemetryProbeLive } from "./telemetry/probe-live"
+import { SmartStackWiring } from "./smart/stack-wiring"
+import { SmartBackendLive } from "./smart/backend-live"
+import { BudgetStackWiring } from "./budget/stack-wiring"
+import { BudgetBackendLive } from "./budget/backend-live"
+import { PoolsStackWiring } from "./pools/stack-wiring"
+import { PoolsBackendLive } from "./pools/backend-live"
 import { createDispatcher, type Dispatcher } from "./application/dispatcher"
 import type { MutationPorts } from "./application/mutation"
 import { createFlockLockPort } from "./application/ports/lock-port"
@@ -409,6 +418,32 @@ export async function createLiveOperatorStack(input: CreateLiveOperatorStackInpu
   const mcpBackend = McpBackendLive.createLiveMcpBackend({})
   const mcpWiring = McpStackWiring.createMcpDomainWiring({ backend: mcpBackend })
 
+  // === Feature 013 — telemetry/smart/budget/pools domain port composition ======
+  // The four remaining config-backed domains, each a typed operator port over the
+  // SAME `store.config` seam the routing/telemetry runtime already binds (FR2–FR5).
+  // Reads project the reused effective config; on/off/configure/set/reset are
+  // optimistic CAS writes that honest-degrade to typed envelopes (FR7, FR8);
+  // telemetry adds the bounded, test-signal-only OTLP reachability probe (FR6). No
+  // parallel store is opened — smart/budget/pools project routing config, telemetry
+  // the effective telemetry config. Feature 007 stays the sole command-registration
+  // authority — these overrides replace the not_implemented stubs and add no ids
+  // (the reserved telemetry/smart/budget/pools ids already live in the catalog).
+  const telemetryWiring = TelemetryStackWiring.createTelemetryDomainWiring({
+    backend: TelemetryBackendLive.createLiveTelemetryBackend({
+      config: store.config,
+      probe: TelemetryProbeLive.createLiveTelemetryProbe(),
+    }),
+  })
+  const smartWiring = SmartStackWiring.createSmartDomainWiring({
+    backend: SmartBackendLive.createLiveSmartBackend({ config: store.config }),
+  })
+  const budgetWiring = BudgetStackWiring.createBudgetDomainWiring({
+    backend: BudgetBackendLive.createLiveBudgetBackend({ config: store.config }),
+  })
+  const poolsWiring = PoolsStackWiring.createPoolsDomainWiring({
+    backend: PoolsBackendLive.createLivePoolsBackend({ config: store.config }),
+  })
+
   const domainPorts = wireDomainPorts(
     {
       ...lifecycleWiring.ports,
@@ -417,6 +452,10 @@ export async function createLiveOperatorStack(input: CreateLiveOperatorStackInpu
       ...outputSpoolWiring.ports,
       ...semanticWiring.ports,
       ...mcpWiring.ports,
+      ...telemetryWiring.ports,
+      ...smartWiring.ports,
+      ...budgetWiring.ports,
+      ...poolsWiring.ports,
       routing: createRoutingDomainPort(routingService),
     },
     { dnsResolver },
@@ -463,6 +502,10 @@ export async function createLiveOperatorStack(input: CreateLiveOperatorStackInpu
       outputSpoolWiring.dispose()
       semanticWiring.dispose()
       mcpWiring.dispose()
+      telemetryWiring.dispose()
+      smartWiring.dispose()
+      budgetWiring.dispose()
+      poolsWiring.dispose()
       maintenance.dispose()
     },
   }

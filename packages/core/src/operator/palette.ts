@@ -102,7 +102,17 @@ export const OPERATOR_TOP_SUBTITLE = "Grouped operator settings and views" as co
  * Domains whose mutations persist today (FR7). Every other domain's mutations
  * are honest-unavailable until their backend lands (out of scope here).
  */
-export const OPERATOR_PERSISTING_DOMAINS = ["langlock", "jobs", "routing", "process", "task"] as const
+export const OPERATOR_PERSISTING_DOMAINS = [
+  "langlock",
+  "jobs",
+  "routing",
+  "process",
+  "task",
+  "telemetry",
+  "smart",
+  "budget",
+  "pools",
+] as const
 
 const PERSISTING_DOMAIN_SET: ReadonlySet<string> = new Set(OPERATOR_PERSISTING_DOMAINS)
 

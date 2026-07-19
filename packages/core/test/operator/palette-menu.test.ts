@@ -66,7 +66,11 @@ describe("T014 group list — 12 domains with badges + counts (FR2)", () => {
     expect(byDomain.get("process")!.badge).toBe("Available")
     expect(byDomain.get("semantic")!.badge).toBe("Unavailable")
     expect(byDomain.get("mcp")!.badge).toBe("Unavailable")
-    expect(byDomain.get("telemetry")!.badge).toBe("Unavailable")
+    // Feature 013 flipped the four config-backed domains to persists_today (FR12).
+    expect(byDomain.get("telemetry")!.badge).toBe("Available")
+    expect(byDomain.get("smart")!.badge).toBe("Available")
+    expect(byDomain.get("budget")!.badge).toBe("Available")
+    expect(byDomain.get("pools")!.badge).toBe("Available")
   })
 
   test("counts equal the split of the domain's catalog verbs by section", () => {
@@ -132,8 +136,18 @@ describe("T014 availability + input-mode derivation (FR3, FR5, FR7)", () => {
     expect(byId.get("semantic.provider.add")!.availability).toBe("unavailable") // honest-unavailable mutation
   })
 
-  test("persisting-domain set is exactly the five persisting domains", () => {
-    expect([...OPERATOR_PERSISTING_DOMAINS].sort()).toEqual(["jobs", "langlock", "process", "routing", "task"])
+  test("persisting-domain set is exactly the nine persisting domains", () => {
+    expect([...OPERATOR_PERSISTING_DOMAINS].sort()).toEqual([
+      "budget",
+      "jobs",
+      "langlock",
+      "pools",
+      "process",
+      "routing",
+      "smart",
+      "task",
+      "telemetry",
+    ])
   })
 
   test("input-mode map assigns only the 14 persisting Configure verbs; all others `none`", () => {

@@ -39,17 +39,12 @@ export function createConfigStatusHandler(config: ConfigPort, authority?: string
 }
 
 const STATUS_SHOW_IDS = [
-  // langlock.status/langlock.show intentionally excluded: they dispatch through the
-  // Feature 004 domain port (port.resolve) so they render the effective redacted policy
-  // and degrade to the typed unavailable envelope, matching jobs/semantic parity.
-  "telemetry.status",
-  "telemetry.show",
-  "smart.status",
+  // langlock.status/show and (Feature 013) telemetry.status/show, smart.status,
+  // budget.status/show, pools.status/show are intentionally excluded: they dispatch
+  // through their real Feature 004/013 domain ports (port.resolve) so they render the
+  // effective redacted config and degrade to the typed unavailable envelope, matching
+  // jobs/semantic parity. routing.status and the semantic.* entries stay config-backed.
   "routing.status",
-  "budget.status",
-  "budget.show",
-  "pools.status",
-  "pools.show",
   "semantic.embedding.show",
   "semantic.binding.status",
   "semantic.index.status",
