@@ -238,7 +238,7 @@ symbols are pinned by `plan.md`, not provisional.
 
 ### Stress, telemetry, build pipeline, and close-out (Phase 5)
 
-- [ ] T018 [S15] Add the leak-and-panic stress suite under
+- [x] T018 [S15] Add the leak-and-panic stress suite under
   `packages/core/test/tool/native/`: issue a high volume (target ≥ 100k, the exact count a
   provisional constant finalized here per AC11) of `oc_*` calls each freeing its response via
   `oc_free`, assert `oc_alloc_stats.allocated == freed` at rest and a bounded RSS ceiling, and
@@ -246,7 +246,7 @@ symbols are pinned by `plan.md`, not provisional.
   `internal_panic` envelope with the Bun process not crashing (FR16, FR17, FR20, NFR2, NFR3,
   C18, AC11, AC12). Acceptance: `bun test packages/core/test/tool/native` green with matched
   alloc/free at rest, RSS within the ceiling, and the contained `internal_panic` path.
-- [ ] T019 [S16] Author the content-free telemetry for backend selection and the
+- [x] T019 [S16] Author the content-free telemetry for backend selection and the
   `native_unavailable` gap following ADR-0001 / Feature 001 bounded-label conventions: labels
   `tool` (the six names + `pty`), `backend` (`native` | `typescript`), and `gap_reason`
   (`library_missing` | `dlopen_failed` | `abi_mismatch` | `disabled`) — stable enums only —
@@ -255,7 +255,7 @@ symbols are pinned by `plan.md`, not provisional.
   SDK, or output plane (FR23, FR24, C14, AC17). Acceptance: `bun test packages/core` cardinality
   audit asserts only the bounded enum labels appear and no content/path/command/session-id
   label is emitted.
-- [ ] T020 [S16] Add the fallback byte-identity suite under
+- [x] T020 [S16] Add the fallback byte-identity suite under
   `packages/core/test/tool/native/` covering all six tools when the dylib is
   absent / present-but-unloadable / ABI-mismatched / flag-off: each runs through the
   TypeScript implementation byte-identically and records the typed `native_unavailable`
@@ -263,7 +263,7 @@ symbols are pinned by `plan.md`, not provisional.
   (FR7, FR19, NFR1, NFR6, C14, AC13, AC14). Acceptance: `bun test packages/core/test/tool/native`
   green with all six tools byte-identical on the TS path across every unavailability cause and
   the gap recorded, no hard failure.
-- [ ] T021 [S16] Author `script/build-native.ts` (a Bun script invoking `cargo build
+- [x] T021 [S16] Author `script/build-native.ts` (a Bun script invoking `cargo build
   --release` at the workspace root and copying `libopencode_tools_ffi.{dylib,so}` /
   `libopencode_pty_ffi.{dylib,so}` into `packages/core/native/<platform>-<arch>/`, `<arch>` =
   `arm64`|`x64` — the exact copy layout a provisional constant finalized here per AC14) and
@@ -276,7 +276,7 @@ symbols are pinned by `plan.md`, not provisional.
   `bun run build:native` builds both crates and copies the artifacts into the gitignored
   bundled dir on a Rust-capable machine, and an absent artifact leaves the TypeScript build
   and runtime intact.
-- [ ] T022 [S16] Close out: run `cargo build --release` + `cargo clippy` + `cargo test`
+- [x] T022 [S16] Close out: run `cargo build --release` + `cargo clippy` + `cargo test`
   across all three crates and `bun run typecheck` + `bun test` for `packages/core`; tick every
   checkbox above once its task is complete and verified; confirm `speckit validate` is green
   with only the four pre-existing waived hygiene findings (no placeholder findings); and
