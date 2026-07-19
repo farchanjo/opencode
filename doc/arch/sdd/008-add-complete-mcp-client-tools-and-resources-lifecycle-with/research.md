@@ -99,6 +99,88 @@ SDK behavior relevant to Feature 008 phases:
   `progressToken` and optionally reset timeouts.
 - OAuth client auth helpers exist and are used by OpenCode OAuth modules.
 
+### Installed version vs the C1 baseline (no delta) and the applied forward patch
+
+| Fact | Evidence |
+| ---- | -------- |
+| Declared dependency | `packages/opencode/package.json` → `"@modelcontextprotocol/sdk": "1.29.0"` |
+| Locked version | `bun.lock` → `"@modelcontextprotocol/sdk@1.29.0"` |
+| Delta vs C1 baseline | **none** — installed 1.29.0 equals the C1 pinned baseline 1.29.0 |
+| Forward patch already applied | `bun.lock` maps the package to `patches/@modelcontextprotocol%2Fsdk@1.29.0.patch` |
+
+The lockfile pins exactly the C1 baseline, so there is **no version bump to perform** at
+plan time; the upgrade posture is C1's forward-patch path, not a jump. The 629-line
+workspace patch already demonstrates that posture: it adds typed `callTool` result
+overloads (`callTool(params, resultSchema?, options?)`) to the client `.d.ts` and, in the
+client runtime, installs `transport.onsessionexpired = async () => { await
+this._initialize(transport) }` so a session-expired transport re-initializes rather than
+failing. This is direct evidence for C1 (forward-patch a patch/minor of the same major
+line, never fork wire logic). A future session-resume / `Last-Event-ID` / Tasks gap follows
+the same channel — extend this patch or take a patch/minor bump — and a major SDK jump is an
+explicit plan/ADR migration note, never a silent bump.
+
+### SDK client APIs for subscriptions, progress, cancellation, and tasks (installed type declarations)
+
+Inspected in the installed package
+(`node_modules/.bun/@modelcontextprotocol+sdk@1.29.0+.../dist/esm/**`):
+
+| Feature 008 need | SDK surface (present) | Location |
+| ---------------- | --------------------- | -------- |
+| Resource subscribe (C10) | `Client.subscribeResource(params, options?)`, `Client.unsubscribeResource(params, options?)` | `client/index.d.ts` |
+| Subscribe capability wire (C10) | `SubscribeRequestSchema`, `UnsubscribeRequestSchema` | `types.d.ts` |
+| Resource updated / list-changed (C9) | `ResourceUpdatedNotificationSchema`, `ResourceListChangedNotificationSchema` | `types.d.ts` |
+| Progress plumbing (C7) | `ProgressCallback`, `RequestOptions.onprogress`, `RequestOptions.resetTimeoutOnProgress`, `ProgressNotificationSchema` | `shared/protocol.d.ts`, `types.d.ts` |
+| Standard cancel (C8) | `CancelledNotificationSchema` (request-id scoped); driven via `RequestOptions` `AbortSignal` | `types.d.ts`, `shared/protocol.d.ts` |
+| Task cancel + lifecycle (C8, C18) | `experimental/tasks/**` (`interfaces.d.ts`, `types.d.ts`, `CreateTaskResult`, `GetTaskResult`, task cancel/get/result); `client.experimental.tasks.callToolStream()` referenced in the patched `callTool` doc | `experimental/tasks/**`, patched `client/index.d.ts` |
+| Logging level (C23) | `Client.setLoggingLevel(level, options?)` | `client/index.d.ts` |
+| Typed tool call (C16) | patched `callTool` overloads returning `SchemaOutput<CallToolResult>`; final result parsed in RAM (no zero-RAM) | patched `client/index.d.ts` |
+
+Every wire feature Feature 008 phases require exists in the pinned SDK; the Tasks surface is
+under the `experimental/` namespace and is `@experimental`-annotated, matching the C18
+per-server, off-by-default rollout posture. The final `tools/call` result is a complete
+JSON-RPC parse in process memory, confirming the C16 post-parse spill (no zero-RAM promise).
+
+### `MCP.Service` consumer inventory (grep, read-only)
+
+The C27 compatibility surface — consumers that keep their interface shape while Feature 008
+reworks lifecycle behind the seams:
+
+| Consumer | Location | Uses |
+| -------- | -------- | ---- |
+| Effect runtime layer | `packages/opencode/src/effect/app-runtime.ts:94` | `MCP.node` |
+| HTTP server wiring | `packages/opencode/src/server/routes/instance/httpapi/server.ts:250` | `MCP.node` |
+| HTTP MCP handlers | `packages/opencode/src/server/routes/instance/httpapi/handlers/mcp.ts` | `yield* MCP.Service`; `MCP.NotFoundError` |
+| HTTP experimental handler | `packages/opencode/src/server/routes/instance/httpapi/handlers/experimental.ts:31` | `yield* MCP.Service` |
+| HTTP MCP group / status | `packages/opencode/src/server/routes/instance/httpapi/groups/mcp.ts` | `MCP.Status`, `StatusMap` |
+| CLI MCP command | `packages/opencode/src/cli/cmd/mcp.ts` | `MCP.Service.use`, `MCP.AuthStatus`, `getAuthStatus`, `removeAuth` |
+| Command index | `packages/opencode/src/command/index.ts:62,175` | `yield* MCP.Service`; `MCP.node` dep |
+| Code-mode tool catalog | `packages/opencode/src/tool/code-mode.ts:36,210` | `MCP.McpTool`; `mcp.tools()` |
+| Session tools (runtime resources) | `packages/opencode/src/session/tools.ts` | `MCP.Service`; `list_mcp_resources` / `read_mcp_resource`; `MAX_MCP_RESOURCE_BLOB_BYTES` (10MB) |
+| Config schema | `packages/core/src/config/mcp.ts` | `ConfigV2.MCP.Timeout/Local/OAuth/Remote` |
+| Lifecycle tests | `packages/opencode/test/mcp/lifecycle.test.ts` | `mcp.tools()` catalog assertions |
+
+These seams (`tools()`, `resources()`, `readResource()`, the `Status` union, `MCP.node`,
+`mcp:server:*` Permission, and the cached `defs[server]` shape) are the additive-only
+compatibility contract of C27.
+
+### `mcp-event.ts` schema shape and the rename blast radius (C3)
+
+`packages/schema/src/mcp-event.ts` today defines two events via `Event.define` and an
+`Event.inventory`:
+
+- `ToolsChanged` — `type: "mcp.tools.changed"`, `schema: { server: Schema.String }`.
+- `BrowserOpenFailed` — `type: "mcp.browser.open.failed"`, `schema: { mcpName, url }`.
+- `Definitions = Event.inventory(ToolsChanged, BrowserOpenFailed)`.
+
+The `mcp.tools.changed` literal that C3 renames to the canonical `mcp.tools_changed` reaches
+three files: the schema source `packages/schema/src/mcp-event.ts:7`; the re-export and two
+publishers in `packages/opencode/src/mcp/index.ts` (`ToolsChanged = McpEvent.ToolsChanged`,
+`events.publish(ToolsChanged, { server })` at lines 451 and 470); and three occurrences in
+the generated SDK types `packages/sdk/js/src/v2/gen/types.gen.ts` (`type: "mcp.tools.changed"`
+in `McpToolsChanged`, `EventMcpToolsChanged`, and the union). The rename updates the schema
+literal and regenerates the SDK types in one migration so no dual spelling survives and the
+Feature 009 reindex-trigger consumer reads the single id.
+
 ## Current OpenCode MCP client (read-only evidence)
 
 Primary modules:

@@ -2,7 +2,7 @@
 id: 019f7184-70b5-7f83-bd9a-ed019572f111
 number: 008
 slug: add-complete-mcp-client-tools-and-resources-lifecycle-with
-status: clarified
+status: planned
 created_at: 2026-07-17T19:18:52.853767Z
 ---
 
@@ -607,10 +607,14 @@ Priority uses P1 (must have), P2 (should have), and P3 (could have).
   — opt-in resource index only.
 - [Feature 007 Unified Native Operator Control Plane](../007-add-a-unified-native-operator-control-plane-for-all-opencode/spec.md)
   — `mcp.*` registry/auth/audit/adapters; schemas owned by Feature 008.
+- [ADR-0009 Complete MCP Client Lifecycle and Content Plane](../../adr/0009-mcp-client-lifecycle-and-content-plane.md)
+  (proposed) — required decision record formalizing C1–C27.
 - [ADR-0001 OpenTelemetry telemetry foundation](../../adr/0001-opentelemetry-telemetry-foundation.md)
+  (accepted)
 - [ADR-0002 Core Smart Agent Routing](../../adr/0002-core-smart-agent-routing.md)
+  (accepted)
 - [ADR-0003 Operator Control Plane and native command authority](../../adr/0003-operator-control-plane-and-native-command-authority.md)
-  (proposed)
+  (accepted)
 
 ### Official MCP specification (2025-11-25)
 

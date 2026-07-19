@@ -99,6 +99,14 @@ Acceptance criteria live as prioritized scenarios in each feature `spec.md`.
   (draft → staged → active → degraded/unavailable, with cutover-under-CAS
   activation, rollback, and the full_semantic ↔ catalog_lexical ↔
   fail_closed degradation ladder; never a silent model substitution).
+- **MCP connection and resource subscription lifecycle** — the connection
+  negotiate/record state machine with reconnect/backoff/resume and the
+  paired resource-subscription machine are modeled in
+  [mcp-connection statechart](../statecharts/mcp-connection.md)
+  (configured → connecting → negotiating → recording → connected, with
+  reconnecting/backoff/resume, the mcp_unavailable typed gap, and
+  unsubscribed → subscribing → subscribed → unsubscribing, fail-closed on
+  an unauthorized or capability-lost subscribe).
 
 ## Phase 2 deferred (explicit)
 
