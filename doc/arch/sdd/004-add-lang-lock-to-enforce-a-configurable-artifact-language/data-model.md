@@ -889,3 +889,17 @@ Decisions recorded during the Phase 5 (test/validation) wave:
    protocol layer sources from `@opencode-ai/schema/langlock/*` (`import type`)
    are pinned against the schema runtime literals so the transport contract can
    never diverge from the wire shape.
+
+3. **T033 defect correction — command-port authority over the config-status
+   stopgap.** `langlock.status` and `langlock.show` were being shadowed by the
+   Feature 007 T040 `config-status` stopgap `STATUS_SHOW_IDS` list
+   (`packages/opencode/src/operator/adapters/outbound/config-status.ts`), which
+   pre-dated this campaign's real domain-port wiring and called `config.get()`
+   unguarded — dying with `InstanceRef not provided` when the live Config.Service
+   fiber was not bound, instead of degrading. The two stale entries are removed so
+   both ids dispatch through the `langlock` domain port (`port.resolve`, per note 1
+   T035 and note 4 T033). The operator langlock command port now degrades to the
+   typed `unavailable` envelope (exit 53, `outcome`/`code` = `unavailable`,
+   `retryable: true`) when the live backend/InstanceRef is not bound — full parity
+   with `jobs`/`semantic`, and never a raw `Effect.die` crash. The honest-gap
+   posture is unchanged: no fabricated backend, only the correct typed gap.
