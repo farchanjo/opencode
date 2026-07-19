@@ -162,3 +162,55 @@ export interface NativeInvokeMeta {
   readonly backend: NativeBackend
   readonly gapReason?: NativeUnavailableGapReason
 }
+
+/** One PTY environment variable — mirrors CUE `ffi.pty.#EnvEntry` (FR8). */
+export interface NativePtyEnvEntry {
+  readonly name: string
+  readonly value: string
+}
+
+/** Terminal window size applied at spawn and via `TIOCSWINSZ` — mirrors CUE `#WindowSize` (FR9, C12). */
+export interface NativePtyWindow {
+  readonly cols: number
+  readonly rows: number
+}
+
+/** `oc_pty_spawn` request — mirrors CUE `#PtySpawnRequest` (FR8, C11). */
+export interface NativePtySpawnRequest {
+  readonly command: string
+  readonly args: readonly string[]
+  readonly cwd: string | null
+  readonly env: readonly NativePtyEnvEntry[]
+  readonly window: NativePtyWindow
+}
+
+/** `oc_pty_spawn` result — mirrors CUE `#PtySpawnResult`; `master_fd` transfers wholly to Bun (FR8, C9). */
+export interface NativePtySpawnResult {
+  readonly session_id: string
+  readonly pid: number
+  readonly master_fd: number
+}
+
+/** `oc_pty_resize` request — mirrors CUE `#PtyResizeRequest` (FR9, C12). */
+export interface NativePtyResizeRequest {
+  readonly session_id: string
+  readonly window: NativePtyWindow
+}
+
+/** `oc_pty_kill` request — mirrors CUE `#PtyKillRequest`; one `killpg` per call (FR9, C12). */
+export interface NativePtyKillRequest {
+  readonly session_id: string
+  readonly signal: number
+}
+
+/** `oc_pty_wait` / `oc_pty_close` request — mirrors CUE `#PtyWaitRequest` / `#PtyCloseRequest` (FR9, C12). */
+export interface NativePtySessionRequest {
+  readonly session_id: string
+}
+
+/** `oc_pty_wait` result — mirrors CUE `#PtyWaitResult` (non-blocking `waitpid(WNOHANG)`, FR9, C12). */
+export interface NativePtyWaitResult {
+  readonly exited: boolean
+  readonly exit_code: number | null
+  readonly signal: number | null
+}

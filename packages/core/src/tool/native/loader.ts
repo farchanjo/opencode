@@ -103,7 +103,14 @@ function symbolTable(crate: NativeCrate): Record<string, FfiSymbolDef> {
       oc_glob: { args: ["ptr", "u64"], returns: "ptr" },
     }
   }
-  return shared
+  return {
+    ...shared,
+    oc_pty_spawn: { args: ["ptr", "u64"], returns: "ptr" },
+    oc_pty_resize: { args: ["ptr", "u64"], returns: "ptr" },
+    oc_pty_kill: { args: ["ptr", "u64"], returns: "ptr" },
+    oc_pty_wait: { args: ["ptr", "u64"], returns: "ptr" },
+    oc_pty_close: { args: ["ptr", "u64"], returns: "ptr" },
+  }
 }
 
 /**

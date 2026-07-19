@@ -203,6 +203,14 @@ pub fn spawn(req: SpawnRequest) -> Result<Value, FfiError> {
     if master_fd < 0 {
         return Err(io_error("dup master fd", std::io::Error::last_os_error()));
     }
+    // Bun drives async IO on the event loop; the master fd must be non-blocking so
+    // `node:net.Socket({ fd })` polls it via kqueue/epoll rather than blocking (C9).
+    unsafe {
+        let flags = libc::fcntl(master_fd, libc::F_GETFL);
+        if flags >= 0 {
+            libc::fcntl(master_fd, libc::F_SETFL, flags | libc::O_NONBLOCK);
+        }
+    }
 
     let session_id = mint_session_id();
     sessions().insert(
