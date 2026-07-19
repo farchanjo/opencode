@@ -4,12 +4,15 @@ import { ToolFailure } from "@opencode-ai/llm"
 import { Effect, Layer, Schema } from "effect"
 import path from "path"
 import { makeLocationNode } from "../effect/app-node"
+import { Config } from "../config"
 import { FileSystem } from "../filesystem"
 import { FSUtil } from "../fs-util"
 import { Location } from "../location"
 import { PermissionV2 } from "../permission"
 import { Ripgrep } from "../ripgrep"
 import { RelativePath } from "../schema"
+import { contentRequest, runNativeGrep } from "./native/grep.native"
+import { sharedLoader } from "./native/loader"
 import { ToolRegistry } from "./registry"
 import { Tool } from "./tool"
 import { Tools } from "./tools"
@@ -57,6 +60,7 @@ const layer = Layer.effectDiscard(
     const ripgrep = yield* Ripgrep.Service
     const location = yield* Location.Service
     const permission = yield* PermissionV2.Service
+    const config = yield* Config.Service
 
     yield* tools
       .register({
@@ -94,35 +98,40 @@ const layer = Layer.effectDiscard(
               })
               const target = path.resolve(location.directory, input.path ?? ".")
               const info = yield* fs.stat(target).pipe(Effect.catch(() => Effect.succeed(undefined)))
+              const cwd = info?.type === "Directory" ? target : path.dirname(target)
+              const relocate = (matches: readonly FileSystem.Match[]) =>
+                matches.map((match) =>
+                  FileSystem.Match.make({
+                    ...match,
+                    entry: FileSystem.Entry.make({
+                      ...match.entry,
+                      path: RelativePath.make(path.relative(location.directory, path.resolve(cwd, match.entry.path))),
+                    }),
+                  }),
+                )
+              // Native backend selection before the Ripgrep.Service call (FR6, C5):
+              // the embedded engine serves a directory search when the flag is on;
+              // any gap or FFI error falls back through the external-`rg` seam.
+              const entries = yield* config.entries()
+              const nativeTools = Config.latest(entries, "experimental")?.native_tools === true
+              if (nativeTools && info?.type === "Directory") {
+                const outcome = runNativeGrep(
+                  sharedLoader(),
+                  true,
+                  contentRequest({ cwd, pattern: input.pattern, include: input.include }),
+                )
+                if (outcome.kind === "ok")
+                  return relocate(outcome.matches.slice(0, input.limit ?? Number.MAX_SAFE_INTEGER))
+              }
               return yield* ripgrep
                 .grep({
-                  cwd: info?.type === "Directory" ? target : path.dirname(target),
+                  cwd,
                   pattern: input.pattern,
                   file: info?.type === "File" ? path.basename(target) : undefined,
                   include: input.include,
                   limit: input.limit ?? Number.MAX_SAFE_INTEGER,
                 })
-                .pipe(
-                  Effect.map((result) =>
-                    result.map((match) =>
-                      FileSystem.Match.make({
-                        ...match,
-                        entry: FileSystem.Entry.make({
-                          ...match.entry,
-                          path: RelativePath.make(
-                            path.relative(
-                              location.directory,
-                              path.resolve(
-                                info?.type === "Directory" ? target : path.dirname(target),
-                                match.entry.path,
-                              ),
-                            ),
-                          ),
-                        }),
-                      }),
-                    ),
-                  ),
-                )
+                .pipe(Effect.map(relocate))
             }).pipe(Effect.mapError(() => new ToolFailure({ message: `Unable to grep for ${input.pattern}` }))),
         }),
       })
@@ -133,5 +142,5 @@ const layer = Layer.effectDiscard(
 export const node = makeLocationNode({
   name: "tool/grep",
   layer,
-  deps: [ToolRegistry.node, FSUtil.node, Ripgrep.node, Location.node, PermissionV2.node],
+  deps: [ToolRegistry.node, FSUtil.node, Ripgrep.node, Location.node, PermissionV2.node, Config.node],
 })

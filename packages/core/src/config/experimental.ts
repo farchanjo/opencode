@@ -21,6 +21,15 @@ export class Experimental extends Schema.Class<Experimental>("ConfigV2.Experimen
   /** Feature 007: treat operator connectivity as offline when true. */
   offline: Schema.Boolean.pipe(Schema.optional),
   /**
+   * Feature 010: opt-in native Rust FFI backend for the filesystem/text tools
+   * (`read`/`write`/`edit`/`apply_patch`/`glob`/`grep`), default false. Presence
+   * never changes behavior when off; absence/unloadable/ABI-mismatch fall back
+   * silently to the TypeScript path (FR19, C2, C19).
+   */
+  native_tools: Schema.Boolean.pipe(Schema.optional),
+  /** Feature 010: opt-in native Rust PTY backend for `bash pty:true`, default false. */
+  native_pty: Schema.Boolean.pipe(Schema.optional),
+  /**
    * Feature 009: per-surface semantic tool-search config. Absent (or a surface
    * absent from `surfaces`) means the full-set passthrough floor — no narrowing,
    * identical to today (FR18, FR21, C9, C12, C15).
