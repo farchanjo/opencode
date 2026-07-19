@@ -206,7 +206,7 @@ path.
 
 ### Telemetry, evaluation, tests, and validation (Phase 5)
 
-- [ ] T013 [S12] Extend `packages/core/src/semantic/semantic-instruments.ts` with the content-free
+- [x] T013 [S12] Extend `packages/core/src/semantic/semantic-instruments.ts` with the content-free
   `retrieve.tools` / `rerank.tools` / `semantic.fallback` spans (the shared `embed.query` span
   reused when the query embedding is shared across surfaces) and the bounded metrics (candidates
   before/after, cache hit, fallback/stale counts, rerank delta buckets, selected tool rank

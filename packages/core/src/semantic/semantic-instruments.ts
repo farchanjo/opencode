@@ -41,6 +41,21 @@ export const SpanName = {
 } as const
 export type SpanName = (typeof SpanName)[keyof typeof SpanName]
 
+// Feature 009 / T013 (S12) — the tool-search concept spans (Observability, FR23,
+// C16, AC15). Kept in a SEPARATE object so the Feature 006 nine-span `SpanName`
+// set is unchanged: `retrieve.tools` / `rerank.tools` are the two genuinely new
+// tool spans, while `embed.query` and `semantic.fallback` are REUSED from
+// `SpanName` verbatim (the query embedding is shared across surfaces, and the
+// degradation floor is the same fallback span, C16). No span name carries a tool
+// id, MCP server name, session id, query text, vector, or path.
+export const ToolSpanName = {
+  retrieveTools: "retrieve.tools",
+  rerankTools: "rerank.tools",
+  embedQuery: SpanName.embedQuery,
+  fallback: SpanName.fallback,
+} as const
+export type ToolSpanName = (typeof ToolSpanName)[keyof typeof ToolSpanName]
+
 /** The existing spans the semantic.* spans correlate with (Observability, FR41, C22). */
 export const CorrelatedSpanName = {
   routingEvaluate: TelemetryInstruments.SpanName.routingEvaluate,
@@ -80,6 +95,14 @@ export const Labels = {
   freshness: ["fresh", "bounded", "stale"] as const,
   language_tag: ["en-US", "en-CA", "en-GB", "en-AU", "pt-BR", "es-ES", "es-MX", "es-AR"] as const,
   outcome: ["success", "failure", "blocked", "degraded"] as const,
+  // Feature 009 / T013 (S12) — the tool degradation ladder rung and the per-surface
+  // enablement axis as bounded enums (FR18, FR21, FR24, C9, C14, C16, AC15). `tool_mode`
+  // mirrors the schema `ToolRetrievalMode` (`full_set_passthrough` floor distinct from the
+  // agent `catalog_lexical`); `surface` is the enablement KIND (native/mcp/code_mode),
+  // NEVER an MCP server name or a tool id. Both are closed enums collapsing an
+  // out-of-budget value to `other`, so cardinality stays bounded and content-free.
+  tool_mode: ["full_semantic", "lexical_only", "full_set_passthrough", "fail_closed"] as const,
+  surface: ["native", "mcp", "code_mode"] as const,
 } as const
 
 // --- Metric instruments -----------------------------------------------------
@@ -157,3 +180,27 @@ export const indexReconcile = Metric.counter("semantic.index.reconcile", {
   description: "Count of scheduled reconcile passes over the pinned binding",
   incremental: true,
 })
+
+// Feature 009 / T013 (S12) — tool-search telemetry REUSES the content-free
+// instruments above verbatim (FR23, FR24, C16, AC15). A tool pass records the same
+// `retrieveLatencyMs`, `candidatesRecalled` / `candidatesSelected` before/after
+// buckets, `cacheHit` / `cacheMiss` (the shared query embedding), `fallbackCount` /
+// `staleCount`, `rerankDelta`, `selectedRank` (the selected TOOL rank as a bounded
+// bucket, NEVER the tool id), and `indexUpsert` / `indexTombstone` / `indexReconcile`
+// counters, distinguished ONLY by the bounded `collection: "tools"`, `tool_mode`, and
+// `surface` labels — never a tool id, MCP server name, session id, query, vector, or
+// path. Feature 009 adds no new metric instrument and no new exporter.
+export const TOOL_METRICS = Object.freeze([
+  retrieveLatencyMs,
+  candidatesRecalled,
+  candidatesSelected,
+  cacheHit,
+  cacheMiss,
+  fallbackCount,
+  staleCount,
+  rerankDelta,
+  selectedRank,
+  indexUpsert,
+  indexTombstone,
+  indexReconcile,
+])

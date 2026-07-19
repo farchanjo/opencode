@@ -102,6 +102,36 @@ export const runGolden = (cases: readonly GoldenCase[], k: number): EvalReport =
   }
 }
 
+// ---------------------------------------------------------------------------
+// Feature 009 / T013 (S12) — the tool-retrieval golden fixture set.
+//
+// Reuses the SAME `EvalPort` shape (`GoldenCase`), the same `recall@k`/`nDCG`/`MRR`
+// metrics, and the same FIXED ZERO-leakage gate (`runGolden`) as the Feature 006
+// agent/skill golden set — the tool set is query→tool relevance, not a second
+// harness (FR25, FR16, C16, AC2, AC20). The fixtures cover multilingual queries
+// (pt-BR / es / en) against the en-US Lang Lock tool descriptions and a
+// permission-leakage case whose leaked ids MUST be empty; a run mutates no binding.
+// The fixtures are content-free — bounded tool ids, never a description, a schema, a
+// secret, or a path.
+// ---------------------------------------------------------------------------
+
+/** The multilingual tool golden set: pt-BR / es / en queries over en-US tool descriptions (AC2, AC20). */
+export const TOOL_GOLDEN_CASES: readonly GoldenCase[] = Object.freeze([
+  { queryId: "tq-read-pt", locale: "pt-BR", relevant: ["tool.read"], retrieved: ["tool.read", "tool.list"], leaked: [] },
+  { queryId: "tq-write-es", locale: "es", relevant: ["tool.write"], retrieved: ["tool.write", "tool.edit"], leaked: [] },
+  { queryId: "tq-bash-en", locale: "en", relevant: ["tool.bash"], retrieved: ["tool.grep", "tool.bash"], leaked: [] },
+  { queryId: "tq-mcp-pt", locale: "pt-BR", relevant: ["mcp:srv/fetch"], retrieved: ["mcp:srv/fetch"], leaked: [] },
+])
+
+/**
+ * Run the tool golden evaluation at cut-off `k` (defaulting to the small tool
+ * result bound). Delegates to the reused `runGolden` so the zero-leakage gate has
+ * exactly one owner; the report PASSES only with zero cross-project/over-permission
+ * leakage. The harness never mutates a binding (FR25, C16, AC20).
+ */
+export const runToolGolden = (cases: readonly GoldenCase[] = TOOL_GOLDEN_CASES, k = 8): EvalReport =>
+  runGolden(cases, k)
+
 /** A budgeted skill-chunk slice: a Feature 005 ref plus a bounded byte window — never an inline body (FR40, C9). */
 export interface BudgetedSlice {
   readonly outputRef: string
