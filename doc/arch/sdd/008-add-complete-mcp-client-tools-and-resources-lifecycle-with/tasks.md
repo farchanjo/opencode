@@ -33,7 +33,7 @@ enforced (see the Traceability reconciliation note).
 
 ### Schema and protocol foundation (Phase 1)
 
-- [ ] T001 [S0] Author `packages/schema/src/mcp/ids.ts` and `packages/schema/src/mcp/refs.ts`
+- [x] T001 [S0] Author `packages/schema/src/mcp/ids.ts` and `packages/schema/src/mcp/refs.ts`
   with the branded identifiers and opaque handles from `data-model.md`: `ServerId`,
   `ConnectionId`, `RequestId`, `ToolName`, `ResourceUri`, `TaskId`, `SubscriptionId`,
   `EventId` (the EventV2 `evt_` id), plus the runtime/secure refs `OutputRef` (Feature 005),
@@ -46,7 +46,7 @@ enforced (see the Traceability reconciliation note).
   `tsgo --noEmit` on `packages/schema` and the schema contract-hygiene test assert the root
   identifier is retained (annotate-before-check) on every brand and no ref exposes raw
   secret/path material.
-- [ ] T002 [S0] Author `packages/schema/src/mcp/values.ts`, `text-values.ts`, and `uri.ts`
+- [x] T002 [S0] Author `packages/schema/src/mcp/values.ts`, `text-values.ts`, and `uri.ts`
   with the integer counter/byte/bound ValueObjects (`SchemaVersion`, `Sequence`, `Progress`,
   `Total`, `ByteLength`, `ByteOffset`, `ByteLimit`, `PageCursor`, `PageIndex`, `MaxPageBound`,
   `QueueDepth`, `DebounceMs`, `BackoffBaseMs`, `BackoffCapMs`, `JitterRatio`, `AttemptCount`)
@@ -58,7 +58,7 @@ enforced (see the Traceability reconciliation note).
   `Total` is nullable (FR14, FR15, C7). Acceptance: `tsgo --noEmit` green and the schema test
   asserts counters/bytes are integer-checked, `Progress` is continuous, and no free-form
   content/secret/path field is exported.
-- [ ] T003 [S0] Author `packages/schema/src/mcp/capability.ts` and
+- [x] T003 [S0] Author `packages/schema/src/mcp/capability.ts` and
   `packages/schema/src/mcp/connection.ts` composing `RecordedCapabilitySet` (negotiated
   `ProtocolVersion`, per-server capability flags for tools/resources/prompts/logging/roots/
   sampling/elicitation/tasks/subscribe/listChanged, `recorded_at`) and the additive
@@ -70,7 +70,7 @@ enforced (see the Traceability reconciliation note).
   green and the schema test asserts the recorded set captures the negotiated protocol version
   and every server capability flag, and the `Status` union extends without breaking the prior
   members.
-- [ ] T004 [S1] Author `packages/schema/src/mcp/enums.ts`, `enums-state.ts`, `enums-event.ts`,
+- [x] T004 [S1] Author `packages/schema/src/mcp/enums.ts`, `enums-state.ts`, `enums-event.ts`,
   and `event-types.ts` with the closed enums as `Schema.Literals([...])`: `CatalogState`
   (`stale|walking|fresh|guard_tripped`), `SubscriptionState`
   (`unsubscribed|subscribing|subscribed|unsubscribing|fail_closed`), `CallOutcome`
@@ -90,7 +90,7 @@ enforced (see the Traceability reconciliation note).
   `mcp.subscription.subscribed`/`mcp.subscription.unsubscribed`) distinct from the **five live**
   members (`mcp.call.started`/`mcp.call.progress`/`mcp.call.cancel_requested`/`mcp.task.status`/
   `mcp.log`), and that tool-execution `isError` is distinct from a protocol error.
-- [ ] T005 [S2] Author `packages/schema/src/mcp/policy.ts` composing `ResourceUpdatePolicy`
+- [x] T005 [S2] Author `packages/schema/src/mcp/policy.ts` composing `ResourceUpdatePolicy`
   (default `notify_cache`; opt-in `conditional_reread`/`semantic_reindex`/`wake` gates),
   `OutputSchemaMode` (`tolerant` default / `strict` per-server opt-in), and
   `AnnotationTrustMode` (`untrusted` default / operator-elevated `trusted`) plus the
@@ -99,7 +99,7 @@ enforced (see the Traceability reconciliation note).
   the C5/C6/C9 stances (FR13a, FR23, FR24, C5, C6, C9). Acceptance: `tsgo --noEmit` green and
   the schema test asserts the default policy is `notify_cache`, `tolerant` is the default
   validation mode, and `untrusted` is the default annotation-trust mode.
-- [ ] T006 [S3] Author `packages/schema/src/mcp/uri-allowlist.ts` and `collections.ts`
+- [x] T006 [S3] Author `packages/schema/src/mcp/uri-allowlist.ts` and `collections.ts`
   composing `UriAllowlist` (default `https` + server-declared URIs within negotiated roots;
   `file` only within authorized project/session roots; every other scheme deny-by-default) and
   `MimeAllowlist` (MIME allowlist + size caps + decompression-bomb limit) plus the first-class
@@ -109,7 +109,7 @@ enforced (see the Traceability reconciliation note).
   green and the schema test asserts `https` and roots-scoped URIs are allowed, `file` is
   confined to authorized roots, bare non-loopback `http` is deny-by-default, and every set
   wraps a branded element.
-- [ ] T007 [S4] Author `packages/schema/src/mcp/experimental.ts` and `spool-descriptor.ts`
+- [x] T007 [S4] Author `packages/schema/src/mcp/experimental.ts` and `spool-descriptor.ts`
   composing the `ExperimentalFlag` set (`tasks|sampling|elicitation|content_stream`, per-server,
   off by default) with the reserved namespaced capability string
   `experimental/opencode.contentStream`, and the `McpCallOutput`/`McpReadOutput` OutputGroup
@@ -120,7 +120,7 @@ enforced (see the Traceability reconciliation note).
   flag is per-server and defaults off, the content-stream capability string is exactly
   `experimental/opencode.contentStream`, and the spool descriptors carry a bounded preview +
   `OutputRef` and no filesystem path.
-- [ ] T008 [S1] Author `packages/schema/src/mcp/events.ts` plus the member files
+- [x] T008 [S1] Author `packages/schema/src/mcp/events.ts` plus the member files
   `events-server.ts`, `events-resource.ts`, `events-call.ts`, `events-live.ts`, and
   `events-log.ts` composing the content-free common carrier `McpEventEnvelope` (`event_id`,
   `EventKind` = `event_type`/`schema_version`/`event_class`/`source`/`actor_kind`/`visibility`
@@ -138,7 +138,7 @@ enforced (see the Traceability reconciliation note).
   FR56, C3, C7, C8, C26). Acceptance: `tsgo --noEmit` green and the schema test asserts every
   vocabulary member has a distinct Struct, the union is exhaustive over the 15 members, and no
   detail/envelope carries a body, URI-as-content, secret, or path.
-- [ ] T009 [S1] Author `packages/schema/src/mcp/events.ts` per-member `EventV2.define`
+- [x] T009 [S1] Author `packages/schema/src/mcp/events.ts` per-member `EventV2.define`
   `Definition`s carrying `durable {version: 1, aggregate: "correlation_id"}` on the **ten**
   durable members and omitting `durable` on the **five** live members, then extend
   `packages/schema/src/durable-event-manifest.ts` to join the ten durable `mcp.*` definitions
@@ -147,11 +147,11 @@ enforced (see the Traceability reconciliation note).
   `mcp.log`) out of the durable set, so no second event authority is introduced (C3, C26).
   Acceptance: `bun test packages/schema` durable-manifest test green with the ten durable `mcp.*`
   members present and the five live members absent.
-- [ ] T010 [S0–S4] Author the barrel `packages/schema/src/mcp/index.ts` re-exporting every mcp
+- [x] T010 [S0–S4] Author the barrel `packages/schema/src/mcp/index.ts` re-exporting every mcp
   schema module and register the barrel in `packages/schema/src/index.ts`. Acceptance:
   `tsgo --noEmit` on `packages/schema` green and `bun test packages/schema` imports the barrel
   without a duplicate-export error.
-- [ ] T011 [S1] Execute the `mcp.tools.changed` → `mcp.tools_changed` rename migration (C3):
+- [x] T011 [S1] Execute the `mcp.tools.changed` → `mcp.tools_changed` rename migration (C3):
   rename the schema literal `ToolsChanged.type` in `packages/schema/src/mcp-event.ts`; update
   the re-export and both publishers in `packages/opencode/src/mcp/index.ts`
   (`export const ToolsChanged` and the two `events.publish(ToolsChanged, …)` call sites);
@@ -162,7 +162,7 @@ enforced (see the Traceability reconciliation note).
   Acceptance: `grep -r "mcp.tools.changed" packages` returns zero matches, `bun test
   packages/schema` and `bun test packages/opencode` green, and the regenerated SDK types emit
   `mcp.tools_changed`.
-- [ ] T012 [S5] Author `packages/protocol/src/mcp/ports.ts` mirroring `contracts/ports.ts`: the
+- [x] T012 [S5] Author `packages/protocol/src/mcp/ports.ts` mirroring `contracts/ports.ts`: the
   `TransportPort`, `ClockPort`, `EntropyPort`, `SpoolPort`, `PermissionReadPort`,
   `EventPublishPort`, `ConfigReadPort`, and `SecretResolvePort` interfaces and the typed error
   unions (`ssrf_blocked`, `uri_not_allowlisted`, `fail_closed`, `mcp_unavailable`,
@@ -179,7 +179,7 @@ enforced (see the Traceability reconciliation note).
   each interface member matches `contracts/ports.ts` reconciled to the schema modules and the
   reconciled 15-member vocabulary (10 durable / 5 live, `mcp.call.cancel_requested` live, no
   `subscription.fail_closed` member) matches `packages/schema/src/mcp/*`.
-- [ ] T013 [S5] Author `packages/protocol/src/mcp/commands.ts` and
+- [x] T013 [S5] Author `packages/protocol/src/mcp/commands.ts` and
   `packages/protocol/src/mcp/index.ts` with the **30** operator command/query payloads for the
   reserved `mcp.*` IDs across `mcp.server.*` (11:
   `list|add|update|test|connect|disconnect|reconnect|disable|delete|status|capabilities`),
