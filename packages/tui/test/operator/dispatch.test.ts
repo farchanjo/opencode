@@ -68,7 +68,7 @@ describe("T015 form payload dispatch (FR5, FR8)", () => {
       port: spy.port,
       dialog: createFakeDialog(),
       toast,
-      payload: { [field.key]: validation.value },
+      payload: field.toPayload(validation.value),
     })
 
     const sent = spy.tryHandleCalls[0].text
@@ -84,33 +84,86 @@ describe("T015 form payload dispatch (FR5, FR8)", () => {
   })
 })
 
+describe("Feature 014 — Configure form payload matches the port contract (FR12, FR14)", () => {
+  /** Resolve a text_input field's built payload for `value`, failing loudly on a resolve/validate miss. */
+  function builtPayload(id: string, value: string): Record<string, unknown> {
+    const field = resolveOperatorFormField(entry(id))
+    if (!field || field.mode !== "text_input") throw new Error(`expected text_input field for ${id}`)
+    const validation = field.validate(value)
+    if (!validation.ok) throw new Error(`unexpected invalid ${id}: ${validation.message}`)
+    return field.toPayload(validation.value)
+  }
+
+  test("scalar registry verbs carry the port's canonical key, not a wrapper key", () => {
+    // The semantic command port reads top-level `id` / `newSecretRef` /
+    // `modelDescriptorId`; the pre-fix wrapper keys (`providerId`/`modelId`/
+    // `secretRef`) reached the port as "" → not_found / not_validated.
+    expect(builtPayload("semantic.provider.disable", "prov_123")).toEqual({ id: "prov_123" })
+    expect(builtPayload("semantic.provider.delete", "prov_123")).toEqual({ id: "prov_123" })
+    expect(builtPayload("semantic.model.disable", "model_123")).toEqual({ id: "model_123" })
+    expect(builtPayload("semantic.embedding.select", "model_123")).toEqual({ modelDescriptorId: "model_123" })
+    expect(builtPayload("semantic.reranker.select", "model_123")).toEqual({ modelDescriptorId: "model_123" })
+    expect(builtPayload("semantic.provider.rotate-secret", "keychain:k@v2")).toEqual({ newSecretRef: "keychain:k@v2" })
+  })
+
+  test("JSON registry/policy verbs spread their object to the top level, not under a wrapper key", () => {
+    // The ports read top-level fields (`name`/`baseUrl`, `ttlSeconds`, `quotaScope`);
+    // the pre-fix `{ provider: "…json…" }` / `{ policy: "…json…" }` wrapper dropped
+    // the operator input and persisted a default (a false success).
+    expect(builtPayload("semantic.provider.add", '{"name":"vec","baseUrl":"https://v.example","secretRef":"keychain:k@v1"}')).toEqual({
+      name: "vec",
+      baseUrl: "https://v.example",
+      secretRef: "keychain:k@v1",
+    })
+    expect(builtPayload("output.retention.set", '{"ttlSeconds":86400,"legalHold":false}')).toEqual({
+      ttlSeconds: 86400,
+      legalHold: false,
+    })
+    expect(builtPayload("output.quota.set", '{"quotaScope":"session","maxBytes":1048576}')).toEqual({
+      quotaScope: "session",
+      maxBytes: 1048576,
+    })
+  })
+
+  test("a JSON field rejects malformed / non-object input before any dispatch", () => {
+    const field = resolveOperatorFormField(entry("semantic.provider.add"))
+    if (!field || field.mode !== "text_input") throw new Error("expected text_input field")
+    expect(field.validate("not json").ok).toBe(false)
+    expect(field.validate("[1,2,3]").ok).toBe(false)
+    expect(field.validate('"scalar"').ok).toBe(false)
+    expect(field.validate('{"name":"ok"}').ok).toBe(true)
+  })
+})
+
 describe("T015 honest-unavailable rendering (FR7)", () => {
   test("an unavailable verb surfaces the typed envelope; no synthesized success", async () => {
-    const add = entry("semantic.provider.add")
-    expect(add.availability).toBe("unavailable")
-    expect(add.persistence).toBe("honest_unavailable")
+    // Feature 014 T012: semantic.provider.add now persists; the Milvus-gated index
+    // verb is the representative honest-unavailable mutation.
+    const reindex = entry("semantic.index.reindex")
+    expect(reindex.availability).toBe("unavailable")
+    expect(reindex.persistence).toBe("honest_unavailable")
     // The verb has no form → the menu dispatches directly (T012); the backend
     // answers with the typed not-implemented envelope.
-    expect(resolveOperatorFormField(add)).toBeUndefined()
+    expect(resolveOperatorFormField(reindex)).toBeUndefined()
 
     const spy = createSpyPort(() =>
       spyDisplay({
         title: "Not implemented",
-        message: "semantic.provider.add is not implemented yet",
+        message: "semantic.index.reindex is not implemented yet",
         variant: "warning",
         outcome: "not_implemented",
       }),
     )
     const { toast, calls } = createFakeToast()
     const result = await executeOperatorCommand({
-      entry: add,
+      entry: reindex,
       port: spy.port,
       dialog: createFakeDialog(),
       toast,
     })
 
     // Same canonical command id dispatched (no divergent path), envelope surfaced verbatim.
-    expect(spy.tryHandleCalls[0].text).toBe("/op.semantic.provider.add")
+    expect(spy.tryHandleCalls[0].text).toBe("/op.semantic.index.reindex")
     expect(result.outcome).toBe("not_implemented")
     expect(calls).toHaveLength(1)
     expect(calls[0].variant).not.toBe("success")

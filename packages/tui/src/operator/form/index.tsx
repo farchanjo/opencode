@@ -75,7 +75,7 @@ export function OperatorForm(props: OperatorFormProps): JSX.Element {
     setLoaded(source.project(result.result?.effective))
   }
 
-  async function dispatchPayload(value: string) {
+  async function dispatchPayload(payload: Record<string, unknown>) {
     if (busy()) return
     setBusy(true)
     try {
@@ -86,7 +86,7 @@ export function OperatorForm(props: OperatorFormProps): JSX.Element {
         sessionId: props.sessionId,
         dialog: props.dialog,
         toast: props.toast,
-        payload: { [props.field.key]: value },
+        payload,
       })
       if (result.outcome && SUCCESS_OUTCOMES.has(result.outcome)) props.dialog.clear()
     } finally {
@@ -113,7 +113,7 @@ export function OperatorForm(props: OperatorFormProps): JSX.Element {
           category: props.category ?? props.entry.verbLabel,
           value: option.value,
           onSelect: () => {
-            void dispatchPayload(option.value)
+            void dispatchPayload({ [field.key]: option.value })
           },
         }))}
         emptyView={<text>{field.emptyText}</text>}
@@ -132,7 +132,7 @@ export function OperatorForm(props: OperatorFormProps): JSX.Element {
       props.toast.show({ title: props.entry.verbLabel, message: validation.message, variant: "warning" })
       return
     }
-    void dispatchPayload(validation.value)
+    void dispatchPayload(field.toPayload(validation.value))
   }
 
   return (

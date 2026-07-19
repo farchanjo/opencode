@@ -61,13 +61,40 @@ export type OperatorFormField =
       readonly key: string
       readonly placeholder: string
       readonly validate: (raw: string) => OperatorFormValidation
+      /**
+       * Build the dispatch payload from the validated value. A scalar field carries
+       * the value under its canonical key (`{ [key]: value }`); a JSON field parses
+       * the object and spreads its fields to the top level, because the domain
+       * command ports read canonical top-level keys (`name`/`baseUrl`/`ttlSeconds`/…)
+       * — nesting the raw text under a single wrapper key silently drops the operator
+       * input and persists a default (Feature 014 FR12/FR14).
+       */
+      readonly toPayload: (value: string) => Record<string, unknown>
     }
 
-/** Non-empty guard for a text_input; the typed command schema does the real validation on dispatch. */
+/** Non-empty guard for a scalar text_input; the typed command schema does the real validation on dispatch. */
 function requireText(label: string): (raw: string) => OperatorFormValidation {
   return (raw) => {
     const value = raw.trim()
     if (value.length === 0) return { ok: false, message: `${label} is required` }
+    return { ok: true, value }
+  }
+}
+
+/** A JSON-object text_input must parse to a non-array object before it is spread into the payload (FR12). */
+function requireJsonObject(label: string): (raw: string) => OperatorFormValidation {
+  return (raw) => {
+    const value = raw.trim()
+    if (value.length === 0) return { ok: false, message: `${label} is required` }
+    let parsed: unknown
+    try {
+      parsed = JSON.parse(value)
+    } catch {
+      return { ok: false, message: `${label} must be valid JSON` }
+    }
+    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return { ok: false, message: `${label} must be a JSON object` }
+    }
     return { ok: true, value }
   }
 }
@@ -140,7 +167,14 @@ type FieldSpec =
       readonly emptyText: string
       readonly source?: OperatorPickerSource
     }
-  | { readonly mode: "text_input"; readonly key: string; readonly placeholder: string; readonly label: string }
+  | {
+      readonly mode: "text_input"
+      readonly key: string
+      readonly placeholder: string
+      readonly label: string
+      /** When true the value is a JSON object spread to the top-level payload; otherwise it is a scalar under `key`. */
+      readonly json?: boolean
+    }
 
 const NO_OPTIONS: () => readonly OperatorFormOption[] = () => []
 
@@ -165,6 +199,24 @@ const FORM_FIELDS: Readonly<Record<string, FieldSpec>> = {
   "routing.configure": { mode: "text_input", key: "policy", placeholder: "Routing policy (JSON)", label: "Routing policy" },
   "process.steer": { mode: "text_input", key: "directive", placeholder: "Steering directive", label: "Directive" },
   "process.handoff": { mode: "text_input", key: "target", placeholder: "Handoff target", label: "Handoff target" },
+  // Feature 014 T012 — semantic config-backed registry Configure verbs (T009). Each
+  // fills the payload the domain's command schema validates on dispatch; the JSON
+  // fields spread to the top level and the scalar fields carry the port's canonical
+  // key (`id`/`newSecretRef`/`modelDescriptorId`) so the operator input actually
+  // reaches the port — the form never builds a command id or scope from the value (FR8).
+  "semantic.provider.add": { mode: "text_input", json: true, key: "provider", placeholder: '{"name":"…","baseUrl":"https://…","secretRef":"keychain:…"}', label: "Provider definition" },
+  "semantic.provider.update": { mode: "text_input", json: true, key: "provider", placeholder: '{"id":"…","version":1,"patch":{…}}', label: "Provider patch" },
+  "semantic.provider.disable": { mode: "text_input", key: "id", placeholder: "Provider id", label: "Provider id" },
+  "semantic.provider.delete": { mode: "text_input", key: "id", placeholder: "Provider id", label: "Provider id" },
+  "semantic.provider.rotate-secret": { mode: "text_input", key: "newSecretRef", placeholder: "New secret reference (keychain:…)", label: "Secret reference" },
+  "semantic.model.register": { mode: "text_input", json: true, key: "model", placeholder: '{"providerProfileId":"…","modelRef":"…","displayName":"…"}', label: "Model definition" },
+  "semantic.model.disable": { mode: "text_input", key: "id", placeholder: "Model id", label: "Model id" },
+  "semantic.embedding.select": { mode: "text_input", key: "modelDescriptorId", placeholder: "Embedding model id", label: "Embedding model id" },
+  "semantic.reranker.select": { mode: "text_input", key: "modelDescriptorId", placeholder: "Reranker model id", label: "Reranker model id" },
+  // Feature 014 T012 — output config-backed policy setters (T007). JSON objects spread
+  // to the top-level payload (`ttlSeconds`/`legalHold`, `quotaScope`/`maxBytes`).
+  "output.retention.set": { mode: "text_input", json: true, key: "retention", placeholder: '{"ttlSeconds":86400,"legalHold":false}', label: "Retention policy" },
+  "output.quota.set": { mode: "text_input", json: true, key: "quota", placeholder: '{"quotaScope":"session","maxBytes":1048576}', label: "Quota policy" },
 }
 
 /**
@@ -180,5 +232,10 @@ export function resolveOperatorFormField(entry: OperatorPaletteEntry): OperatorF
   if (spec.mode === "value_picker") {
     return { mode: "value_picker", key: spec.key, options: spec.options, emptyText: spec.emptyText, source: spec.source }
   }
-  return { mode: "text_input", key: spec.key, placeholder: spec.placeholder, validate: requireText(spec.label) }
+  const key = spec.key
+  const validate = spec.json ? requireJsonObject(spec.label) : requireText(spec.label)
+  const toPayload: (value: string) => Record<string, unknown> = spec.json
+    ? (value) => JSON.parse(value)
+    : (value) => ({ [key]: value })
+  return { mode: "text_input", key, placeholder: spec.placeholder, validate, toPayload }
 }

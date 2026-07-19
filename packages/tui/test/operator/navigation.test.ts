@@ -88,6 +88,10 @@ describe("T015 verb routing decision (FR5, FR7)", () => {
     expect(routeFor(entry("jobs.create"))).toBe("form")
     expect(routeFor(entry("routing.configure"))).toBe("form")
     expect(routeFor(entry("process.cancel"))).toBe("form")
+    // Feature 014 T012: the config-backed registry + output policy verbs are editable.
+    expect(routeFor(entry("semantic.provider.add"))).toBe("form")
+    expect(routeFor(entry("semantic.embedding.select"))).toBe("form")
+    expect(routeFor(entry("output.retention.set"))).toBe("form")
   })
 
   test("payload-free Configure verb dispatches directly (no form)", () => {
@@ -95,7 +99,8 @@ describe("T015 verb routing decision (FR5, FR7)", () => {
   })
 
   test("honest-unavailable Configure verb dispatches directly (surfaces the typed envelope)", () => {
-    expect(routeFor(entry("semantic.provider.add"))).toBe("direct")
+    // Milvus-gated + fully-gated mcp mutations keep no form → direct dispatch.
+    expect(routeFor(entry("semantic.index.reindex"))).toBe("direct")
     expect(routeFor(entry("mcp.resource.admin.policy.set"))).toBe("direct")
   })
 })
