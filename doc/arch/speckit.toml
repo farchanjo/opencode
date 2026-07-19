@@ -322,6 +322,37 @@ specScopeGlobs = [
   # Genuinely new implement paths (the C15 live-consumption seams):
   "packages/opencode/src/session/tools.ts",   # native + MCP live-consumption seam (C15)
   "packages/opencode/src/tool/code-mode.ts",  # code-mode describeCatalog ranked-subset seam (C10, C15)
+
+  # Feature 010 implement-phase paths (T001-T022): Native Rust FFI Tools and PTY
+  #   Integration. The FIRST Rust in the repository — two cdylib crates + one
+  #   shared rlib behind the existing TypeScript tool boundaries, plus the Bun-side
+  #   loader/wrapper/registry/reader seam and the build pipeline. Native is
+  #   authoritative for nothing; the permission gate stays in TS (Feature 007),
+  #   output identity with Feature 005, telemetry content-free (ADR-0001).
+  #   ALREADY IN SCOPE — listed for traceability only, NOT re-added:
+  #     .gitignore                                  (Feature 007 block above) — /target + packages/core/native/*/ (C1, C6, C17)
+  #     package.json                                (repository-health block above) — "build:native" script (C17)
+  #     packages/core/src/config/experimental.ts    (Feature 007 block above) — experimental.nativeTools / nativePty booleans (C2)
+  # Rust workspace (genuinely new to the repository):
+  "Cargo.toml",
+  "Cargo.lock",
+  "rust-toolchain.toml",
+  "crates/**",
+  # TypeScript wrapper + fallback seam (genuinely new):
+  "packages/core/src/tool/native/**",
+  # Tool files touched only if the wrapper hooks into Tool.make (listed defensively):
+  "packages/core/src/tool/bash.ts",             # opt-in pty:true route + permission-first ordering (C12, C20)
+  "packages/core/src/tool/glob.ts",             # native backend selection before the Ripgrep.Service call (C5)
+  "packages/core/src/tool/grep.ts",             # native backend selection before the Ripgrep.Service call (C5)
+  "packages/core/src/tool/read.ts",             # wrapper hook (defensive)
+  "packages/core/src/tool/read-filesystem.ts",  # wrapper hook (defensive)
+  "packages/core/src/tool/write.ts",            # wrapper hook (defensive)
+  "packages/core/src/tool/edit.ts",             # wrapper hook (defensive)
+  "packages/core/src/tool/apply-patch.ts",      # wrapper hook (defensive)
+  # Tests + build pipeline (genuinely new):
+  "packages/core/test/tool/native/**",
+  "packages/core/test/fixtures/native-parity/**",
+  "script/build-native.ts",
 ]
 
 # Waivers for intentional near-empty files (warnings only; errors are never
