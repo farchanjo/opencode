@@ -28,6 +28,11 @@ import type {
   ResourceAdminPort,
   ServerLifecyclePort,
 } from "@opencode-ai/protocol/mcp/ports"
+import type {
+  McpAuthStatus,
+  McpResourceDescriptor,
+  McpResourceTemplateDescriptor,
+} from "@opencode-ai/protocol/mcp/commands"
 import type { McpAdminBackend } from "./mcp-port"
 
 export interface LiveMcpBackendDeps {
@@ -102,4 +107,83 @@ export const createLiveMcpBackend = (deps: LiveMcpBackendDeps = {}): McpAdminBac
   logging: deps.override?.logging ?? gapBackend.logging,
   experimental: deps.override?.experimental ?? gapBackend.experimental,
   extension: deps.override?.extension ?? gapBackend.extension,
+})
+
+// =============================================================================
+// Feature 014 / T008 (FR7) — real MCP admin backend over the live `MCP.Service`
+// =============================================================================
+
+/**
+ * The narrow LIVE-HOST READ seam the composition root implements over the AppLayer
+ * `MCP.Service` + `McpAuth` (resolved via `AppRuntime`, the routing/provider
+ * precedent). It carries ONLY faithful, content-free projections of live client
+ * state — the OAuth status enum and the connected server's advertised resource /
+ * resource-template descriptors. No secret, raw token, header value, or filesystem
+ * path crosses this seam (C15, C26, FR11); a `secretRef` (if any) stays the opaque
+ * reference the SSOT holds and is never dereferenced here.
+ *
+ * Only the reads that map 1:1 onto a real `MCP.Service` seam are surfaced. The
+ * server-profile reads (`server.list`/`status`/`capabilities`) require rich SSOT
+ * metadata (CAS version, auditId, timestamps, trust profile) the live host config
+ * does not carry, so projecting them would fabricate state — they stay typed gaps.
+ * Every mutating verb stays a typed gap too: the `mcp.*` command port returns
+ * `kind:"query"` (Feature 008), which the Feature 007 dispatcher rejects for a
+ * `mutates` descriptor AFTER any side effect — so a live mutation would be the exact
+ * FR5 phantom-write trap. Converting `mcp.*` to the `OperatorMutationPlan` contract
+ * is out of T008 scope (FR5 covers `langlock`/`jobs`), and MCP server config lives in
+ * `cfg.mcp` (owned by `MCP.Service`), not an operator CAS authority. This boundary is
+ * documented here and in the Feature 014 tasks.md T008 evidence.
+ */
+export interface McpHostReader {
+  /** Live OAuth status for a server (`MCP.Service.getAuthStatus`); a faithful enum, never a token. */
+  readonly authStatus: (serverId: string) => Promise<McpAuthStatus>
+  /** Live advertised resources for a CONNECTED server (`MCP.Service.resources`); empty when unconnected. */
+  readonly listResources: (serverId: string) => Promise<ReadonlyArray<McpResourceDescriptor>>
+  /** Live advertised resource templates for a CONNECTED server (`MCP.Service.resourceTemplates`). */
+  readonly listResourceTemplates: (serverId: string) => Promise<ReadonlyArray<McpResourceTemplateDescriptor>>
+}
+
+/** A content-free reason for a guarded live-host read failure — never the raw error (no path/secret leak, FR14). */
+const READ_UNREACHABLE = "mcp live host read is unreachable"
+
+/** Wrap a live-host read in a guarded effect that degrades to a typed `unavailable`, never a crash or a leak. */
+function guardedRead<A>(read: () => Promise<A>): Effect.Effect<A, { readonly type: "unavailable"; readonly reason: string }> {
+  return Effect.tryPromise({ try: read, catch: () => ({ type: "unavailable" as const, reason: READ_UNREACHABLE }) })
+}
+
+/** The live-backed `AuthPort`: `status` reflects the real OAuth state; the three mutating verbs stay typed gaps. */
+function liveAuthPort(reader: McpHostReader): AuthPort {
+  const gap = () => Effect.fail({ type: "unavailable" as const, reason: NOT_BOUND })
+  return {
+    start: gap,
+    finish: gap,
+    remove: gap,
+    status: (input) => guardedRead(() => reader.authStatus(input.serverId)).pipe(Effect.map((authStatus) => ({ authStatus }))),
+  }
+}
+
+/** The live-backed `ResourceAdminPort`: `list`/`templates` reflect the live client; the rest stay typed gaps. */
+function liveResourcePort(reader: McpHostReader): ResourceAdminPort {
+  const gap = () => Effect.fail({ type: "unavailable" as const, reason: NOT_BOUND })
+  return {
+    list: (input) => guardedRead(() => reader.listResources(input.serverId)).pipe(Effect.map((resources) => ({ resources }))),
+    templates: (input) =>
+      guardedRead(() => reader.listResourceTemplates(input.serverId)).pipe(Effect.map((templates) => ({ templates }))),
+    read: gap,
+    subscribe: gap,
+    unsubscribe: gap,
+    policyShow: gap,
+    policySet: gap,
+  }
+}
+
+/**
+ * Build the `override` for `createLiveMcpBackend` from the live-host read seam. Wires
+ * the faithful `auth.status` + `resource.admin.list`/`templates` reads; every other
+ * sub-port method (and all server/logging/experimental/extension ports) stays the
+ * honest typed gap. The composition root injects this over `MCP.Service` + `McpAuth`.
+ */
+export const createMcpServiceOverride = (reader: McpHostReader): Partial<McpAdminBackend> => ({
+  auth: liveAuthPort(reader),
+  resource: liveResourcePort(reader),
 })
