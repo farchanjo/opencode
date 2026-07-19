@@ -296,16 +296,65 @@ None required beyond this plan. The CRUD ValueObjects
 
 ## Validation checklist (plan complete when)
 
-- [ ] FR1-FR18 mapped to ordered phases
-- [ ] No new catalog id / no catalog version bump / no new dispatch path / no flag (FR17)
-- [ ] Palette: one Operator entry, `suggest` spread + machinery retired, unique titles (FR1-FR3)
-- [ ] Screen composition: inline status on open, View toast branch removed, refetch after mutation (FR4-FR6)
-- [ ] Controls: on/off toggle rows, tri-state pre-selected picker (FR7, FR8)
-- [ ] Modals: edit modal pre-filled + validated + in-modal error; structural view modal (FR9-FR11, FR16)
-- [ ] Entity CRUD for jobs/semantic/mcp (FR12-FR14)
-- [ ] Honest availability on every control; toasts only for mutation outcomes (FR15, FR18)
-- [ ] specScopeGlobs: no genuinely-new path; existing 007/011/012 blocks cover the surface
-- [ ] Security: SecretRef-only, in-modal validation, confirm gate, no fabricated capability, parity
-- [ ] `tasks.md` generated and filled
-- [ ] `speckit analyze` clean of new Critical/High/Medium blockers
-- [ ] `speckit validate --json` green (0 new findings on Feature 015 artifacts)
+- [x] FR1-FR18 mapped to ordered phases
+- [x] No new catalog id / no catalog version bump / no new dispatch path / no flag (FR17)
+- [x] Palette: one Operator entry, `suggest` spread + machinery retired, unique titles (FR1-FR3)
+- [x] Screen composition: inline status on open, View toast branch removed, refetch after mutation (FR4-FR6)
+- [x] Controls: on/off toggle rows, tri-state pre-selected picker (FR7, FR8)
+- [x] Modals: edit modal pre-filled + validated + in-modal error; structural view modal (FR9-FR11, FR16)
+- [x] Entity CRUD for jobs/semantic/mcp (FR12-FR14)
+- [x] Honest availability on every control; toasts only for mutation outcomes (FR15, FR18)
+- [x] specScopeGlobs: no genuinely-new path; existing 007/011/012 blocks cover the surface
+- [x] Security: SecretRef-only, in-modal validation, confirm gate, no fabricated capability, parity
+- [x] `tasks.md` generated and filled
+- [x] `speckit analyze` clean of new Critical/High/Medium blockers
+- [x] `speckit validate --json` green (0 new findings on Feature 015 artifacts)
+
+## Implementation notes (recorded during implement)
+
+- 2026-07-19 — T001-T024 landed per plan: `app.tsx` now exposes exactly one
+  `Operator` Commands entry; the `...operatorSuggestedEntries().map(...)`
+  spread, the `suggest` field, `listOperatorSuggestedEntries`, and the
+  `operatorSuggestedEntries` re-export are retired (FR1, FR2), closing the
+  `View: Status` ×8 duplicate-title wall via a centralized row-title
+  contract (FR3). Domain screens issue a silent status read on open and
+  render an inline status section, refetching after every on-screen
+  mutation (FR4, FR6); the non-rich-domain View toast branch is removed in
+  favour of a structural view modal (FR5, FR11). On/off verb pairs render
+  as a single toggle row with a state badge; the tri-state smart-routing
+  setting renders a three-option picker pre-selected to the current mode,
+  never a binary toggle (FR7, FR8). Editable settings open an edit modal
+  that pre-fills from a silent read, validates per field, and surfaces
+  errors in-modal (FR9, FR10) — closing the Feature 014 empty-input
+  residual. Jobs, semantic providers/models, and mcp servers gained true
+  list → item → edit/toggle/delete/create entity CRUD screens
+  (`packages/tui/src/operator/entity.ts`, `entity-screens.tsx`) (FR12-FR14).
+  Every control consults the Feature 014 per-verb availability and marks
+  unavailable verbs inert, surfacing typed envelopes, never fabricated
+  success (FR15); every action stays on the unchanged Feature 007
+  `executeOperatorCommand` loopback — no new catalog id, no catalog version
+  bump, no new dispatch path, no new flag (FR17); toasts fire only for a
+  user-invoked mutation's outcome, never for status reads or view modals
+  (FR18). TUI operator suite 130 pass / 0 fail; core operator suite 103
+  pass / 0 fail; typecheck (tui + core) clean; oxlint clean.
+- 2026-07-19 — **Fix round:** one confirmed defect closed — the domain
+  screen's `verbOption` row title used the domain-qualified `entry.title`
+  instead of the action-only `item.label`, so domain screens (where the
+  domain is already implicit in the header) showed titles like "Telemetry
+  status" instead of "Status", violating FR3. Fixed in
+  `packages/tui/src/operator/dialog-settings.tsx`; pinned with two new
+  cross-domain assertions in `screen-composition.test.ts`. Full detail in
+  `tasks.md` "Fix (2026-07-19)" note under T003.
+- 2026-07-19 — **Close-out (T025/T026):** confirmed the Feature 015 surface
+  is fully covered by the existing Feature 007/011/012 `speckit.toml`
+  guard globs (`packages/tui/src/operator/**`, `packages/tui/src/ui/**`,
+  `packages/core/src/operator/**`, `packages/tui/src/context/**`,
+  `packages/tui/test/**`) — no genuinely-new implement path, so no guard
+  change was required. Removed a stray untracked
+  `packages/opencode/config.json` (leaked a plaintext provider API key from
+  an un-isolated live spot check, same pattern as the Feature 014
+  close-out) — not a deliverable, never committed. `speckit analyze`:
+  15 features consistent, 0 ADR overlaps, no new blockers. `speckit
+  validate --json`: `ok:true`, only the 4 pre-existing waived
+  `hygiene.empty-file` findings (desktop CSS, opencode fixture, two
+  `.gitignore` files), 0 new findings.

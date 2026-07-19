@@ -2,7 +2,7 @@
 id: 019f7bac-56af-7c93-9a51-492620836889
 number: 015
 slug: redesign-the-operator-tui-domain-screens-into-true-crud
-status: analyzed
+status: implemented
 created_at: 2026-07-19T18:38:39.791718Z
 ---
 # Feature Specification: Redesign the Operator TUI Domain Screens into True CRUD
