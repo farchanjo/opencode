@@ -228,7 +228,7 @@ path.
   fixed `"tools"` discriminator and `ToolRetrievalRung` distinct from `RetrievalMode`) with
   deterministic ports and no I/O (FR3, C2, C3, C6, AC1, AC3, AC4, AC8, AC15, AC18). Acceptance:
   `bun test packages/core`, `bun test packages/schema`, and `bun test packages/protocol` green.
-- [ ] T015 [S13] Add integration and fault-injection tests under `packages/opencode/test/semantic/**`
+- [x] T015 [S13] Add integration and fault-injection tests under `packages/opencode/test/semantic/**`
   through the Feature 007 sandbox: the `tools` collection over the Milvus adapter (HNSW + hybrid
   recall under mandatory scalar `DocScope` filters, cross-project isolation, content-hash
   upsert/tombstone/reconcile), the shared-embedding cache reuse (native then MCP querying the same
