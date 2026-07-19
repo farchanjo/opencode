@@ -9,6 +9,14 @@ branch=$(git symbolic-ref --quiet --short HEAD 2>/dev/null || true)
 repo_root=$(git rev-parse --show-toplevel)
 cd "$repo_root"
 
+# Git invokes this hook with a relative GIT_INDEX_FILE (`.git/index`) and may
+# also export GIT_DIR/GIT_WORK_TREE. The isolated `git worktree add` steps below
+# chdir into the new worktree, where the relative index path resolves against a
+# `.git` file and aborts with "index file open failed: Not a directory". Clear
+# these so every git call resolves the index and gitdir from the cwd; the parent
+# commit keeps its own environment and staged index untouched.
+unset GIT_INDEX_FILE GIT_DIR GIT_WORK_TREE
+
 if ! git diff --cached --check; then
   printf '%s\n' "pre-commit: staged diff contains whitespace errors; fix them before committing." >&2
   exit 1
