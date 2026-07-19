@@ -25,3 +25,6 @@ package semantic.shared
 
 // LatencyBudgetMs is the retrieval latency budget; timeout triggers the C20 fallback (NFR1, C8).
 #LatencyBudgetMs: uint & >=1
+
+// CacheTtlMs is the Feature 009 bounded safety TTL; version/hash invalidation leads it (FR20, FR21, C8).
+#CacheTtlMs: uint & >=1

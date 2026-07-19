@@ -52,7 +52,7 @@ import (
 
 // Candidate carries a ranking pointer, collection, score, rank and freshness bucket (FR20, FR22, C11).
 #Candidate: {
-	candidate_ref: ids.#AgentRef | ids.#SkillRef
+	candidate_ref: ids.#AgentRef | ids.#SkillRef | ids.#ToolRef
 	collection:    enums.#Collection
 	score:         #SemanticScore
 	rank:          values.#TopK
