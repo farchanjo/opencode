@@ -524,7 +524,7 @@ enforced (see the Traceability reconciliation note).
   the semantic-index opt-in (AC28), and the `tools()`/`describeCatalog`/`list_mcp_resources`/
   `read_mcp_resource` seam-shape compatibility (AC14, AC29) (FR41–FR50, FR53, C18, C19, C20, C21,
   C23, C25, C27). Acceptance: `bun test packages/opencode`/`packages/tui` green under the sandbox.
-- [ ] T046 [S26] Run per-package `tsgo --noEmit` typecheck and `bun test` for `packages/schema`,
+- [x] T046 [S26] Run per-package `tsgo --noEmit` typecheck and `bun test` for `packages/schema`,
   `packages/protocol`, `packages/core`, `packages/opencode`, and `packages/tui`, plus the
   telemetry cardinality audit under `packages/core/test/mcp/**` asserting URIs, content, call IDs,
   and session IDs never appear as metric labels, over-budget dynamic values map to `other`, the
