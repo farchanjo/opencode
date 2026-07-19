@@ -459,7 +459,7 @@ enforced (see the Traceability reconciliation note).
 
 ### Tests and validation (Phase 5)
 
-- [ ] T040 [S26] Add pure deterministic unit tests under `packages/core/test/mcp/**` for the
+- [x] T040 [S26] Add pure deterministic unit tests under `packages/core/test/mcp/**` for the
   connection-lifecycle transitions (legal/illegal, recorded capabilities, reconnect diff), the
   reconnect-backoff curve (bounded/jittered/capped, resume `Last-Event-ID`, stdio restart), the
   catalog paginated-walk + duplicate-cursor guard + max-page fail-closed, the resource-update
@@ -468,7 +468,7 @@ enforced (see the Traceability reconciliation note).
   degradation classifier, and the trust gate (annotation trust, tolerant/strict outputSchema,
   decompression-bomb), with deterministic ports and no I/O (AC4, AC7, AC9, AC10, AC11, AC12, AC16,
   AC19, AC26, AC31, AC33). Acceptance: `bun test packages/core` green.
-- [ ] T041 [S26] Add schema and protocol tests under `packages/schema/test/mcp/**` and
+- [x] T041 [S26] Add schema and protocol tests under `packages/schema/test/mcp/**` and
   `packages/protocol/test/mcp/**` asserting contract hygiene (annotate-before-check identifiers on
   every brand), the closed **15-member** `mcp.*` vocabulary and the **10 durable / 5 live** split
   with the single `mcp.tools_changed` spelling (and zero `mcp.tools.changed` survivors), the
