@@ -120,7 +120,7 @@ path.
 
 ### Application, projection, triggers, and consumption seams (Phase 3)
 
-- [ ] T006 [S4] Author `packages/opencode/src/semantic/tool-projection.ts` projecting one
+- [x] T006 [S4] Author `packages/opencode/src/semantic/tool-projection.ts` projecting one
   canonical `ToolDoc` from the boundary already exposed — `registry.ts` `tools()`
   (`tool.description` + `tool.jsonSchema`) and `mcp/catalog.ts` `convertTool` (`description` +
   `inputSchema`) — with a content hash driving incremental upsert/tombstone and the sanitized
