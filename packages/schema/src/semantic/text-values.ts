@@ -101,3 +101,7 @@ export type Normalized = typeof Normalized.Type
 // InsecureAllowed permits non-TLS only for an explicit local profile with a warning (FR33, C17).
 export const InsecureAllowed = Schema.Boolean.annotate({ identifier: "SemanticTextValues.InsecureAllowed" })
 export type InsecureAllowed = typeof InsecureAllowed.Type
+
+// Truncated flags whether the bounded parameter-schema projection was size-capped (FR7, C6, AC18).
+export const Truncated = Schema.Boolean.annotate({ identifier: "SemanticFlags.Truncated" })
+export type Truncated = typeof Truncated.Type

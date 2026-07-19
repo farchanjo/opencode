@@ -80,3 +80,46 @@ export const RoleKind = Schema.Literals(["architect", "manager", "worker"]).anno
   identifier: "SemanticEnumsState.RoleKind",
 })
 export type RoleKind = typeof RoleKind.Type
+
+// --- enums-tool.cue: Feature 009 tool-search enums (package semantic.enums) ----
+
+// ToolSource is the provenance of a projected tool document (FR6, C6).
+export const ToolSource = Schema.Literals(["native", "mcp", "custom", "plugin"]).annotate({
+  identifier: "SemanticEnums.ToolSource",
+})
+export type ToolSource = typeof ToolSource.Type
+
+// JsonSchemaType is the sanitized parameter type kept in the bounded projection; no values/formats (FR7, C6, AC18).
+export const JsonSchemaType = Schema.Literals([
+  "string",
+  "number",
+  "integer",
+  "boolean",
+  "object",
+  "array",
+  "null",
+]).annotate({ identifier: "SemanticEnums.JsonSchemaType" })
+export type JsonSchemaType = typeof JsonSchemaType.Type
+
+// ToolRetrievalMode is the tool degradation ladder rung; full_set_passthrough is the absolute floor (FR18, C14).
+export const ToolRetrievalMode = Schema.Literals([
+  "full_semantic",
+  "lexical_only",
+  "full_set_passthrough",
+  "fail_closed",
+]).annotate({ identifier: "SemanticEnums.ToolRetrievalMode" })
+export type ToolRetrievalMode = typeof ToolRetrievalMode.Type
+
+// ToolSurface is the per-surface enablement axis gating live consumption; default off (FR21, C9, C12, C15).
+export const ToolSurface = Schema.Literals(["native", "mcp", "code_mode"]).annotate({
+  identifier: "SemanticEnums.ToolSurface",
+})
+export type ToolSurface = typeof ToolSurface.Type
+
+// ToolTriggerSource is the origin of an incremental tool reindex, coalesced per scope (FR8, C11).
+export const ToolTriggerSource = Schema.Literals([
+  "registry_change",
+  "mcp_tools_changed",
+  "config_change",
+]).annotate({ identifier: "SemanticEnums.ToolTriggerSource" })
+export type ToolTriggerSource = typeof ToolTriggerSource.Type

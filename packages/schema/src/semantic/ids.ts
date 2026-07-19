@@ -22,6 +22,9 @@ const idPattern = /^[A-Za-z0-9_-]{1,128}$/
 const modelIdPattern = /^[A-Za-z0-9_-]{1,160}$/
 const chunkIdPattern = /^[A-Za-z0-9_-]{1,192}$/
 const eventIdPattern = /^evt_[A-Za-z0-9_-]{1,120}$/
+// toolIdPattern widens idPattern only to admit the `.` / `:` composition separators of
+// mcp-composed tool ids; still never a filesystem path (FR6, C6).
+const toolIdPattern = /^[A-Za-z0-9_.:-]{1,192}$/
 
 // ProviderProfileId identifies one SemanticProviderProfile aggregate (FR28, C19).
 export const ProviderProfileId = Schema.String.annotate({ identifier: "SemanticIds.ProviderProfileId" })
@@ -58,6 +61,24 @@ export const SkillChunkId = Schema.String.annotate({ identifier: "SemanticIds.Sk
   .check(Schema.isPattern(chunkIdPattern))
   .pipe(Schema.brand("Semantic.SkillChunkId"))
 export type SkillChunkId = typeof SkillChunkId.Type
+
+// ToolDocId is the canonical composed tool id keying one ToolDoc projection (FR6, C6).
+export const ToolDocId = Schema.String.annotate({ identifier: "SemanticIds.ToolDocId" })
+  .check(Schema.isPattern(toolIdPattern))
+  .pipe(Schema.brand("Semantic.ToolDocId"))
+export type ToolDocId = typeof ToolDocId.Type
+
+// ToolRef is a ranking pointer revalidated against ToolRegistry/MCP/Permission, never an embedded Entity (FR3, C11).
+export const ToolRef = Schema.String.annotate({ identifier: "SemanticRefs.ToolRef" })
+  .check(Schema.isPattern(toolIdPattern))
+  .pipe(Schema.brand("Semantic.ToolRef"))
+export type ToolRef = typeof ToolRef.Type
+
+// McpServerRef references the Feature 008 MCP server owning a tool; null on native tools (FR6, C11).
+export const McpServerRef = Schema.String.annotate({ identifier: "SemanticRefs.McpServerRef" })
+  .check(Schema.isPattern(idPattern))
+  .pipe(Schema.brand("Semantic.McpServerRef"))
+export type McpServerRef = typeof McpServerRef.Type
 
 // GenerationId identifies one blue/green IndexGeneration under a binding generation (FR12, C12).
 export const GenerationId = Schema.String.annotate({ identifier: "SemanticIds.GenerationId" })
