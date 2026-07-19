@@ -306,3 +306,24 @@ None required beyond this plan. The domain ValueObjects
   files); core+tui operator 346 pass / 0 fail; dispatcher-adjacent suites 104
   pass / 0 fail; `bunx tsgo --noEmit` 0 errors; `oxlint` 0 errors (12
   pre-existing langlock-idiom warnings, unchanged).
+- 2026-07-19 — **Fix round (CLI mutation crash — InstanceRef):** a real-CLI
+  `op <domain> configure|on|set` crashed (exit 1, `Unexpected error /
+  InstanceRef not provided`) instead of degrading, violating FR8. Root cause in
+  `stack-live.ts`: the operator config seam ran `AppRuntime.runPromise(Config.
+  Service.get/update…)` on a runtime fiber with no `InstanceRef`, so
+  `Config.get`/`update` (InstanceState-backed — project authorities and the
+  idempotency/rollback meta store) hit `Effect.die("InstanceRef not provided")`
+  (`instance-state.ts:16`); across the CLI `Effect.promise` boundary that die
+  became a hard crash. Reads survived because `global:*` authorities use
+  `Config.getGlobal` (no InstanceState). Fix: (a) bind the loaded
+  `InstanceContext` onto the config seam via `Effect.provideService(InstanceRef,
+  instance)` in `createLiveOperatorStack` so the seam receives instance context;
+  (b) defense-in-depth — the dispatcher wraps the `mutateAuthority` commit in a
+  try/catch that converts any unexpected throw into a typed `unavailable`
+  envelope, so no config-seam defect can ever crash the process. Regression:
+  `test/operator/feature013-instanceref-nocrash.test.ts` pins that an
+  InstanceRef-less mutation on all four domains returns a typed envelope, never
+  a rejected promise. Real-endpoint verification: the live `telemetry` backend
+  `test()` + OTLP probe dialled a live Alloy collector — `:4318` → `reachable`,
+  a closed port → `unreachable` (typed outcomes). Full detail + the persistence
+  residual in `tasks.md` "Fix round — CLI mutation crash (InstanceRef)".

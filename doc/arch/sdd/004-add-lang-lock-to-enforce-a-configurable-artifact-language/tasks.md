@@ -433,6 +433,22 @@ T038 pins that parity across the draft, the protocol mirror, and the schema modu
 | AC21 Todo text under lock | T027, T039 |
 | AC22 Todo handoff summary | T027, T039 |
 
+## Cross-feature fix note
+
+- **Shared CLI mutation-crash fix (2026-07-19, recorded canonically in Feature 013
+  `tasks.md` "Fix round — CLI mutation crash (InstanceRef)").** The live operator
+  config seam (`operator/stack-live.ts`) ran `Config.Service.get/update` on a runtime
+  fiber with no `InstanceRef`, so any config-backed mutation dispatched from the
+  Promise-boundary CLI (`op …`) hit `Effect.die("InstanceRef not provided")` and
+  crashed (exit 1). The `langlock` domain shares that seam and the same durable
+  Config.Service persistence, so its CLI mutations (`langlock.set`/`reset`) were
+  exposed to the identical crash. The fix binds the loaded `InstanceContext` onto the
+  config seam and adds a dispatcher-level guard that converts any commit-path throw
+  into a typed `unavailable` envelope; `langlock` CLI mutations now degrade honestly
+  (FR8) instead of crashing (empirically, `op langlock set --scope global` returns the
+  documented fail-closed `unauthorized` override envelope, no crash). No Feature 004
+  file changed; the fix lives in shared control-plane code.
+
 ## Dependencies
 
 **Sequencing (internal):**

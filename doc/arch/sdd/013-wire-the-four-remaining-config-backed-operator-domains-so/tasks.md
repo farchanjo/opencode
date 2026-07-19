@@ -683,6 +683,89 @@ pre-existing langlock-idiom warnings). `speckit validate` green.
 
 ---
 
+## Fix round — CLI mutation crash (InstanceRef) (2026-07-19)
+
+A real-CLI operator mutation crashed instead of degrading, violating FR8. Repro
+(from `packages/opencode`, `OPENCODE_OPERATOR_CONTROL_PLANE=1`):
+
+- `op telemetry status --json` → **success** (effective defaults).
+- `op telemetry configure --json --idempotency-key … --expected-version … --payload …`
+  → **exit 1**, `Error: Unexpected error / InstanceRef not provided` — a hard crash,
+  not a typed envelope.
+
+**Root cause (file:line).** `instance-state.ts:16` —
+`Effect.die(new Error("InstanceRef not provided"))`. The live operator config seam
+in `stack-live.ts` (`createLiveConfigServiceLike.useConfig`) ran
+`AppRuntime.runPromise(Config.Service.get/update…)` on a runtime fiber that carried
+no `InstanceRef`. `attach()` (`effect/run-service.ts`) only captures `InstanceRef`
+from the *currently executing* Effect fiber; the operator stack's config calls
+originate from plain `Effect.promise(() => import(...))` async callbacks (CLI
+`op.ts`), where no Effect fiber is current, so `InstanceRef` stayed `undefined`.
+`Config.get` / `Config.update` are `InstanceState`-backed and die without it, while
+`Config.getGlobal` / `updateGlobal` are NOT — so `global:*` reads survived and every
+mutation died. The die surfaced first at the idempotency claim's `metaAuth()="project"`
+→ `Config.get()`; across the CLI `Effect.promise` boundary the rejected promise became
+a process crash.
+
+**Fix.**
+- **(a) — primary seam fix (`operator/stack-live.ts`).** Capture the already-loaded
+  `InstanceContext` (`await InstanceRuntime.load(...)`, previously discarded) and bind
+  it onto the config seam via `.pipe(Effect.provideService(InstanceRef, instance))`.
+  The seam now receives instance context, so `Config.get`/`update` no longer die.
+- **(b) — defense in depth (`operator/application/dispatcher.ts`).** Wrap the
+  `mutateAuthority` commit in a try/catch that converts any unexpected throw into a
+  typed `unavailable` envelope. Guarantees FR8 honesty for the whole commit path even
+  if a future seam regresses — no config defect can crash the CLI/HTTP boundary.
+
+**Per-domain CLI behaviour after fix (no crash — exit 53 typed `unavailable`, never
+exit 1):** `telemetry.configure/on`, `smart.on`, `pools.set` → typed `unavailable`;
+`budget.set` → typed `invalid_argument` (plan-time validation); `langlock.set`
+(project scope) → typed `unauthorized` (documented fail-closed override gate). The
+crash is gone across all domains.
+
+**Regression test.** `test/operator/feature013-instanceref-nocrash.test.ts` — an
+InstanceRef-less `Config.Service` double (project `update` rejects with the exact
+defect) drives a mutation on each of the four domains through the real dispatcher and
+asserts a typed envelope, never a rejected promise (confirmed `error.message ===
+"InstanceRef not provided"` caught at the commit guard).
+
+**Real-endpoint verification (live Alloy collector).** The production `telemetry`
+backend `test()` + live OTLP probe (`probe-live.ts`) dialled a live Alloy OTLP
+collector (`http/protobuf`, no auth):
+
+- endpoint `:4318` → `{"outcome":"reachable","target":{"transport":"http/protobuf",…}}`
+- closed port `:9999` → `{"outcome":"unreachable",…,"reason":"endpoint refused or
+  unreachable"}`
+
+Typed probe outcomes as specified (FR6, FR10); the probe really dials the collector.
+
+**Residual (honest, pre-existing, NOT introduced here — deeper than this fix).**
+Operator config mutations do not yet *round-trip* persist from the CLI, for reasons
+separate from the InstanceRef die:
+1. The durable store writes the `operator` namespace into the config document, but
+   `ConfigV1.Info` does not declare `operator`, so `ConfigParse.schema`
+   (`config/parse.ts:40`) rejects it as an unrecognized key — `updateGlobal`
+   (global authorities: telemetry/smart/budget) throws `ConfigInvalidError`, and
+   `Config.update`'s `loadFile` re-validation throws once a project doc already holds
+   the key. With (b) this surfaces as typed `unavailable`, not a crash.
+2. Write-path ≠ read-path: `Config.update` writes `<dir>/config.json`, but the
+   instance loader reads `opencode.json(c)` + the *global* `config.json`, never the
+   project `config.json`. So even past the schema, the write lands in an orphaned file
+   and is not read back (a re-read shows `configured:false`).
+
+Legitimising the `operator` key in `ConfigV1.Info` alone would produce a *false
+success* (`success cas_vN` that does not persist) — worse than the honest `unavailable`
+— so it was deliberately NOT added here; the persistence round-trip needs a
+`Config.Service` write/read + cache-invalidation alignment (broad blast radius, shared
+across langlock/jobs), which is a separate authorised change. FR8 honest degradation is
+restored; real persistence is documented as the follow-up.
+
+**Verified:** `bun test test/operator/ test/config/ test/telemetry/` → 558 pass / 5
+skip / 0 fail; `bun run typecheck` (`tsgo --noEmit`) → 0 errors; `speckit validate
+--json` → green (only the 4 pre-existing waived `hygiene.empty-file` findings).
+
+---
+
 ## Dependencies summary
 
 ```
