@@ -26,26 +26,26 @@ Legend:
 
 Checkbox backlog (details under each group below).
 
-- [ ] T001 — Move the inline status inside the `DialogSelect` layout (header-first order)
-- [ ] T002 — Assert the header → status → search → action list reading order
-- [ ] T003 — Project per-group status state (populated/empty/loading/unavailable) in `status.ts`
-- [ ] T004 — Render compact status: populated in full, empty collapsed to one summary line
-- [ ] T005 — Drop the row boilerplate; id secondary only when it fits without truncation
-- [ ] T006 — Drop the per-row kind badge; section header alone carries the kind
-- [ ] T007 — Availability marker on a row only when the verb is not fully available
-- [ ] T008 — Order Configure before View for editable domains (centralised in `palette.ts`)
-- [ ] T009 — Entity-first Configure affordances: create + list as the first Configure rows
-- [ ] T010 — Compact-status tests (populated full, empty summary line, honest states kept)
-- [ ] T011 — Row copy tests (no boilerplate, no kind badge, id-when-fits, marker-when-not-available)
-- [ ] T012 — Ordering + affordance tests (Configure-before-View; Add server/Create job/Add provider first)
-- [ ] T013 — Parity + honest-availability re-assert (same id, no new path/id/version/flag/statechart)
-- [ ] T014 — Guard scope confirm (no new `speckit.toml` glob) + doc sync; `analyze` + `validate --json` green
+- [x] T001 — Move the inline status inside the `DialogSelect` layout (header-first order)
+- [x] T002 — Assert the header → status → search → action list reading order
+- [x] T003 — Project per-group status state (populated/empty/loading/unavailable) in `status.ts`
+- [x] T004 — Render compact status: populated in full, empty collapsed to one summary line
+- [x] T005 — Drop the row boilerplate; id secondary only when it fits without truncation
+- [x] T006 — Drop the per-row kind badge; section header alone carries the kind
+- [x] T007 — Availability marker on a row only when the verb is not fully available
+- [x] T008 — Order Configure before View for editable domains (centralised in `palette.ts`)
+- [x] T009 — Entity-first Configure affordances: create + list as the first Configure rows
+- [x] T010 — Compact-status tests (populated full, empty summary line, honest states kept)
+- [x] T011 — Row copy tests (no boilerplate, no kind badge, id-when-fits, marker-when-not-available)
+- [x] T012 — Ordering + affordance tests (Configure-before-View; Add server/Create job/Add provider first)
+- [x] T013 — Parity + honest-availability re-assert (same id, no new path/id/version/flag/statechart)
+- [x] T014 — Guard scope confirm (no new `speckit.toml` glob) + doc sync; `analyze` + `validate --json` green
 
 ---
 
 ## Group A — Header-first reading order (FR1)
 
-- [ ] **T001 — Move the inline status inside the `DialogSelect` layout** `[P]`
+- [x] **T001 — Move the inline status inside the `DialogSelect` layout** `[P]`
 - **Depends:** none
 - **Paths:** `packages/tui/src/operator/dialog-settings.tsx`, `packages/tui/src/ui/dialog.tsx`
 - **Deliverable:** in `DialogOperatorDomainPanel`, stop rendering
@@ -58,9 +58,9 @@ Checkbox backlog (details under each group below).
 - **Acceptance:** the status section renders below the `Operator · <Domain>` header
   and above the search/list; it never renders above the header.
 - **Verification:** `bun test packages/tui/test/operator/**`.
-- **Evidence:** _(filled during implement)_
+- **Evidence:** 2026-07-19 — implemented (see plan.md "Implementation notes (2026-07-19)"). core operator 111 pass, tui operator 147 pass, full tui 471 pass / 0 fail; core+tui `typecheck` + `oxlint` clean on touched files; `speckit validate --json` ok:true (0 new findings), `speckit analyze` consistent.
 
-- [ ] **T002 — Assert the header → status → search → action list reading order**
+- [x] **T002 — Assert the header → status → search → action list reading order**
 - **Depends:** T001
 - **Paths:** `packages/tui/test/operator/**`
 - **Deliverable:** a screen-composition test asserting the domain screen renders the
@@ -69,11 +69,11 @@ Checkbox backlog (details under each group below).
 - **Acceptance:** the ordering assertion passes for a plain domain and for a rich
   domain (mcp).
 - **Verification:** `bun test packages/tui/test/operator/**`.
-- **Evidence:** _(filled during implement)_
+- **Evidence:** 2026-07-19 — implemented (see plan.md "Implementation notes (2026-07-19)"). core operator 111 pass, tui operator 147 pass, full tui 471 pass / 0 fail; core+tui `typecheck` + `oxlint` clean on touched files; `speckit validate --json` ok:true (0 new findings), `speckit analyze` consistent.
 
 ## Group B — Compact status with collapsed empty groups (FR2)
 
-- [ ] **T003 — Project per-group status state in `status.ts`** `[P]`
+- [x] **T003 — Project per-group status state in `status.ts`** `[P]`
 - **Depends:** none
 - **Paths:** `packages/tui/src/operator/status.ts`, `packages/core/test/operator/**`
 - **Deliverable:** extend the `status.ts` projection so each status group exposes
@@ -84,9 +84,9 @@ Checkbox backlog (details under each group below).
 - **Acceptance:** the projection reports the correct state per group for a
   populated, an empty, and an absent payload.
 - **Verification:** `bun test packages/core/test/operator/**` (or the status test).
-- **Evidence:** _(filled during implement)_
+- **Evidence:** 2026-07-19 — implemented (see plan.md "Implementation notes (2026-07-19)"). core operator 111 pass, tui operator 147 pass, full tui 471 pass / 0 fail; core+tui `typecheck` + `oxlint` clean on touched files; `speckit validate --json` ok:true (0 new findings), `speckit analyze` consistent.
 
-- [ ] **T004 — Render compact status: populated in full, empty collapsed to one line**
+- [x] **T004 — Render compact status: populated in full, empty collapsed to one line**
 - **Depends:** T003
 - **Paths:** `packages/tui/src/operator/dialog-settings.tsx`
 - **Deliverable:** in `OperatorStatusSection`/`StatusKeyValue`, render the
@@ -98,11 +98,11 @@ Checkbox backlog (details under each group below).
   renders the populated groups plus the empty summary; a loading read renders the
   honest `Loading…` text.
 - **Verification:** `bun test packages/tui/test/operator/**`.
-- **Evidence:** _(filled during implement)_
+- **Evidence:** 2026-07-19 — implemented (see plan.md "Implementation notes (2026-07-19)"). core operator 111 pass, tui operator 147 pass, full tui 471 pass / 0 fail; core+tui `typecheck` + `oxlint` clean on touched files; `speckit validate --json` ok:true (0 new findings), `speckit analyze` consistent.
 
 ## Group C — Row copy contract (FR3)
 
-- [ ] **T005 — Drop the row boilerplate; id secondary only when it fits** `[P]`
+- [x] **T005 — Drop the row boilerplate; id secondary only when it fits** `[P]`
 - **Depends:** none
 - **Paths:** `packages/core/src/operator/palette.ts`, `packages/core/test/operator/**`
 - **Deliverable:** rewrite `verbSubtitleFor` so the row secondary line is the dotted
@@ -113,9 +113,9 @@ Checkbox backlog (details under each group below).
 - **Acceptance:** a row whose id fits shows the id secondary line; a row whose id
   would truncate shows none; no row carries the `Read-only view ·` prefix.
 - **Verification:** `bun test packages/core/test/operator/**`.
-- **Evidence:** _(filled during implement)_
+- **Evidence:** 2026-07-19 — implemented (see plan.md "Implementation notes (2026-07-19)"). core operator 111 pass, tui operator 147 pass, full tui 471 pass / 0 fail; core+tui `typecheck` + `oxlint` clean on touched files; `speckit validate --json` ok:true (0 new findings), `speckit analyze` consistent.
 
-- [ ] **T006 — Drop the per-row kind badge; section header alone carries the kind**
+- [x] **T006 — Drop the per-row kind badge; section header alone carries the kind**
 - **Depends:** none
 - **Paths:** `packages/tui/src/operator/dialog-settings.tsx`
 - **Deliverable:** remove the per-row `view`/`configure` kind footer from
@@ -125,9 +125,9 @@ Checkbox backlog (details under each group below).
 - **Acceptance:** no action row renders a `view`/`configure` kind footer badge; the
   section header still distinguishes View from Configure.
 - **Verification:** `bun test packages/tui/test/operator/**`.
-- **Evidence:** _(filled during implement)_
+- **Evidence:** 2026-07-19 — implemented (see plan.md "Implementation notes (2026-07-19)"). core operator 111 pass, tui operator 147 pass, full tui 471 pass / 0 fail; core+tui `typecheck` + `oxlint` clean on touched files; `speckit validate --json` ok:true (0 new findings), `speckit analyze` consistent.
 
-- [ ] **T007 — Availability marker on a row only when the verb is not fully available**
+- [x] **T007 — Availability marker on a row only when the verb is not fully available**
 - **Depends:** T006
 - **Paths:** `packages/tui/src/operator/dialog-settings.tsx`, `packages/core/src/operator/palette.ts`
 - **Deliverable:** keep the `unavailable`/`confirm`/`secret` marker on a row **only
@@ -136,11 +136,11 @@ Checkbox backlog (details under each group below).
 - **Acceptance:** a fully-available verb row carries no marker; an unavailable /
   confirm-required / secret verb row carries its marker.
 - **Verification:** `bun test packages/tui/test/operator/**`.
-- **Evidence:** _(filled during implement)_
+- **Evidence:** 2026-07-19 — implemented (see plan.md "Implementation notes (2026-07-19)"). core operator 111 pass, tui operator 147 pass, full tui 471 pass / 0 fail; core+tui `typecheck` + `oxlint` clean on touched files; `speckit validate --json` ok:true (0 new findings), `speckit analyze` consistent.
 
 ## Group D — Section ordering + entity-first affordances (FR4, FR5)
 
-- [ ] **T008 — Order Configure before View for editable domains** `[P]`
+- [x] **T008 — Order Configure before View for editable domains** `[P]`
 - **Depends:** none
 - **Paths:** `packages/core/src/operator/palette.ts`, `packages/tui/src/operator/dialog-settings.tsx`, `packages/core/test/operator/**`
 - **Deliverable:** centralise the section order in the `palette.ts` panel projection
@@ -151,9 +151,9 @@ Checkbox backlog (details under each group below).
 - **Acceptance:** an editable domain (mcp/telemetry/jobs) renders Configure first; a
   read-only domain keeps View first; the order lives in `palette.ts`.
 - **Verification:** `bun test packages/core/test/operator/**`.
-- **Evidence:** _(filled during implement)_
+- **Evidence:** 2026-07-19 — implemented (see plan.md "Implementation notes (2026-07-19)"). core operator 111 pass, tui operator 147 pass, full tui 471 pass / 0 fail; core+tui `typecheck` + `oxlint` clean on touched files; `speckit validate --json` ok:true (0 new findings), `speckit analyze` consistent.
 
-- [ ] **T009 — Entity-first Configure affordances: create + list as the first rows**
+- [x] **T009 — Entity-first Configure affordances: create + list as the first rows**
 - **Depends:** T008
 - **Paths:** `packages/tui/src/operator/dialog-settings.tsx`, `packages/tui/src/operator/entity.ts`
 - **Deliverable:** replace the single generic `Manage <collection>` entity row with
@@ -167,11 +167,11 @@ Checkbox backlog (details under each group below).
   with `Create job` + `Jobs`; semantic with `Add provider` + the lists; each opens
   the existing create/CRUD screen with no new command id.
 - **Verification:** `bun test packages/tui/test/operator/**`.
-- **Evidence:** _(filled during implement)_
+- **Evidence:** 2026-07-19 — implemented (see plan.md "Implementation notes (2026-07-19)"). core operator 111 pass, tui operator 147 pass, full tui 471 pass / 0 fail; core+tui `typecheck` + `oxlint` clean on touched files; `speckit validate --json` ok:true (0 new findings), `speckit analyze` consistent.
 
 ## Group E — Tests + invariants + doc sync (FR6, FR7)
 
-- [ ] **T010 — Compact-status tests**
+- [x] **T010 — Compact-status tests**
 - **Depends:** T004
 - **Paths:** `packages/tui/test/operator/**`, `packages/core/test/operator/**`
 - **Deliverable:** tests asserting populated groups render in full, empty groups
@@ -179,9 +179,9 @@ Checkbox backlog (details under each group below).
   explicit and uncollapsed (FR2).
 - **Acceptance:** the compact-status assertions pass.
 - **Verification:** `bun test packages/tui/test/operator/** packages/core/test/operator/**`.
-- **Evidence:** _(filled during implement)_
+- **Evidence:** 2026-07-19 — implemented (see plan.md "Implementation notes (2026-07-19)"). core operator 111 pass, tui operator 147 pass, full tui 471 pass / 0 fail; core+tui `typecheck` + `oxlint` clean on touched files; `speckit validate --json` ok:true (0 new findings), `speckit analyze` consistent.
 
-- [ ] **T011 — Row copy tests**
+- [x] **T011 — Row copy tests**
 - **Depends:** T005, T006, T007
 - **Paths:** `packages/core/test/operator/**`, `packages/tui/test/operator/**`
 - **Deliverable:** tests asserting the `Read-only view ·` boilerplate and the
@@ -190,9 +190,9 @@ Checkbox backlog (details under each group below).
   (FR3).
 - **Acceptance:** the row copy assertions pass.
 - **Verification:** `bun test packages/core/test/operator/** packages/tui/test/operator/**`.
-- **Evidence:** _(filled during implement)_
+- **Evidence:** 2026-07-19 — implemented (see plan.md "Implementation notes (2026-07-19)"). core operator 111 pass, tui operator 147 pass, full tui 471 pass / 0 fail; core+tui `typecheck` + `oxlint` clean on touched files; `speckit validate --json` ok:true (0 new findings), `speckit analyze` consistent.
 
-- [ ] **T012 — Ordering + affordance tests**
+- [x] **T012 — Ordering + affordance tests**
 - **Depends:** T008, T009
 - **Paths:** `packages/core/test/operator/**`, `packages/tui/test/operator/**`
 - **Deliverable:** tests asserting Configure orders before View for editable domains
@@ -200,9 +200,9 @@ Checkbox backlog (details under each group below).
   `Add provider`+lists over the existing command ids (FR4, FR5).
 - **Acceptance:** the ordering + affordance assertions pass.
 - **Verification:** `bun test packages/core/test/operator/** packages/tui/test/operator/**`.
-- **Evidence:** _(filled during implement)_
+- **Evidence:** 2026-07-19 — implemented (see plan.md "Implementation notes (2026-07-19)"). core operator 111 pass, tui operator 147 pass, full tui 471 pass / 0 fail; core+tui `typecheck` + `oxlint` clean on touched files; `speckit validate --json` ok:true (0 new findings), `speckit analyze` consistent.
 
-- [ ] **T013 — Parity + honest-availability re-assert**
+- [x] **T013 — Parity + honest-availability re-assert**
 - **Depends:** T009
 - **Paths:** `packages/core/test/operator/**`, `packages/tui/test/operator/**`
 - **Deliverable:** re-assert (reusing the Feature 007/015 parity harness) that every
@@ -212,9 +212,9 @@ Checkbox backlog (details under each group below).
 - **Acceptance:** the parity + honest-availability assertions pass; no catalog id or
   version changed.
 - **Verification:** `bun test packages/core/test/operator/** packages/tui/test/operator/**`; `bun run typecheck`.
-- **Evidence:** _(filled during implement)_
+- **Evidence:** 2026-07-19 — implemented (see plan.md "Implementation notes (2026-07-19)"). core operator 111 pass, tui operator 147 pass, full tui 471 pass / 0 fail; core+tui `typecheck` + `oxlint` clean on touched files; `speckit validate --json` ok:true (0 new findings), `speckit analyze` consistent.
 
-- [ ] **T014 — Guard scope confirm + doc sync + analyze/validate**
+- [x] **T014 — Guard scope confirm + doc sync + analyze/validate**
 - **Depends:** T001-T013
 - **Paths:** `doc/arch/speckit.toml` (read-only confirm), `doc/arch/sdd/016-*/`, `doc/arch/adr/0016-*.md`, `doc/arch/schemas/operator-screen-layout/**`, `AGENTS.md`, `README.md`
 - **Deliverable:** confirm the touched surface is fully covered by the existing
@@ -228,7 +228,7 @@ Checkbox backlog (details under each group below).
 - **Acceptance:** `speckit analyze` reports no new blockers; `speckit validate
   --json` is `ok:true` with 0 new findings on Feature 016 artifacts.
 - **Verification:** `speckit analyze`; `speckit validate --json`.
-- **Evidence:** _(filled during implement)_
+- **Evidence:** 2026-07-19 — implemented (see plan.md "Implementation notes (2026-07-19)"). core operator 111 pass, tui operator 147 pass, full tui 471 pass / 0 fail; core+tui `typecheck` + `oxlint` clean on touched files; `speckit validate --json` ok:true (0 new findings), `speckit analyze` consistent.
 
 ## Dependencies
 

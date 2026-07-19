@@ -257,6 +257,71 @@ governed by the existing Feature 015 statechart. No `research.md`, `data-model.m
 - [x] Layout invariants: same ids / loopback / primitives / honest availability, presentation only (FR6)
 - [x] specScopeGlobs: no genuinely-new path; existing 007/011/012 blocks cover the surface
 - [x] Security: no new input/surface/secret handling; parity + honest availability preserved
-- [ ] `tasks.md` generated and filled
-- [ ] `speckit analyze` clean of new Critical/High/Medium blockers
-- [ ] `speckit validate --json` green (0 new findings on Feature 016 artifacts)
+- [x] `tasks.md` generated and filled
+- [x] `speckit analyze` clean of new Critical/High/Medium blockers
+- [x] `speckit validate --json` green (0 new findings on Feature 016 artifacts)
+
+## Implementation notes (recorded during implement)
+
+- 2026-07-19 — T001-T014 landed per plan.
+
+  **T001 (FR1) — header-first order.** The DialogSelect primitive lives in
+  `packages/tui/src/ui/dialog-select.tsx` (the plan/tasks referenced
+  `ui/dialog.tsx`, which holds only the push/back-stack context); `dialog-select.tsx`
+  is **outside** the Feature 007/011/012 guard scope, so rather than extend the
+  primitive (and widen the guard) the status is routed through the **existing**
+  `titleView` header slot with no primitive change. `DialogOperatorDomainPanel` now
+  returns the `DialogSelect` directly (no outer wrapper box); its `titleView` stacks
+  the `Operator · <Domain>` header title over `<OperatorStatusSection>` in a column,
+  so the panel reads header → status → search → action list. This satisfies FR1
+  "the implementer chooses the seam / add no new dialog primitive" and keeps the
+  guard scope unchanged (T014).
+
+  **T003/T004 (FR2) — compact status.** `status.ts` gained `toStatusGroups` +
+  `statusEmptySummary` (`OperatorStatusGroup`/`OperatorStatusGroupState`): each
+  top-level status key is a group classified `populated`/`empty` (empty = null,
+  empty string/array/object; a scalar incl. `false`/`0` is populated). `StatusKeyValue`
+  renders only the populated groups in full and collapses the empty ones into one
+  `a · b · c: empty` line; `Loading…`/`unavailable` stay at the renderer's outer
+  `Show` guards, never collapsed. Bounded by `MAX_STATUS_NODES`. The rich per-domain
+  panels keep their own bounded empty rendering (out of the T004 path).
+
+  **T005-T007 (FR3) — row copy.** `palette.ts` `verbSubtitleFor` was replaced by the
+  exported `operatorRowSubtitle` + `MAX_ROW_COMMAND_ID = 28`: the secondary line
+  drops the `Read-only view ·`/`Editable setting ·` boilerplate and carries an
+  availability marker (`Unavailable · not implemented yet` / `confirm required` /
+  `secret`) ONLY when the verb is not fully available, plus the dotted id ONLY when
+  `id.length <= 28` (omitted, never truncated mid-token, otherwise). The per-row
+  `view`/`configure` kind footer (`verbFooter`) is deleted; `verbOption` sets no
+  footer — the DialogSelect section category (View/Configure) alone carries the kind.
+
+  **T008/T009 (FR4/FR5) — ordering + affordances.** `palette.ts` `operatorSectionOrder`
+  centralises `["configure","view"]` for an editable domain, `["view"]` for a pure
+  read-only one; `dialog-settings.tsx` `options()` composes a Configure block
+  (entity affordances → controls → settings) and a View block and flat-maps them by
+  that order. `entity.ts` `operatorEntityAffordances` replaces the single
+  `Manage <collection>` row with the entity-first create+list rows — mcp `Add server`
+  + `Servers`, jobs `Create job` + `Jobs`, semantic `Add provider` + `Providers` +
+  `Models` — each riding the existing `createId`/`listRead` ids and loopback (create
+  reuses `onSelectSetting`, list reuses `openOperatorEntityList`).
+
+  **T010-T013 (FR6/FR7) — tests + parity.** Added compact-status tests
+  (`tui/test/operator/status.test.ts`), row-copy + section-order tests
+  (`core/test/operator/palette-menu.test.ts`), affordance tests
+  (`tui/test/operator/entity.test.ts`), and a faithful screen-composition model
+  pinning the header→status→search→actions order, Configure-before-View, and the
+  no-kind-badge contract (`tui/test/operator/screen-composition.test.ts`). The
+  existing parity suite is unchanged and still green — no catalog id / version bump
+  (`RESERVED_CATALOG_VERSION` stays `1.3.0`), no new dispatch path, flag, primitive,
+  or statechart; `packages/opencode` untouched.
+
+  **T014 — guard + validate.** No `speckit.toml` change: the touched surface
+  (`packages/core/src/operator/**`, `packages/tui/src/**/operator/**`,
+  `packages/tui/test/**`, `packages/core/test/operator/**`) is already covered;
+  `dialog-select.tsx` was deliberately **not** touched, so no new glob is needed. The
+  `operator-screen-layout/*.cue` corpus already types the shipped shapes (regions,
+  `#StatusGroupState`, `#SectionKind`, `#AvailabilityMarker`, `#AffordanceKind`,
+  `#ActionRow`) — no schema edit. Results: core operator 111 pass, tui operator 147
+  pass, full tui 471 pass / 0 fail; `typecheck` (core+tui) + `oxlint` clean on touched
+  files; `speckit validate --json` ok:true (0 new findings), `speckit analyze`
+  consistent (0 ADR overlaps).
