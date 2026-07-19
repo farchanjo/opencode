@@ -117,9 +117,44 @@ export const OPERATOR_PERSISTING_DOMAINS = [
 const PERSISTING_DOMAIN_SET: ReadonlySet<string> = new Set(OPERATOR_PERSISTING_DOMAINS)
 
 /**
- * Per-verb input-mode descriptor map (T002, FR5). Only the persisting Configure
- * verbs open a typed form; every other verb resolves to `none`. Payload-free
- * mutations (e.g. langlock.reset) stay `none` and dispatch directly.
+ * Per-verb persistence overrides for mixed domains (Feature 014 T012, FR12). A
+ * verb listed here overrides its domain-level default so a domain whose Configure
+ * verbs split between a persisting backend and a capability-gated one renders the
+ * honest `Partial` badge — no verb advertises persistence it lacks, and no
+ * persisting verb reads as `unavailable`.
+ *
+ * - semantic: the nine config-backed registry mutations persist through the
+ *   Config.Service `semantic` authority (T009); the Milvus-gated
+ *   embedding/reranker/index mutations fall to the domain default
+ *   (`honest_unavailable`).
+ * - output: the two policy setters persist through the round-trip seam (T007);
+ *   the control-store lifecycle mutations (export/share/release/delete/purge)
+ *   fall to the domain default.
+ */
+export const OPERATOR_PERSISTING_VERBS = [
+  // semantic config-backed registry (T009)
+  "semantic.provider.add",
+  "semantic.provider.update",
+  "semantic.provider.disable",
+  "semantic.provider.delete",
+  "semantic.provider.rotate-secret",
+  "semantic.model.register",
+  "semantic.model.disable",
+  "semantic.embedding.select",
+  "semantic.reranker.select",
+  // output config-backed policy (T007)
+  "output.retention.set",
+  "output.quota.set",
+] as const
+
+const PERSISTING_VERB_SET: ReadonlySet<string> = new Set(OPERATOR_PERSISTING_VERBS)
+
+/**
+ * Per-verb input-mode descriptor map (T002, FR5; Feature 014 T012). Only the
+ * persisting Configure verbs open a typed form; every other verb resolves to
+ * `none`. Payload-free mutations (e.g. langlock.reset) stay `none` and dispatch
+ * directly. Feature 014 adds the newly-editable config-backed verbs: the semantic
+ * registry mutations (T009) and the two output policy setters (T007).
  */
 export const OPERATOR_INPUT_MODES: Readonly<Record<string, OperatorInputMode>> = {
   "langlock.set": "value_picker",
@@ -136,6 +171,19 @@ export const OPERATOR_INPUT_MODES: Readonly<Record<string, OperatorInputMode>> =
   "process.steer": "text_input",
   "process.handoff": "text_input",
   "task.cancel": "value_picker",
+  // Feature 014 T012 — semantic config-backed registry Configure verbs (T009).
+  "semantic.provider.add": "text_input",
+  "semantic.provider.update": "text_input",
+  "semantic.provider.disable": "text_input",
+  "semantic.provider.delete": "text_input",
+  "semantic.provider.rotate-secret": "text_input",
+  "semantic.model.register": "text_input",
+  "semantic.model.disable": "text_input",
+  "semantic.embedding.select": "text_input",
+  "semantic.reranker.select": "text_input",
+  // Feature 014 T012 — output config-backed policy setters (T007).
+  "output.retention.set": "text_input",
+  "output.quota.set": "text_input",
 }
 
 /**
@@ -182,9 +230,15 @@ function domainLabelFor(domain: string): string {
   return domain.charAt(0).toUpperCase() + domain.slice(1)
 }
 
-/** Backend persistence class for a verb (T001, FR7). Reads are honest today. */
-function persistenceFor(domain: string, mutates: boolean): OperatorPersistenceClass {
+/**
+ * Backend persistence class for a verb (T001, FR7; refined per-verb in Feature
+ * 014 T012, FR12). Reads are honest today. A mutating verb persists when either
+ * its whole domain persists OR it is a per-verb config-backed exception
+ * (`OPERATOR_PERSISTING_VERBS`), so a mixed domain classifies each verb truthfully.
+ */
+function persistenceFor(id: string, domain: string, mutates: boolean): OperatorPersistenceClass {
   if (!mutates) return "persists_today"
+  if (PERSISTING_VERB_SET.has(id)) return "persists_today"
   return PERSISTING_DOMAIN_SET.has(domain) ? "persists_today" : "honest_unavailable"
 }
 
@@ -238,7 +292,7 @@ export function listOperatorPaletteEntries(options: ListPaletteOptions = {}): re
     const secretRelated = isOperatorSecretMutationId(draft.id)
     const secretBlocked = secretRelated && !keychainAvailable
     const section: OperatorVerbSection = draft.mutates ? "configure" : "view"
-    const persistence = persistenceFor(domain, draft.mutates)
+    const persistence = persistenceFor(draft.id, domain, draft.mutates)
     const availability = availabilityFor(draft.mutates, confirmRequired, persistence)
     const verbLabel = draft.title ?? verbLabelFor(operation)
     const suggest =

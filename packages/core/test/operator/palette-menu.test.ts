@@ -64,7 +64,12 @@ describe("T014 group list — 12 domains with badges + counts (FR2)", () => {
     expect(byDomain.get("routing")!.badge).toBe("Available")
     expect(byDomain.get("task")!.badge).toBe("Available")
     expect(byDomain.get("process")!.badge).toBe("Available")
-    expect(byDomain.get("semantic")!.badge).toBe("Unavailable")
+    // Feature 014 T012 (FR12): semantic is now a mixed domain — the config-backed
+    // registry verbs persist while the Milvus-gated index verbs stay gated → Partial.
+    expect(byDomain.get("semantic")!.badge).toBe("Partial")
+    // output likewise: retention/quota persist, the lifecycle mutations stay gated.
+    expect(byDomain.get("output")!.badge).toBe("Partial")
+    // mcp stays fully honest-unavailable (T008 kept every mcp mutation a typed gap).
     expect(byDomain.get("mcp")!.badge).toBe("Unavailable")
     // Feature 013 flipped the four config-backed domains to persists_today (FR12).
     expect(byDomain.get("telemetry")!.badge).toBe("Available")
@@ -113,10 +118,23 @@ describe("T014 domain panel — View/Configure split + normative subtitles (FR3,
 
   test("honest-unavailable copy: `Unavailable · not implemented yet · {id}`", () => {
     const panel = buildOperatorDomainPanel("semantic")
+    // Feature 014 T012: the Milvus-gated index verbs remain honest-unavailable.
+    const reindex = verb(panel.configure, "semantic.index.reindex")
+    expect(reindex.subtitle).toBe("Unavailable · not implemented yet · semantic.index.reindex")
+    expect(reindex.availability).toBe("unavailable")
+    expect(reindex.persistence).toBe("honest_unavailable")
+  })
+
+  test("Feature 014 T012: the config-backed registry verbs are editable, not unavailable", () => {
+    const panel = buildOperatorDomainPanel("semantic")
     const add = verb(panel.configure, "semantic.provider.add")
-    expect(add.subtitle).toBe("Unavailable · not implemented yet · semantic.provider.add")
-    expect(add.availability).toBe("unavailable")
-    expect(add.persistence).toBe("honest_unavailable")
+    expect(add.subtitle).toBe("Editable setting · semantic.provider.add")
+    expect(add.availability).toBe("available")
+    expect(add.persistence).toBe("persists_today")
+    // a confirm-required registry mutation still persists.
+    const del = verb(panel.configure, "semantic.provider.delete")
+    expect(del.availability).toBe("confirm_required")
+    expect(del.persistence).toBe("persists_today")
   })
 
   test("secret rows append `· secret`", () => {
@@ -133,7 +151,8 @@ describe("T014 availability + input-mode derivation (FR3, FR5, FR7)", () => {
     expect(byId.get("langlock.status")!.availability).toBe("available") // read-only
     expect(byId.get("langlock.set")!.availability).toBe("available") // persisting plain mutation
     expect(byId.get("jobs.delete")!.availability).toBe("confirm_required") // persisting confirm mutation
-    expect(byId.get("semantic.provider.add")!.availability).toBe("unavailable") // honest-unavailable mutation
+    expect(byId.get("semantic.provider.add")!.availability).toBe("available") // T012 config-backed registry mutation
+    expect(byId.get("semantic.index.reindex")!.availability).toBe("unavailable") // Milvus-gated mutation
   })
 
   test("persisting-domain set is exactly the nine persisting domains", () => {
@@ -150,16 +169,23 @@ describe("T014 availability + input-mode derivation (FR3, FR5, FR7)", () => {
     ])
   })
 
-  test("input-mode map assigns only the 14 persisting Configure verbs; all others `none`", () => {
-    expect(Object.keys(OPERATOR_INPUT_MODES).length).toBe(14)
+  test("input-mode map assigns the persisting Configure verbs; all others `none`", () => {
+    // Feature 014 T012 added the 9 semantic registry + 2 output policy setters.
+    expect(Object.keys(OPERATOR_INPUT_MODES).length).toBe(25)
     expect(OPERATOR_INPUT_MODES["langlock.set"]).toBe("value_picker")
     expect(OPERATOR_INPUT_MODES["jobs.create"]).toBe("text_input")
     expect(OPERATOR_INPUT_MODES["langlock.reset"]).toBe("none")
+    expect(OPERATOR_INPUT_MODES["semantic.embedding.select"]).toBe("text_input")
+    expect(OPERATOR_INPUT_MODES["output.retention.set"]).toBe("text_input")
     // a verb outside the persisting Configure set resolves to `none`
     const status = listOperatorPaletteEntries().find((e) => e.id === "langlock.status")!
     expect(status.inputMode).toBe("none")
+    // the config-backed registry mutation is now editable (T012)
     const add = listOperatorPaletteEntries().find((e) => e.id === "semantic.provider.add")!
-    expect(add.inputMode).toBe("none")
+    expect(add.inputMode).toBe("text_input")
+    // a Milvus-gated mutation stays `none` (no form for a capability gap)
+    const reindex = listOperatorPaletteEntries().find((e) => e.id === "semantic.index.reindex")!
+    expect(reindex.inputMode).toBe("none")
   })
 })
 

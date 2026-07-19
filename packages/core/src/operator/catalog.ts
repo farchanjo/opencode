@@ -64,7 +64,13 @@ const ENTRIES: readonly EntrySpec[] = [
   { id: "telemetry.on", mutates: true, scopesAllowed: GP, offlineCapable: true },
   { id: "telemetry.off", mutates: true, scopesAllowed: GP, offlineCapable: true },
   { id: "telemetry.configure", mutates: true, scopesAllowed: GP, offlineCapable: true },
-  { id: "telemetry.test", mutates: true, scopesAllowed: GP, offlineCapable: false },
+  // A reachability probe is read-only — it dials the OTLP endpoint and reports a
+  // typed reach outcome, persisting nothing (the handler returns a `query`, like
+  // `routing.test`). Declaring it `mutates` made the Feature 007 dispatcher reject
+  // every dispatch with "mutation command cannot return query result", so the verb
+  // could never succeed. `mutates: false` aligns the descriptor with the handler;
+  // no id/version/dispatch-path change (FR13).
+  { id: "telemetry.test", mutates: false, scopesAllowed: GP, offlineCapable: false },
 
   // smart
   { id: "smart.status", mutates: false, scopesAllowed: GP, offlineCapable: true },
