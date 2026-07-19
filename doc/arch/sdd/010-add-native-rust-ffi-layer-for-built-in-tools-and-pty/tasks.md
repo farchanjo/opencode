@@ -45,7 +45,7 @@ symbols are pinned by `plan.md`, not provisional.
 
 ### Workspace bootstrap and shared ABI crate (Phase 1)
 
-- [ ] T001 [S0] Bootstrap the cargo workspace at the repository root: author `Cargo.toml`
+- [x] T001 [S0] Bootstrap the cargo workspace at the repository root: author `Cargo.toml`
   (workspace `members = ["crates/opencode-ffi-abi", "crates/opencode-tools-ffi",
   "crates/opencode-pty-ffi"]` plus a single-sourcing `[workspace.dependencies]` pinning the
   exact versions from `plan.md` — `serde =1.0.229` `features = ["derive"]`,
@@ -58,7 +58,7 @@ symbols are pinned by `plan.md`, not provisional.
   (FR21, C6, C15). Acceptance: `cargo metadata` resolves every dependency to the pinned
   `=x.y.z`, `.gitignore` excludes `/target` and `packages/core/native/*/`, and `Cargo.lock`
   is present and committed.
-- [ ] T002 [S1] Author `crates/opencode-ffi-abi/Cargo.toml` (rlib, not shipped) and the
+- [x] T002 [S1] Author `crates/opencode-ffi-abi/Cargo.toml` (rlib, not shipped) and the
   envelope core of `crates/opencode-ffi-abi/src/lib.rs`: the `#FfiResponse` serde types
   mirroring `doc/arch/schemas/ffi/envelope.cue` one-to-one (`{ status: "ok", result }` /
   `{ status: "error", error: { code, message } }`), the closed 13-value `error.code` enum
@@ -73,7 +73,7 @@ symbols are pinned by `plan.md`, not provisional.
   (no warnings), and `cargo test -p opencode-ffi-abi` assert a panicking body yields the
   `internal_panic` envelope, a success/error envelope serializes to the CUE shape, and the
   alloc counter returns to its at-rest value after `oc_free`.
-- [ ] T003 [S1] Complete the `opencode-ffi-abi` handshake and parity surface in
+- [x] T003 [S1] Complete the `opencode-ffi-abi` handshake and parity surface in
   `crates/opencode-ffi-abi/src/lib.rs`: `oc_abi_version() -> u32` (the ABI-major the loader
   asserts), `oc_version() -> *mut c_char` (semver JSON plus the C16 introspected capability
   constants), and the debug-gated `oc_alloc_stats() -> *mut c_char` (`{ allocated, freed }`
