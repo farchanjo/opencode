@@ -31,7 +31,7 @@ import type {
   OperatorPrincipal,
   SpoolReaderError,
 } from "@opencode-ai/protocol/outputspool/commands"
-import type { HandlerContext, HandlerResult, FailureHandlerResult } from "@/operator/application/handler"
+import type { HandlerContext, HandlerResult, FailureHandlerResult, OperatorMutationPlan } from "@/operator/application/handler"
 import type { DomainInvoke } from "@/operator/application/ports/domain-ports"
 import type { OutputSpoolAuditEvent, OutputSpoolAuditSink, OutputSpoolPort } from "./outputspool-port"
 
@@ -164,6 +164,30 @@ function outputInvoke(deps: OutputSpoolCommandDeps): DomainInvoke {
       ),
     )
 
+  /**
+   * Validate a policy mutation and hand back the `mutation_plan` the dispatcher commits
+   * via `mutateAuthority` (which emits the Feature 007 audit correlation on success).
+   * Only a rejection is audited here — a successful plan is audited by the commit, so no
+   * policy write is ever persisted while the caller is told it failed (FR5, FR14).
+   */
+  const runPlan = (
+    commandId: string,
+    principalId: string,
+    target: string,
+    effect: Effect.Effect<OperatorMutationPlan, AdminError>,
+  ): Promise<HandlerResult> =>
+    Effect.runPromise(
+      effect.pipe(
+        Effect.matchEffect({
+          onSuccess: (plan): Effect.Effect<HandlerResult> => Effect.succeed({ kind: "mutation_plan", ...plan }),
+          onFailure: (error): Effect.Effect<HandlerResult> => {
+            const mapped = adminToFailure(error)
+            return deps.audit.record({ commandId, principalId, target, outcome: mapped.outcome }).pipe(Effect.as(mapped.failure))
+          },
+        }),
+      ),
+    )
+
   const query = (value: unknown): HandlerResult => ({ kind: "query", effective: value })
 
   return (ctx: HandlerContext): Promise<HandlerResult> => {
@@ -202,13 +226,13 @@ function outputInvoke(deps: OutputSpoolCommandDeps): DomainInvoke {
         const scopeId = firstString(payload, ["scopeId", "scope_id"]) ?? ctx.request.scope.ref ?? ""
         const scope = (firstString(payload, ["scope"]) ?? ctx.request.scope.kind) === "global" ? "global" : "project"
         const retention = asRetention(payload)
-        return run(id, principalId, scopeId, port.setRetention({ scope, scopeId, retention, expectedVersion, principal }), adminToFailure, (o) => query(o))
+        return runPlan(id, principalId, scopeId, port.planSetRetention({ scope, scopeId, retention, expectedVersion, principal }))
       }
       case "output.quota.set": {
         const scopeId = firstString(payload, ["scopeId", "scope_id"]) ?? ctx.request.scope.ref ?? ""
         const scope = (firstString(payload, ["scope"]) ?? ctx.request.scope.kind) === "global" ? "global" : "project"
         const quota = asQuota(payload)
-        return run(id, principalId, scopeId, port.setQuota({ scope, scopeId, quota, expectedVersion, principal }), adminToFailure, (o) => query(o))
+        return runPlan(id, principalId, scopeId, port.planSetQuota({ scope, scopeId, quota, expectedVersion, principal }))
       }
       default:
         return Promise.resolve(fail("not_implemented", `output command ${id} is not implemented`))

@@ -40,9 +40,7 @@ import type {
   ReadInput,
   ReadOutput,
   SetQuotaInput,
-  SetQuotaOutput,
   SetRetentionInput,
-  SetRetentionOutput,
   ShareInput,
   ShareOutput,
   SpoolReaderError,
@@ -50,6 +48,7 @@ import type {
   StatOutput,
 } from "@opencode-ai/protocol/outputspool/commands"
 import type { Effect } from "effect"
+import type { OperatorMutationPlan } from "@/operator/application/handler"
 
 /** A bounded, secret-free operator audit event (never a prompt/payload/path, C22). */
 export interface OutputSpoolAuditEvent {
@@ -65,10 +64,18 @@ export interface OutputSpoolAuditSink {
 }
 
 /**
- * The narrow domain seam the Feature 005 application adapters provide. The three
- * consume methods return content-free read models / authorized pages; the seven
- * admin methods return the settled result carrying a Feature 007 audit id. The
- * cross-project deny-by-default guard lives in the backend (FR44, C17).
+ * The narrow domain seam the Feature 005 application adapters provide, converted to
+ * the Feature 014 `OperatorMutationPlan` commit contract (FR5, FR6).
+ *
+ * `stat`/`read`/`follow` are content-free reads over the real control store + page
+ * reader. `export`/`share` are cross-project deny-by-default (FR44, C17).
+ * `release`/`delete`/`purge` act on the control store (SQLite) — a substrate the
+ * Feature 007 config-CAS `mutateAuthority` pipeline cannot atomically own without
+ * fabricating success, so they degrade to a typed capability gap by design (FR14),
+ * mirroring the FR10 lifecycle-cancel boundary. `retention.set`/`quota.set` persist
+ * bounded POLICY, which is genuinely config-backed: they VALIDATE at plan time and
+ * return an `OperatorMutationPlan` so `mutateAuthority` owns the single committed CAS
+ * write through the config round-trip seam — the backend never self-commits.
  */
 export interface OutputSpoolBackend {
   readonly stat: (input: StatInput) => Effect.Effect<StatOutput, SpoolReaderError>
@@ -79,8 +86,8 @@ export interface OutputSpoolBackend {
   readonly release: (input: AdminReleaseInput) => Effect.Effect<AdminReleaseOutput, AdminError>
   readonly delete: (input: DeleteInput) => Effect.Effect<DeleteOutput, AdminError>
   readonly purge: (input: PurgeInput) => Effect.Effect<PurgeOutput, AdminError>
-  readonly setRetention: (input: SetRetentionInput) => Effect.Effect<SetRetentionOutput, AdminError>
-  readonly setQuota: (input: SetQuotaInput) => Effect.Effect<SetQuotaOutput, AdminError>
+  readonly planSetRetention: (input: SetRetentionInput) => Effect.Effect<OperatorMutationPlan, AdminError>
+  readonly planSetQuota: (input: SetQuotaInput) => Effect.Effect<OperatorMutationPlan, AdminError>
 }
 
 /** The typed operator port; a thin pass-through over the injected backend (mirrors langlock-port). */
