@@ -241,7 +241,7 @@ path.
   AC10, AC11, AC12, AC16, AC17, AC19). Acceptance: `bun test packages/opencode` green against a
   standalone Milvus server when present and against the injected fake adapter otherwise, with every
   degradation, isolation, cache-reuse, reserved-ID, and mutation-attempt point asserted.
-- [ ] T016 [S13] Run per-package `tsgo --noEmit` typecheck and `bun test` for `packages/schema`,
+- [x] T016 [S13] Run per-package `tsgo --noEmit` typecheck and `bun test` for `packages/schema`,
   `packages/protocol`, `packages/core`, and `packages/opencode`; then close out: tick every
   checkbox above once its task is complete and verified, confirm `speckit validate` is green with
   only the four pre-existing waived hygiene findings, and confirm every FR1–FR25, NFR1–NFR5, and
