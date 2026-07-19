@@ -11,7 +11,6 @@
  */
 import { RESERVED_CATALOG, type OperatorDomain } from "./catalog"
 import { requiresConfirmation } from "./confirmation"
-import type { DescriptorDraft } from "./descriptor"
 
 /** Which panel section a verb lands in (FR3). */
 export type OperatorVerbSection = "view" | "configure"
@@ -271,25 +270,35 @@ function entryTitleFor(domainLabel: string, verbLabel: string): string {
   return `${domainLabel} ${action}`
 }
 
-/** Normative verb subtitle (T003, FR4). Dotted id stays discoverable, never primary. */
-function verbSubtitleFor(input: {
+/**
+ * The longest dotted command id kept as a row's secondary line (Feature 016 FR3).
+ * A longer id would truncate mid-token on the domain screen's row width, so it is
+ * omitted rather than shown truncated. A sane bound, not a pixel measurement — the
+ * screen is domain-implicit and short ids stay discoverable, long ones drop.
+ */
+export const MAX_ROW_COMMAND_ID = 28
+
+/**
+ * The row secondary line under the Feature 016 copy contract (FR3). Drops the old
+ * `Read-only view ·`/`Editable setting ·` boilerplate — the section header alone
+ * carries the kind. It carries an availability marker ONLY when the verb is not
+ * fully available (`unavailable`/`confirm required`/`secret`) and appends the
+ * dotted command id ONLY when it fits without truncation, omitting it otherwise.
+ * A fully-available verb whose id fits reads as the bare id; one whose id is too
+ * long reads as an empty string (no secondary line).
+ */
+export function operatorRowSubtitle(input: {
   commandId: string
-  section: OperatorVerbSection
   availability: OperatorVerbAvailability
-  secretRelated: boolean
+  secretRelated?: boolean
 }): string {
-  const { commandId, section, availability, secretRelated } = input
-  let base: string
-  if (availability === "unavailable") {
-    base = `Unavailable · not implemented yet · ${commandId}`
-  } else if (section === "view") {
-    base = `Read-only view · ${commandId}`
-  } else if (availability === "confirm_required") {
-    base = `Editable setting · confirm required · ${commandId}`
-  } else {
-    base = `Editable setting · ${commandId}`
-  }
-  return secretRelated ? `${base} · secret` : base
+  const { commandId, availability, secretRelated } = input
+  const parts: string[] = []
+  if (availability === "unavailable") parts.push("Unavailable · not implemented yet")
+  else if (availability === "confirm_required") parts.push("confirm required")
+  if (secretRelated) parts.push("secret")
+  if (commandId.length <= MAX_ROW_COMMAND_ID) parts.push(commandId)
+  return parts.join(" · ")
 }
 
 export function listOperatorPaletteEntries(options: ListPaletteOptions = {}): readonly OperatorPaletteEntry[] {
@@ -309,7 +318,7 @@ export function listOperatorPaletteEntries(options: ListPaletteOptions = {}): re
       operation,
       commandName: `operator.${draft.id}`,
       title: entryTitleFor(domainLabelFor(domain), verbLabel),
-      description: verbSubtitleFor({ commandId: draft.id, section, availability, secretRelated }),
+      description: operatorRowSubtitle({ commandId: draft.id, availability, secretRelated }),
       category: secretRelated ? `Operator / ${domain} / secrets` : `Operator / ${domain}`,
       mutates: draft.mutates,
       confirmRequired,
@@ -423,6 +432,17 @@ export function buildOperatorDomainPanel(domain: string): OperatorDomainPanel {
     view: entries.filter((e) => e.section === "view").map(toVerbItem),
     configure: entries.filter((e) => e.section === "configure").map(toVerbItem),
   }
+}
+
+/**
+ * The centralised section reading order for a domain screen (Feature 016 FR4).
+ * A domain with editable (Configure) state leads with Configure so the primary
+ * affordance is visible before the read-only View; a pure read-only domain keeps
+ * View leading. Owned here — never open-coded per screen — so the ordering is one
+ * source of truth the TUI consumes (mirrors `operator-screen-layout` `#SectionKind`).
+ */
+export function operatorSectionOrder(domain: string): readonly OperatorVerbSection[] {
+  return buildOperatorDomainPanel(domain).configure.length > 0 ? ["configure", "view"] : ["view"]
 }
 
 /**

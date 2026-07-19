@@ -12,11 +12,15 @@ import {
   OPERATOR_SETTINGS_DOMAINS,
   OPERATOR_INPUT_MODES,
   OPERATOR_PERSISTING_DOMAINS,
+  MAX_ROW_COMMAND_ID,
   buildOperatorGroupList,
   buildOperatorDomainPanel,
+  operatorSectionOrder,
+  operatorRowSubtitle,
   listOperatorPaletteEntries,
   listOperatorSettingsEntries,
   type OperatorVerbItem,
+  type OperatorVerbSection,
 } from "../../src/operator"
 
 function verb(items: readonly OperatorVerbItem[], id: string): OperatorVerbItem {
@@ -95,27 +99,35 @@ describe("T014 domain panel — View/Configure split + normative subtitles (FR3,
     expect(panel.configure.every((v) => v.section === "configure")).toBe(true)
   })
 
-  test("view row copy: `Read-only view · {id}`", () => {
+  // Feature 016 FR3: the row copy contract dropped the `Read-only view ·` /
+  // `Editable setting ·` boilerplate — the section header alone carries the kind.
+  // The subtitle carries only an availability marker (when NOT fully available)
+  // plus the dotted id (only when it fits without truncation).
+  test("view row copy: the bare id, no `Read-only view ·` boilerplate (FR3)", () => {
     const panel = buildOperatorDomainPanel("langlock")
-    expect(verb(panel.view, "langlock.status").subtitle).toBe("Read-only view · langlock.status")
+    const status = verb(panel.view, "langlock.status")
+    expect(status.subtitle).toBe("langlock.status")
+    expect(status.subtitle).not.toContain("Read-only view")
   })
 
-  test("configure (available) copy: `Editable setting · {id}`", () => {
+  test("configure (available) copy: the bare id, no `Editable setting ·` boilerplate (FR3)", () => {
     const panel = buildOperatorDomainPanel("langlock")
     const set = verb(panel.configure, "langlock.set")
-    expect(set.subtitle).toBe("Editable setting · langlock.set")
+    expect(set.subtitle).toBe("langlock.set")
+    expect(set.subtitle).not.toContain("Editable setting")
     expect(set.availability).toBe("available")
   })
 
-  test("configure (confirm-required) copy adds `· confirm required`", () => {
+  test("configure (confirm-required) carries the `confirm required` marker, no boilerplate (FR3)", () => {
     const panel = buildOperatorDomainPanel("jobs")
     const del = verb(panel.configure, "jobs.delete")
-    expect(del.subtitle).toBe("Editable setting · confirm required · jobs.delete")
+    expect(del.subtitle).toBe("confirm required · jobs.delete")
+    expect(del.subtitle).not.toContain("Editable setting")
     expect(del.availability).toBe("confirm_required")
     expect(del.confirmRequired).toBe(true)
   })
 
-  test("honest-unavailable copy: `Unavailable · not implemented yet · {id}`", () => {
+  test("honest-unavailable copy keeps the `Unavailable · not implemented yet` marker (FR3)", () => {
     const panel = buildOperatorDomainPanel("semantic")
     // Feature 014 T012: the Milvus-gated index verbs remain honest-unavailable.
     const reindex = verb(panel.configure, "semantic.index.reindex")
@@ -127,7 +139,8 @@ describe("T014 domain panel — View/Configure split + normative subtitles (FR3,
   test("Feature 014 T012: the config-backed registry verbs are editable, not unavailable", () => {
     const panel = buildOperatorDomainPanel("semantic")
     const add = verb(panel.configure, "semantic.provider.add")
-    expect(add.subtitle).toBe("Editable setting · semantic.provider.add")
+    // a fully-available verb carries no marker — just its id (FR3).
+    expect(add.subtitle).toBe("semantic.provider.add")
     expect(add.availability).toBe("available")
     expect(add.persistence).toBe("persists_today")
     // a confirm-required registry mutation still persists.
@@ -136,11 +149,21 @@ describe("T014 domain panel — View/Configure split + normative subtitles (FR3,
     expect(del.persistence).toBe("persists_today")
   })
 
-  test("secret rows append `· secret`", () => {
+  test("secret rows carry the `secret` marker (ordered before the id, FR3)", () => {
     const panel = buildOperatorDomainPanel("mcp")
     const start = verb(panel.configure, "mcp.auth.start")
-    expect(start.subtitle).toBe("Unavailable · not implemented yet · mcp.auth.start · secret")
+    expect(start.subtitle).toBe("Unavailable · not implemented yet · secret · mcp.auth.start")
     expect(start.secretRelated).toBe(true)
+  })
+
+  test("a command id longer than the bound is omitted, never truncated mid-token (FR3)", () => {
+    const panel = buildOperatorDomainPanel("semantic")
+    // `semantic.provider.rotate-secret` (31 chars) exceeds MAX_ROW_COMMAND_ID (28):
+    // the id is dropped from the secondary line; only the markers remain (this verb
+    // persists + is confirm-required + secret).
+    const rotate = verb(panel.configure, "semantic.provider.rotate-secret")
+    expect(rotate.subtitle).not.toContain("semantic.provider.rotate-secret")
+    expect(rotate.subtitle).toBe("confirm required · secret")
   })
 })
 
@@ -214,7 +237,7 @@ describe("Feature 015 T003 — unique row-title copy contract (FR3)", () => {
     expect(titles.some((t) => t === "View: Status")).toBe(false)
   })
 
-  test("each domain panel's rows carry a unique human title, id only as secondary", () => {
+  test("each domain panel's rows carry a unique human title, id secondary only when it fits (FR3)", () => {
     for (const domain of OPERATOR_SETTINGS_DOMAINS) {
       const panel = buildOperatorDomainPanel(domain)
       const rows = [...panel.view, ...panel.configure]
@@ -222,11 +245,72 @@ describe("Feature 015 T003 — unique row-title copy contract (FR3)", () => {
       // no two rows on this surface share a human title.
       expect(new Set(labels).size).toBe(labels.length)
       for (const row of rows) {
-        // the primary label is never the dotted id; the id lives in the subtitle.
+        // the primary label is never the dotted id.
         expect(row.label).not.toBe(row.id)
         expect(row.label).not.toContain(".")
-        expect(row.subtitle).toContain(row.id)
+        // Feature 016 FR3: the id lives in the subtitle only when it fits without
+        // truncation, and is omitted (never truncated mid-token) otherwise.
+        if (row.id.length <= MAX_ROW_COMMAND_ID) expect(row.subtitle).toContain(row.id)
+        else expect(row.subtitle).not.toContain(row.id)
       }
+    }
+  })
+})
+
+describe("Feature 016 T005 — the `operatorRowSubtitle` copy contract (FR3)", () => {
+  test("a fully-available verb whose id fits reads as the bare id, no boilerplate/marker", () => {
+    expect(operatorRowSubtitle({ commandId: "langlock.status", availability: "available" })).toBe("langlock.status")
+  })
+
+  test("a confirm-required verb prefixes the `confirm required` marker", () => {
+    expect(operatorRowSubtitle({ commandId: "jobs.delete", availability: "confirm_required" })).toBe(
+      "confirm required · jobs.delete",
+    )
+  })
+
+  test("an unavailable verb keeps the `Unavailable · not implemented yet` marker", () => {
+    expect(operatorRowSubtitle({ commandId: "mcp.export", availability: "unavailable" })).toBe(
+      "Unavailable · not implemented yet · mcp.export",
+    )
+  })
+
+  test("a secret marker is ordered before the id and combines with unavailable", () => {
+    expect(operatorRowSubtitle({ commandId: "mcp.auth.start", availability: "unavailable", secretRelated: true })).toBe(
+      "Unavailable · not implemented yet · secret · mcp.auth.start",
+    )
+  })
+
+  test("an id longer than MAX_ROW_COMMAND_ID is omitted (never truncated mid-token)", () => {
+    const longId = "semantic.provider.rotate-secret"
+    expect(longId.length).toBeGreaterThan(MAX_ROW_COMMAND_ID)
+    // available + long id → no secondary line at all.
+    expect(operatorRowSubtitle({ commandId: longId, availability: "available" })).toBe("")
+    // unavailable + long id → only the marker survives, the id is dropped.
+    expect(operatorRowSubtitle({ commandId: longId, availability: "unavailable" })).toBe(
+      "Unavailable · not implemented yet",
+    )
+  })
+})
+
+describe("Feature 016 T008 — Configure-before-View section order centralised in palette (FR4)", () => {
+  test("a domain with editable state orders Configure before View", () => {
+    for (const domain of ["mcp", "jobs", "semantic", "langlock", "telemetry"]) {
+      const panel = buildOperatorDomainPanel(domain)
+      expect(panel.configure.length).toBeGreaterThan(0)
+      expect(operatorSectionOrder(domain)).toEqual(["configure", "view"])
+    }
+  })
+
+  test("a pure read-only domain keeps View leading", () => {
+    // Synthesised guard: any domain with no configure verbs leads with View. Every
+    // reserved domain today has editable state, so assert the projection's rule
+    // directly on the section counts rather than fabricating a domain.
+    for (const domain of OPERATOR_SETTINGS_DOMAINS) {
+      const panel = buildOperatorDomainPanel(domain)
+      const expected: readonly OperatorVerbSection[] = panel.configure.length > 0 ? ["configure", "view"] : ["view"]
+      expect([...operatorSectionOrder(domain)]).toEqual([...expected])
+      // the order always ends with View — View is never dropped.
+      expect(operatorSectionOrder(domain).at(-1)).toBe("view")
     }
   })
 })
