@@ -101,6 +101,29 @@ import { Refs as SemanticRefs } from "../src/semantic/refs"
 import { Retrieval as SemanticRetrieval } from "../src/semantic/retrieval"
 import { TextValues as SemanticTextValues } from "../src/semantic/text-values"
 import { Values as SemanticValues } from "../src/semantic/values"
+import { Capability as McpCapability } from "../src/mcp/capability"
+import { Collections as McpCollections } from "../src/mcp/collections"
+import { Connection as McpConnection } from "../src/mcp/connection"
+import { Enums as McpEnums } from "../src/mcp/enums"
+import { EnumsEvent as McpEnumsEvent } from "../src/mcp/enums-event"
+import { EnumsState as McpEnumsState } from "../src/mcp/enums-state"
+import { Envelope as McpEnvelope } from "../src/mcp/envelope"
+import { Events as McpEvents } from "../src/mcp/events"
+import { EventsCall as McpEventsCall } from "../src/mcp/events-call"
+import { EventsLive as McpEventsLive } from "../src/mcp/events-live"
+import { EventsLog as McpEventsLog } from "../src/mcp/events-log"
+import { EventsResource as McpEventsResource } from "../src/mcp/events-resource"
+import { EventsServer as McpEventsServer } from "../src/mcp/events-server"
+import { EventTypes as McpEventTypes } from "../src/mcp/event-types"
+import { Experimental as McpExperimental } from "../src/mcp/experimental"
+import { Ids as McpIds } from "../src/mcp/ids"
+import { Policy as McpPolicy } from "../src/mcp/policy"
+import { Refs as McpRefs } from "../src/mcp/refs"
+import { SpoolDescriptor as McpSpoolDescriptor } from "../src/mcp/spool-descriptor"
+import { TextValues as McpTextValues } from "../src/mcp/text-values"
+import { Uri as McpUri } from "../src/mcp/uri"
+import { Allowlist as McpAllowlist } from "../src/mcp/uri-allowlist"
+import { Values as McpValues } from "../src/mcp/values"
 import { optional } from "../src/schema"
 
 describe("contract hygiene", () => {
@@ -853,6 +876,147 @@ describe("contract hygiene", () => {
       SemanticEvents.SemanticProviderProbedEvent,
       SemanticEvents.SemanticBindingStateChangedEvent,
       SemanticEvents.SemanticEvent,
+      // Feature 008 — MCP client lifecycle and content-plane schema identifiers (T001-T009).
+      McpIds.ServerId,
+      McpIds.ConnectionId,
+      McpIds.ToolName,
+      McpIds.PromptName,
+      McpIds.RequestId,
+      McpIds.TaskId,
+      McpIds.ProgressToken,
+      McpIds.SubscriptionId,
+      McpIds.EventId,
+      McpRefs.SecretRef,
+      McpRefs.HeaderRef,
+      McpRefs.OperatorRef,
+      McpRefs.PermissionRef,
+      McpRefs.OutputRef,
+      McpRefs.GroupId,
+      McpRefs.ProcessId,
+      McpRefs.ProjectId,
+      McpRefs.SessionId,
+      McpRefs.CorrelationId,
+      McpRefs.CausationId,
+      McpValues.SchemaVersion,
+      McpValues.Sequence,
+      McpValues.PageIndex,
+      McpValues.PageSize,
+      McpValues.MaxPages,
+      McpValues.ByteLength,
+      McpValues.AttemptCount,
+      McpValues.DurationMillis,
+      McpValues.Progress,
+      McpValues.Total,
+      McpTextValues.ServerName,
+      McpTextValues.ProtocolVersion,
+      McpTextValues.Reason,
+      McpTextValues.DisplayLabel,
+      McpTextValues.Cursor,
+      McpTextValues.ProvenanceLabel,
+      McpTextValues.Title,
+      McpTextValues.RedactedText,
+      McpTextValues.Timestamp,
+      McpUri.ResourceUri,
+      McpUri.ResourceTemplateUri,
+      McpUri.UriScheme,
+      McpUri.RootUri,
+      McpUri.MimeType,
+      McpPolicy.Enabled,
+      McpPolicy.Capable,
+      McpPolicy.Hint,
+      McpPolicy.Supported,
+      McpPolicy.OperatorSurfaced,
+      McpPolicy.SensitiveBlocked,
+      McpPolicy.PolicyOptin,
+      McpPolicy.RateLimited,
+      McpPolicy.Active,
+      McpPolicy.Coalesced,
+      McpEnums.TransportKind,
+      McpEnums.TrustProfile,
+      McpEnums.OutputSchemaMode,
+      McpEnums.ContentKind,
+      McpEnums.CancelWirePath,
+      McpEnums.CapabilityGap,
+      McpEnums.TaskSupport,
+      McpEnums.LogLevel,
+      McpEnums.ProvenanceClass,
+      McpEnumsState.ServerStatus,
+      McpEnumsState.ConnectionState,
+      McpEnumsState.TerminalBranch,
+      McpEnumsState.CatalogState,
+      McpEnumsState.SubscriptionState,
+      McpEnumsState.TaskStatus,
+      McpEnumsState.ResourceUpdatePolicy,
+      McpEnumsState.CallOutcome,
+      McpEnumsState.CancelOutcome,
+      McpEnumsEvent.EventClass,
+      McpEnumsEvent.EventSource,
+      McpEnumsEvent.ActorKind,
+      McpEnumsEvent.Visibility,
+      McpEnumsEvent.CatalogKind,
+      McpEventTypes.McpEventType,
+      McpExperimental.ExperimentalFlag,
+      McpExperimental.FlagState,
+      McpExperimental.ContentStreamCapability,
+      McpExperimental.FlagSet,
+      McpCollections.HeaderRefSet,
+      McpCollections.SchemeSet,
+      McpCollections.RootUriList,
+      McpCollections.MimeTypeSet,
+      McpCollections.ToolNameList,
+      McpCollections.SecretRefList,
+      McpCapability.ToolsCapability,
+      McpCapability.ResourcesCapability,
+      McpCapability.PromptsCapability,
+      McpCapability.LoggingCapability,
+      McpCapability.ExperimentalCapability,
+      McpCapability.NegotiatedCapabilities,
+      McpConnection.ReconnectPosture,
+      McpConnection.SessionResume,
+      McpConnection.McpConnection,
+      McpAllowlist.UriAllowlist,
+      McpAllowlist.MimeAllowlist,
+      McpSpoolDescriptor.BoundedPreview,
+      McpSpoolDescriptor.ContentItem,
+      McpSpoolDescriptor.ResourceLink,
+      McpSpoolDescriptor.ContentItemList,
+      McpSpoolDescriptor.ContentEnvelope,
+      McpSpoolDescriptor.McpCallOutput,
+      McpSpoolDescriptor.McpReadOutput,
+      McpEnvelope.EventKind,
+      McpEnvelope.EventSubject,
+      McpEnvelope.Ordering,
+      McpEnvelope.Delivery,
+      McpEnvelope.McpEventEnvelope,
+      McpEventsServer.ServerStatusDetail,
+      McpEventsServer.CapabilitiesChangedDetail,
+      McpEventsServer.CatalogChangedDetail,
+      McpEventsServer.McpServerStatusEvent,
+      McpEventsServer.McpCapabilitiesChangedEvent,
+      McpEventsServer.McpToolsChangedEvent,
+      McpEventsServer.McpResourcesChangedEvent,
+      McpEventsResource.ResourceUpdatedDetail,
+      McpEventsResource.SubscriptionDetail,
+      McpEventsResource.McpResourceUpdatedEvent,
+      McpEventsResource.McpSubscriptionSubscribedEvent,
+      McpEventsResource.McpSubscriptionUnsubscribedEvent,
+      McpEventsCall.CallSettledDetail,
+      McpEventsCall.CallCancelledDetail,
+      McpEventsCall.TaskSettledDetail,
+      McpEventsCall.McpCallSettledEvent,
+      McpEventsCall.McpCallCancelledEvent,
+      McpEventsCall.McpTaskSettledEvent,
+      McpEventsLive.CallStartedDetail,
+      McpEventsLive.CallProgressDetail,
+      McpEventsLive.CancelRequestedDetail,
+      McpEventsLive.McpCallStartedEvent,
+      McpEventsLive.McpCallProgressEvent,
+      McpEventsLive.McpCallCancelRequestedEvent,
+      McpEventsLog.TaskStatusDetail,
+      McpEventsLog.LogDetail,
+      McpEventsLog.McpTaskStatusEvent,
+      McpEventsLog.McpLogEvent,
+      McpEvents.McpEvent,
     ].map((schema) => schema.ast.annotations?.identifier)
 
     expect(identifiers.every((identifier) => typeof identifier === "string")).toBe(true)

@@ -9,6 +9,7 @@ import { EventDefinitions as JobEventDefinitions } from "./jobs/event-definition
 import { EventDefinitions as LangLockEventDefinitions } from "./langlock/event-definitions"
 import { EventDefinitions as OutputSpoolEventDefinitions } from "./outputspool/event-definitions"
 import { EventDefinitions as SemanticEventDefinitions } from "./semantic/event-definitions"
+import { EventDefinitions as McpEventDefinitions } from "./mcp/event-definitions"
 
 export const SessionDurable = {
   definitions: Event.durable(SessionEvent.DurableDefinitions),
@@ -33,4 +34,6 @@ export const Durable = Event.durable([
   ...OutputSpoolEventDefinitions.DurableDefinitions,
   // Feature 006 / T013: the nine durable semantic.* settlement members (C22).
   ...SemanticEventDefinitions.DurableDefinitions,
+  // Feature 008 / T009: the ten durable mcp.* control-plane members (C3).
+  ...McpEventDefinitions.DurableDefinitions,
 ])
