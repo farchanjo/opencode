@@ -24,17 +24,48 @@ export interface UriAllowlistConfig {
   readonly schemes: ReadonlySet<string>
   /** Authorized project/session roots for `file` URIs; a `file` outside these fails closed (C12). */
   readonly roots: ReadonlyArray<string>
+  /** When set, loopback hosts (127.0.0.0/8, ::1) are permitted for an allowlisted scheme (OAuth callback; FR25, C12). */
+  readonly allowLoopback?: boolean
 }
 
 export type UriDecision =
   | { readonly allowed: true }
-  | { readonly allowed: false; readonly reason: "scheme_denied" | "cross_root_denied" | "malformed" }
+  | { readonly allowed: false; readonly reason: "scheme_denied" | "cross_root_denied" | "ssrf_blocked" | "malformed" }
+
+/** An IP-literal host classification for the SSRF guard (FR25, C12). */
+interface HostClass {
+  readonly blocked: boolean
+  readonly loopback: boolean
+}
+
+/**
+ * Classify a URL hostname as an SSRF-sensitive IP literal. Loopback (127.0.0.0/8,
+ * ::1), link-local incl. the cloud metadata endpoint (169.254.0.0/16, fe80::/10),
+ * private (10/8, 172.16/12, 192.168/16), unique-local (fc00::/7) and the unspecified
+ * address are blocked; a DNS name is not an IP literal and passes (resolution-time
+ * SSRF is out of scope for this pure gate). Pure.
+ */
+function classifyHost(hostname: string): HostClass {
+  const host = hostname.replace(/^\[/, "").replace(/\]$/, "").toLowerCase()
+  const v4 = host.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/)
+  if (v4) {
+    const [a, b] = [Number(v4[1]), Number(v4[2])]
+    if (a === 127) return { blocked: true, loopback: true }
+    const priv = a === 10 || a === 0 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || (a === 169 && b === 254)
+    return { blocked: priv, loopback: false }
+  }
+  if (host === "::1") return { blocked: true, loopback: true }
+  if (host === "::" || /^fe[89ab]/.test(host) || /^f[cd]/.test(host)) return { blocked: true, loopback: false }
+  return { blocked: false, loopback: false }
+}
 
 /**
  * Decide whether a resource URI may be fetched. `https` (and any configured scheme)
  * is allowed; `file` is allowed only when confined to an authorized root; every
- * other scheme is deny-by-default. Prevents sibling-session and cross-project
- * leakage (FR25, FR36, C12). Pure.
+ * other scheme is deny-by-default; and an allowlisted scheme pointing at an
+ * SSRF-sensitive IP literal (loopback/link-local/metadata/private) is blocked unless
+ * `allowLoopback` explicitly permits a loopback host. Prevents sibling-session,
+ * cross-project, and SSRF/metadata-endpoint leakage (FR25, FR36, C12). Pure.
  */
 export function checkUriAllowed(uri: string, config: UriAllowlistConfig): UriDecision {
   let parsed: URL
@@ -49,7 +80,10 @@ export function checkUriAllowed(uri: string, config: UriAllowlistConfig): UriDec
     const withinRoot = config.roots.some((root) => path === root || path.startsWith(root.endsWith("/") ? root : `${root}/`))
     return withinRoot ? { allowed: true } : { allowed: false, reason: "cross_root_denied" }
   }
-  return config.schemes.has(scheme) ? { allowed: true } : { allowed: false, reason: "scheme_denied" }
+  if (!config.schemes.has(scheme)) return { allowed: false, reason: "scheme_denied" }
+  const host = classifyHost(parsed.hostname)
+  if (host.blocked && !(host.loopback && config.allowLoopback === true)) return { allowed: false, reason: "ssrf_blocked" }
+  return { allowed: true }
 }
 
 export interface ResourceAuthority {
