@@ -33,15 +33,17 @@ function req(overrides: Partial<CommandRequest> = {}): CommandRequest {
 }
 
 describe("B1/T040 Config-backed status (not stub)", () => {
-  // langlock.status/show are intentionally NOT config-backed here: they route through the
-  // Feature 004 domain port (port.resolve). telemetry/budget remain config-status ids.
-  test("telemetry.status / budget.status return configured/version query", async () => {
+  // langlock.status/show and (Feature 013) telemetry/smart/budget/pools status/show are
+  // intentionally NOT config-backed here: they route through their real Feature 004/013
+  // domain ports (port.resolve). routing.status and the semantic.* status/show remain
+  // the config-status shadow ids, so they still project configured/version here.
+  test("routing.status / semantic.binding.status return configured/version query", async () => {
     const lock = createProcessMutexLockPort()
     const store = createDurableOperatorStore({ config: createFakeConfigService(), lock })
     await store.config.compareAndSet({
-      authority: "telemetry",
+      authority: "routing",
       expectedVersion: null,
-      payload: { enabled: true },
+      payload: { activation: { enabled: true } },
       nowMs: 1,
     })
     const stack = createTestOperatorStack({ mutationPorts: {
@@ -54,7 +56,7 @@ describe("B1/T040 Config-backed status (not stub)", () => {
       nowMs: () => 1,
     }})
     const status = await stack.dispatcher.dispatchRequest({
-      ...req({ id: "telemetry.status" as CommandRequest["id"], confirm: false }),
+      ...req({ id: "routing.status" as CommandRequest["id"], confirm: false }),
     })
     expect(status.ok).toBe(true)
     expect(status.outcome).toBe("success")
@@ -62,12 +64,12 @@ describe("B1/T040 Config-backed status (not stub)", () => {
     expect((status.effective as { configured?: boolean })?.configured).toBe(true)
     expect(status.version).toBeTruthy()
 
-    const budget = await stack.dispatcher.dispatchRequest({
-      ...req({ id: "budget.status" as CommandRequest["id"], confirm: false }),
+    const semantic = await stack.dispatcher.dispatchRequest({
+      ...req({ id: "semantic.binding.status" as CommandRequest["id"], confirm: false }),
     })
-    expect(budget.ok).toBe(true)
-    expect((budget.effective as { status?: string })?.status).toBe("unconfigured")
-    expect((budget.effective as { configured?: boolean })?.configured).toBe(false)
+    expect(semantic.ok).toBe(true)
+    expect((semantic.effective as { status?: string })?.status).toBe("unconfigured")
+    expect((semantic.effective as { configured?: boolean })?.configured).toBe(false)
   })
 
   test("handlersFromDomainPorts with config overrides stubs for status ids", () => {
