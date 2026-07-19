@@ -6,7 +6,7 @@ import { authorityKeyForCommandId } from "../outbound/config-status"
 import type { ConfigPort } from "../../application/ports/config-port"
 import type { SlashInterceptor } from "./slash"
 import { displayToToast } from "./slash-display"
-import { resolveScopeForCommandId } from "@opencode-ai/core/operator"
+import { resolveScopeForCommandId, type OutcomeType } from "@opencode-ai/core/operator"
 
 export type OperatorPreflightResult =
   | {
@@ -49,6 +49,17 @@ export type TuiOperatorSlashPort = {
           readonly message: string
         }
         readonly currentVersion?: string | null
+        /**
+         * Structured half of the handled result (Feature 012 FR1). Forwards the
+         * typed outcome, the optional effective payload, and the version from the
+         * Feature 007 `CommandResult` on the SAME tryHandle return — no new route
+         * or command name. Absence of `effective` is representable (FR2).
+         */
+        readonly result?: {
+          readonly outcome: OutcomeType
+          readonly effective?: unknown
+          readonly version?: string | null
+        }
       }
     | { readonly handled: false }
   >
@@ -132,6 +143,11 @@ export function createTuiOperatorSlashPort(
             }
           : {}),
         currentVersion: result.result.version ?? null,
+        result: {
+          outcome: result.result.outcome,
+          ...(result.result.effective !== undefined ? { effective: result.result.effective } : {}),
+          version: result.result.version ?? null,
+        },
       }
     },
   }

@@ -341,6 +341,7 @@ export function createHttpOperatorSlashPort(options: HttpSlashPortOptions): TuiO
             commandId: parsed.commandId,
             message: `Confirm operator command ${parsed.commandId}?`,
           },
+          result: structuredResult(result),
         }
       }
 
@@ -360,7 +361,22 @@ export function createHttpOperatorSlashPort(options: HttpSlashPortOptions): TuiO
         auditPending: display.auditPending,
         injectTranscript: false as const,
       },
+      result: structuredResult(result),
     }
+  }
+}
+
+/**
+ * Structured half of the handled result (Feature 012 FR1), mirroring
+ * `tui-port.ts`: typed `outcome`, optional `effective` (only when defined), and
+ * `version ?? null` from the already-parsed `CommandResult`. Absence of
+ * `effective` is representable (FR2); display fields stay byte-identical.
+ */
+function structuredResult(result: CommandResult) {
+  return {
+    outcome: result.outcome,
+    ...(result.effective !== undefined ? { effective: result.effective } : {}),
+    version: result.version ?? null,
   }
 }
 

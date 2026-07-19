@@ -98,6 +98,10 @@ describe("T029 runtime host wiring", () => {
     expect(result.display.outcome).toBe("success")
     expect(result.display.injectTranscript).toBe(false)
     expect(result.display.message).toContain("langlock.status")
+    // Feature 012 FR1: the structured half is forwarded on the SAME return —
+    // typed outcome + optional effective payload alongside the human display.
+    expect(result.result?.outcome).toBe("success")
+    expect(result.result?.effective).toBeDefined()
   })
 
   test("wireOperatorSlashForTui(test) matches createLocalTuiOperatorSlashPort", async () => {
@@ -182,6 +186,10 @@ describe("T029 runtime host wiring", () => {
     expect(cmd?.sessionId).toBe("ses_abc")
     expect(cmd?.body).toContain("langlock.status")
     expect(cmd?.body).not.toContain("principal")
+    // Feature 012 FR1 (T019): the DEFAULT worker-RPC production port forwards the
+    // structured half on the SAME handled return — not just the test-path tui-port.
+    expect(result.result?.outcome).toBe("success")
+    expect(result.result?.effective).toBeDefined()
   })
 
   test("session confirm token succeeds end-to-end with exact context on re-try", async () => {
@@ -341,6 +349,10 @@ describe("T029 runtime host wiring", () => {
     if (!result.handled) return
     expect(result.display.outcome).toBe("success")
     expect(result.display.title.toLowerCase()).not.toContain("unavailable")
+    // Feature 012 FR1 (T019): the remote/attach HTTP production port forwards the
+    // structured half on the SAME handled return.
+    expect(result.result?.outcome).toBe("success")
+    expect(result.result?.effective).toBeDefined()
   })
 })
 
