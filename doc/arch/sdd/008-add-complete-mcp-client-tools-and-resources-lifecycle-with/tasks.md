@@ -331,7 +331,7 @@ enforced (see the Traceability reconciliation note).
   `bun test packages/opencode` under the Feature 005 sandbox asserts a ~50MB result yields a
   bounded preview + OutputRef with no path, base64/data-URL content is MIME/size-capped and
   spooled, and the post-parse spill is documented with no zero-RAM claim.
-- [ ] T029 [S19] Author `packages/opencode/src/mcp/resource-adapter.ts` exposing runtime
+- [x] T029 [S19] Author `packages/opencode/src/mcp/resource-adapter.ts` exposing runtime
   list/templates/read through the canonical adapter under `mcp:server:*` Permission (the existing
   `list_mcp_resources`/`list_mcp_resource_templates`/`read_mcp_resource` tools, shape-preserved),
   wiring subscribe/unsubscribe to the T018 machine under the server capability + operator grant,
@@ -342,7 +342,7 @@ enforced (see the Traceability reconciliation note).
   Acceptance: `bun test packages/opencode` asserts runtime read works under Permission, the LLM
   never subscribes, a cross-project/non-allowlisted URI fails closed, and `resource_link` stays
   lazy unless policy fetches.
-- [ ] T030 [S20] Author `packages/opencode/src/mcp/secret-bridge.ts` and rework
+- [x] T030 [S20] Author `packages/opencode/src/mcp/secret-bridge.ts` and rework
   `packages/opencode/src/mcp/auth.ts` to resolve OAuth tokens, headers, and secrets as Feature
   007 SecretRefs through the SecretPort, running a one-time migration that reads existing
   `McpAuth` token entries into secure refs, resolving tokens/headers/secrets through refs at
@@ -351,7 +351,7 @@ enforced (see the Traceability reconciliation note).
   Acceptance: `bun test packages/opencode` asserts an OAuth start/finish stores tokens as refs,
   the one-time `McpAuth` migration reads existing entries into refs, and no plaintext secret
   appears in any output/preview/audit.
-- [ ] T031 [S21] Author `packages/opencode/src/mcp/experimental/tasks.ts` implementing the
+- [x] T031 [S21] Author `packages/opencode/src/mcp/experimental/tasks.ts` implementing the
   MCP 2025-11-25 Tasks adapter behind the per-server `mcp.tasks` flag (off by default; when off,
   tasks capability is not advertised and task-augmented calls are not accepted): honor tool
   `execution.taskSupport` (`required|optional|forbidden`, rejecting a task-augmented call to a
@@ -363,7 +363,7 @@ enforced (see the Traceability reconciliation note).
   Acceptance: `bun test packages/opencode` asserts default-off advertises no tasks capability, an
   enabled task-augmented call accepts `CreateTaskResult` with a task child and spooled result,
   `taskSupport: forbidden` is rejected, and `tasks/cancel` reaches a terminal status.
-- [ ] T032 [S21] Author `packages/opencode/src/mcp/experimental/sampling.ts` implementing the
+- [x] T032 [S21] Author `packages/opencode/src/mcp/experimental/sampling.ts` implementing the
   server-initiated sampling adapter behind the per-server `mcp.sampling` flag (off by default),
   requiring explicit per-agent/per-model `mcp:<server>:sampling` Permission and passing every
   request through Feature 001 Smart routing, budgets, LangLock, and privacy unchanged — sampling
@@ -375,7 +375,7 @@ enforced (see the Traceability reconciliation note).
   packages/opencode` asserts default-off does not advertise sampling, an enabled request requires
   `mcp:<server>:sampling` and routes through Smart/budget/LangLock/privacy, the approval path is
   audited, and the documented Feature 001 seam is present and covered by a seam test.
-- [ ] T033 [S21] Author `packages/opencode/src/mcp/experimental/elicitation.ts` implementing the
+- [x] T033 [S21] Author `packages/opencode/src/mcp/experimental/elicitation.ts` implementing the
   elicitation and content-stream adapters behind the per-server `mcp.elicitation` and content-
   stream flags (off by default): every elicitation request and every Tasks
   `notifications/tasks/status: input_required` surfaces to the **operator UI** as a lifecycle
@@ -401,7 +401,7 @@ enforced (see the Traceability reconciliation note).
   `bun test packages/opencode` under the Feature 007 sandbox asserts the 30 operations dispatch
   with zero model tokens on ordinary paths, an LLM attempt on any `mcp.*` id is denied, a
   reserved-id collision is rejected, and confirmation is required on the mutating verbs.
-- [ ] T035 [S23] Author `packages/opencode/src/mcp/reindex-trigger.ts` implementing the single
+- [x] T035 [S23] Author `packages/opencode/src/mcp/reindex-trigger.ts` implementing the single
   opt-in semantic-index trigger seam: on a qualifying `resources/updated` (per the T017 policy)
   with operator opt-in **and** a Feature 006 classification decision, emit exactly one reindex
   trigger consumed by Feature 006 under its admission ladder — Feature 008 never embeds, ranks,
@@ -411,7 +411,7 @@ enforced (see the Traceability reconciliation note).
   `bun test packages/opencode` asserts no reindex fires without opt-in + classification, a
   qualifying update emits exactly one trigger with no vectors in 008, and the documented Feature
   006 seam is present and covered by a seam test.
-- [ ] T036 [S24] Author `packages/opencode/src/mcp/logging-bridge.ts` integrating MCP
+- [x] T036 [S24] Author `packages/opencode/src/mcp/logging-bridge.ts` integrating MCP
   `notifications/message` into native logging under redaction (secrets, tokens, and path-shaped
   fields stripped) and rate limits, following the native logging retention policy (no separate
   MCP store), with operator `logging/setLevel` reached only through the Feature 007
