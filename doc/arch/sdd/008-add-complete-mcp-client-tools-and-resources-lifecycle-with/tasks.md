@@ -433,7 +433,7 @@ enforced (see the Traceability reconciliation note).
 
 ### CLI and TUI surfaces (Phase 4)
 
-- [ ] T038 [S25] Rework `packages/opencode/src/cli/cmd/mcp.ts` for `opencode op mcp
+- [x] T038 [S25] Rework `packages/opencode/src/cli/cmd/mcp.ts` for `opencode op mcp
   server|auth|resource|logging|experimental|extension <op>`, each dispatching through the Feature
   007 registry (via `packages/opencode/src/cli/cmd/op.ts`) to the operator `mcp.*` impls with
   registry-generated names (no divergent hardcoded verbs), emitting redacted/versioned human and
@@ -446,7 +446,7 @@ enforced (see the Traceability reconciliation note).
   asserts human and JSON output, surface parity with the Settings/palette path yielding the same
   effective server/version/audit, confirmation on mutating verbs, zero admin-time model tokens,
   no secret/path in output, and the legacy `opencode mcp` shim delegating to the shared adapter.
-- [ ] T039 [S25] Author `packages/tui/src/**/operator/mcp/**` rendering the MCP servers /
+- [x] T039 [S25] Author `packages/tui/src/**/operator/mcp/**` rendering the MCP servers /
   capabilities / resource-admin / experimental panels as thin adapters over the Feature 007
   registry with registry-generated names, showing server cards, capability badges, connection and
   subscription state, SSE deprecation labels, tool/resource/task call cards (status, progress,
