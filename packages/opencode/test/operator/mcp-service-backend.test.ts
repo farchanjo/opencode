@@ -194,3 +194,247 @@ describe("T008 mcp service backend — full dispatcher pipeline (parity, no phan
     expect(result.outcome).toBe("unavailable")
   })
 })
+
+// =============================================================================
+// Feature 017 / T007-T010 — live server reads + mutation-plan conversion
+// =============================================================================
+
+const MCP_CONFIG_AUTHORITY = "global:mcp"
+const MCP_CONNECTIONS_AUTHORITY = "global:mcp-connections"
+const MCP_AUTH_AUTHORITY = "global:mcp-auth"
+
+/** A live-server source double reflecting one connected + one failed configured server. */
+function fakeServers(): McpBackendLive.McpLiveServerSource {
+  return {
+    statuses: async () => ({ srv_a: "connected", srv_b: "failed" }),
+    clients: async () => ({ srv_a: { transportPresent: true, capabilitiesPresent: true } }),
+  }
+}
+
+/** A live-actions double: `missing` is a not-found gap, every other id resolves an honest status. */
+function fakeActions(): McpBackendLive.McpLiveActions {
+  return {
+    connect: async (id) => (id === "missing" ? { kind: "not_found" } : { kind: "ok", status: "connected" }),
+    disconnect: async (id) => (id === "missing" ? { kind: "not_found" } : { kind: "ok", status: "disabled" }),
+    reconnect: async (id) => (id === "missing" ? { kind: "not_found" } : { kind: "ok", status: "connected" }),
+  }
+}
+
+interface McpHarnessDeps {
+  readonly reader?: McpHostReader
+  readonly servers?: McpBackendLive.McpLiveServerSource
+  readonly actions?: McpBackendLive.McpLiveActions
+  readonly authClear?: McpBackendLive.McpAuthClear
+}
+
+/** Compose the mcp domain over ONE shared `store.config` seam behind the real dispatcher (mirrors stack-live). */
+function mcpHarness(deps: McpHarnessDeps = {}) {
+  const lock = createProcessMutexLockPort()
+  const store = createDurableOperatorStore({ config: createFakeConfigService(), lock })
+  const mp: MutationPorts = {
+    config: store.config,
+    idempotency: store.idempotency,
+    rollback: store.rollback,
+    events: createMemoryEventPort(),
+    requireAudit: false,
+    outbox: createMemoryOutboxPort(),
+  }
+  const override = McpBackendLive.createMcpServiceOverride(deps.reader ?? fakeReader(), {
+    servers: deps.servers,
+    mutations: { config: store.config, actions: deps.actions, authClear: deps.authClear },
+  })
+  const wiring = McpStackWiring.createMcpDomainWiring({
+    backend: McpBackendLive.createLiveMcpBackend({ override }),
+  })
+  const domainPorts = wireDomainPorts({ ...wiring.ports })
+  const dispatcher = createDispatcher({
+    registry: createSeededOperatorCommandRegistry(),
+    mutationPorts: mp,
+    handlers: handlersFromDomainPorts(domainPorts, { config: store.config }),
+    defaultHandler: domainHandlerFor(domainPorts),
+    featureEnabled: () => true,
+  })
+  return { dispatcher, config: store.config, wiring }
+}
+
+/** Dispatch a project-scoped mcp mutating verb through the FULL Feature 007 pipeline. */
+const mcpMutate = (
+  dispatcher: ReturnType<typeof mcpHarness>["dispatcher"],
+  id: string,
+  payload: Record<string, unknown>,
+  opts: { version?: string } = {},
+) =>
+  dispatcher.dispatchRequest(
+    {
+      id,
+      principal: { kind: "operator", subject: "op_1", projectBinding: "proj_17" },
+      scope: { kind: "project", ref: "proj_17" },
+      source: "cli",
+      payload,
+      version: opts.version,
+      idempotencyKey: `idem_${id}_${opts.version ?? "create"}_${Math.random().toString(36).slice(2)}`,
+    } as never,
+    { cliInteractiveConfirmed: true },
+  )
+
+describe("T007 — mcp.server.list/status/capabilities project the live host (no fabricated SSOT field)", () => {
+  test("list reflects the real connection status + transport/capabilities presence", async () => {
+    const { wiring } = mcpHarness({ servers: fakeServers() })
+    const result = await wiring.ports.mcp.invoke(ctx("mcp.server.list"))
+    expect(result.kind).toBe("query")
+    if (result.kind !== "query") return
+    const out = result.effective as { servers: ReadonlyArray<Record<string, unknown>> }
+    const a = out.servers.find((s) => s.serverId === "srv_a")!
+    const b = out.servers.find((s) => s.serverId === "srv_b")!
+    expect(a).toEqual({ serverId: "srv_a", connectionStatus: "connected", transportPresent: true, capabilitiesPresent: true })
+    expect(b).toEqual({ serverId: "srv_b", connectionStatus: "failed", transportPresent: false, capabilitiesPresent: false })
+    // No SSOT-only field is fabricated (FR1, FR2).
+    for (const s of out.servers) {
+      for (const forbidden of ["version", "auditId", "trustProfile", "createdAt", "updatedAt"]) {
+        expect(forbidden in s).toBe(false)
+      }
+    }
+  })
+
+  test("status projects one live server; an unknown id is honestly null", async () => {
+    const { wiring } = mcpHarness({ servers: fakeServers() })
+    const known = await wiring.ports.mcp.invoke(ctx("mcp.server.status", { id: "srv_a" }))
+    if (known.kind === "query") expect((known.effective as { server: { connectionStatus: string } }).server.connectionStatus).toBe("connected")
+    const unknown = await wiring.ports.mcp.invoke(ctx("mcp.server.status", { id: "srv_zzz" }))
+    if (unknown.kind === "query") expect((unknown.effective as { server: unknown }).server).toBeNull()
+  })
+
+  test("an unbound live server source degrades to a typed mcp_unavailable, never a crash", async () => {
+    const source: McpBackendLive.McpLiveServerSource = {
+      statuses: () => Promise.reject(new Error("/Users/secret host down token=sr_x")),
+      clients: async () => ({}),
+    }
+    const { wiring } = mcpHarness({ servers: source })
+    const result = await wiring.ports.mcp.invoke(ctx("mcp.server.list"))
+    expect(result.kind).toBe("failure")
+    if (result.kind === "failure") {
+      expect(result.code).toBe("unavailable")
+      expect(result.message).not.toMatch(/\/(Users|home|tmp)\//)
+      expect(result.message).not.toMatch(/sr_[a-z]/)
+    }
+  })
+})
+
+describe("T008 — config-backed mcp mutations commit through mutateAuthority + round-trip", () => {
+  test("mcp.server.add commits and a re-read of the config authority reflects the server", async () => {
+    const { dispatcher, config } = mcpHarness()
+    const added = await mcpMutate(dispatcher, "mcp.server.add", {
+      name: "srv_new",
+      transportKind: "streamable-http",
+      endpoint: "https://mcp.example.test",
+    })
+    expect(added.ok).toBe(true)
+    expect(added.outcome).toBe("success")
+    const doc = (await config.get(MCP_CONFIG_AUTHORITY))!.payload as { servers: Record<string, { transportKind: string; enabled: boolean }> }
+    expect(doc.servers.srv_new).toMatchObject({ transportKind: "streamable-http", enabled: true })
+  })
+
+  test("mcp.logging.level.set round-trips under CAS onto an existing server", async () => {
+    const { dispatcher, config } = mcpHarness()
+    const added = await mcpMutate(dispatcher, "mcp.server.add", { name: "srv_new", transportKind: "stdio", endpoint: "opencode" })
+    const set = await mcpMutate(dispatcher, "mcp.logging.level.set", { serverId: "srv_new", level: "warning" }, { version: added.version })
+    expect(set.ok).toBe(true)
+    const doc = (await config.get(MCP_CONFIG_AUTHORITY))!.payload as { servers: Record<string, { loggingLevel: string }> }
+    expect(doc.servers.srv_new.loggingLevel).toBe("warning")
+  })
+
+  test("mcp.experimental.enable adds the flag to the persisted server entry", async () => {
+    const { dispatcher, config } = mcpHarness()
+    const added = await mcpMutate(dispatcher, "mcp.server.add", { name: "srv_new", transportKind: "stdio", endpoint: "opencode" })
+    const en = await mcpMutate(dispatcher, "mcp.experimental.enable", { serverId: "srv_new", flag: "tasks", confirmed: true }, { version: added.version })
+    expect(en.ok).toBe(true)
+    const doc = (await config.get(MCP_CONFIG_AUTHORITY))!.payload as { servers: Record<string, { experimental: string[] }> }
+    expect(doc.servers.srv_new.experimental).toEqual(["tasks"])
+  })
+})
+
+describe("T008 — no phantom write: a rejected config-backed mutation persists NOTHING (FR5)", () => {
+  test("an invalid transportKind is rejected at plan time and writes nothing", async () => {
+    const { dispatcher, config } = mcpHarness()
+    // The latent TUI bug: `streamable_http` (underscore) is NOT a valid TransportKind member.
+    const result = await mcpMutate(dispatcher, "mcp.server.add", {
+      name: "srv_bad",
+      transportKind: "streamable_http",
+      endpoint: "https://mcp.example.test",
+    })
+    expect(result.ok).toBe(false)
+    expect(result.error?.code).toBe("invalid_argument")
+    expect(await config.get(MCP_CONFIG_AUTHORITY)).toBeNull()
+  })
+
+  test("the hyphenated streamable-http member IS accepted (transportKind validity pin)", async () => {
+    const { dispatcher } = mcpHarness()
+    const ok = await mcpMutate(dispatcher, "mcp.server.add", {
+      name: "srv_ok",
+      transportKind: "streamable-http",
+      endpoint: "https://mcp.example.test",
+    })
+    expect(ok.ok).toBe(true)
+  })
+
+  test("mcp.logging.level.set on an absent server is a typed not_found with no phantom write", async () => {
+    const { dispatcher, config } = mcpHarness()
+    const result = await mcpMutate(dispatcher, "mcp.logging.level.set", { serverId: "srv_absent", level: "info" })
+    expect(result.ok).toBe(false)
+    expect(result.error?.code).toBe("invalid_argument")
+    expect(await config.get(MCP_CONFIG_AUTHORITY)).toBeNull()
+  })
+})
+
+describe("T009 — live-service action plans (connect/disconnect/reconnect)", () => {
+  test("mcp.server.connect performs the live op and records the resulting status", async () => {
+    const { dispatcher, config } = mcpHarness({ actions: fakeActions() })
+    const result = await mcpMutate(dispatcher, "mcp.server.connect", { serverId: "srv_a" })
+    expect(result.ok).toBe(true)
+    expect(result.outcome).toBe("success")
+    const doc = (await config.get(MCP_CONNECTIONS_AUTHORITY))!.payload as Record<string, { action: string; status: string }>
+    expect(doc.srv_a).toMatchObject({ action: "connect", status: "connected" })
+  })
+
+  test("mcp.server.disconnect records a disabled status under the store-scoped authority", async () => {
+    const { dispatcher, config } = mcpHarness({ actions: fakeActions() })
+    const result = await mcpMutate(dispatcher, "mcp.server.disconnect", { serverId: "srv_a", confirmed: true })
+    expect(result.ok).toBe(true)
+    const doc = (await config.get(MCP_CONNECTIONS_AUTHORITY))!.payload as Record<string, { status: string }>
+    expect(doc.srv_a.status).toBe("disabled")
+  })
+
+  test("a not-found live action fails BEFORE any write (no phantom write, FR4)", async () => {
+    const { dispatcher, config } = mcpHarness({ actions: fakeActions() })
+    const result = await mcpMutate(dispatcher, "mcp.server.connect", { serverId: "missing" })
+    expect(result.ok).toBe(false)
+    expect(await config.get(MCP_CONNECTIONS_AUTHORITY)).toBeNull()
+  })
+
+  test("an unbound live service leaves connect a typed mcp_unavailable gap", async () => {
+    const { dispatcher } = mcpHarness() // no actions wired
+    const result = await mcpMutate(dispatcher, "mcp.server.connect", { serverId: "srv_a" })
+    expect(result.ok).toBe(false)
+    expect(result.error?.code).toBe("unavailable")
+  })
+})
+
+describe("T010 — auth split: remove converts to a mutation, start/finish stay typed gaps", () => {
+  test("mcp.auth.remove performs the local credential clear and records the outcome", async () => {
+    const cleared: string[] = []
+    const authClear: McpBackendLive.McpAuthClear = { remove: async (id) => void cleared.push(id) }
+    const { dispatcher, config } = mcpHarness({ authClear })
+    const result = await mcpMutate(dispatcher, "mcp.auth.remove", { serverId: "srv_a", confirmed: true })
+    expect(result.ok).toBe(true)
+    expect(cleared).toEqual(["srv_a"])
+    const doc = (await config.get(MCP_AUTH_AUTHORITY))!.payload as Record<string, { action: string }>
+    expect(doc.srv_a.action).toBe("remove")
+  })
+
+  test("mcp.auth.start stays a typed capability gap (headless OAuth cannot run through the loopback)", async () => {
+    const { wiring } = mcpHarness({ authClear: { remove: async () => {} } })
+    const result = await wiring.ports.mcp.invoke(ctx("mcp.auth.start", { serverId: "srv_a" }))
+    expect(result.kind).toBe("failure")
+    if (result.kind === "failure") expect(result.code).toBe("unavailable")
+  })
+})

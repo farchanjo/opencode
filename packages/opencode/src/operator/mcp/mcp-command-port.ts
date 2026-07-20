@@ -33,9 +33,9 @@ import type {
   Scope,
   TransportKind,
 } from "@opencode-ai/protocol/mcp/commands"
-import type { FailureHandlerResult, HandlerContext, HandlerResult } from "@/operator/application/handler"
+import type { FailureHandlerResult, HandlerContext, HandlerResult, OperatorMutationPlan } from "@/operator/application/handler"
 import type { DomainInvoke } from "@/operator/application/ports/domain-ports"
-import type { McpAdminPort, McpAuditEvent, McpAuditSink } from "./mcp-port"
+import type { McpAdminPort, McpAuditEvent, McpAuditSink, McpMutationError } from "./mcp-port"
 
 /** The 30 reserved `mcp.*` operator ids (catalog 1.3.0); a plugin/MCP collision is rejected (C25). */
 export const RESERVED_MCP_IDS: ReadonlySet<string> = new Set(RESERVED_MCP_COMMAND_IDS)
@@ -76,8 +76,29 @@ function bool(record: Record<string, unknown>, key: string): boolean {
   return record[key] === true
 }
 
-function fail(code: FailureHandlerResult["code"], message: string): FailureHandlerResult {
-  return { kind: "failure", code, message }
+function fail(code: FailureHandlerResult["code"], message: string, details?: FailureHandlerResult["details"]): FailureHandlerResult {
+  return { kind: "failure", code, message, details }
+}
+
+/** Map the closed `McpMutationError` union onto the operator audit outcome + a content-free failure envelope (T008-T010). */
+function mapMutationError(error: McpMutationError): { outcome: McpAuditEvent["outcome"]; failure: FailureHandlerResult } {
+  switch (error.type) {
+    case "invalid_argument":
+      return { outcome: "rejected", failure: fail("invalid_argument", error.reason, { field: error.field }) }
+    case "version_conflict":
+      return {
+        outcome: "conflict",
+        failure: fail("invalid_argument", `version conflict: expected ${error.expectedVersion}, actual ${error.actualVersion}`, {
+          field: "expectedVersion",
+        }),
+      }
+    case "not_found":
+      return { outcome: "rejected", failure: fail("invalid_argument", `server not found: ${error.id}`, { field: "id" }) }
+    case "mcp_unavailable":
+      return { outcome: "unavailable", failure: fail("unavailable", error.reason) }
+    case "not_implemented":
+      return { outcome: "rejected", failure: fail("not_implemented", "operation is not implemented") }
+  }
 }
 
 /** Map the Feature 007 operator principal onto the mcp operator principal (C25). */
@@ -125,6 +146,27 @@ function runner(deps: McpCommandDeps, commandId: string, principalId: string, ta
     )
 }
 
+/**
+ * Run a mutation-plan effect and shape the result: on success hand the dispatcher the
+ * `mutation_plan` (audited by the commit via `mutateAuthority`, never here); on failure
+ * audit exactly one bounded event and return the typed failure — so a rejection never
+ * persists a write (the FR5 no-phantom-write invariant, T008-T010).
+ */
+function planRunner(deps: McpCommandDeps, commandId: string, principalId: string, target: string) {
+  return (effect: Effect.Effect<OperatorMutationPlan, McpMutationError>): Promise<HandlerResult> =>
+    Effect.runPromise(
+      effect.pipe(
+        Effect.matchEffect({
+          onSuccess: (plan): Effect.Effect<HandlerResult> => Effect.succeed({ kind: "mutation_plan", ...plan }),
+          onFailure: (error): Effect.Effect<HandlerResult> => {
+            const mapped = mapMutationError(error)
+            return deps.audit.record({ commandId, principalId, target, outcome: mapped.outcome }).pipe(Effect.as(mapped.failure))
+          },
+        }),
+      ),
+    )
+}
+
 interface Ctx {
   readonly id: string
   readonly payload: Record<string, unknown>
@@ -132,6 +174,59 @@ interface Ctx {
   readonly scope: Scope
   readonly scopeId: string
   readonly run: ReturnType<typeof runner>
+  readonly runPlan: ReturnType<typeof planRunner>
+}
+
+/**
+ * Feature 017 / T008-T010 — route the config-backed + live-service mcp mutating verbs
+ * to the injected `mutation_plan` seam. Returns null when the seam is unbound (the verb
+ * then falls through to the honest typed gap) or the id is not a mutating verb.
+ */
+function mutationInvoke(port: McpAdminPort, c: Ctx): Promise<HandlerResult> | null {
+  const m = port.mutations
+  if (!m) return null
+  const id = str(c.payload, ["id", "serverId", "server_id"]) ?? ""
+  switch (c.id) {
+    case "mcp.server.add":
+      return c.runPlan(
+        m.planServerAdd({
+          scope: c.scope,
+          scopeId: c.scopeId,
+          name: str(c.payload, ["name"]) ?? "",
+          transportKind: str(c.payload, ["transportKind", "transport_kind"]) ?? "streamable-http",
+          endpoint: str(c.payload, ["endpoint"]) ?? "",
+          secretRef: str(c.payload, ["secretRef", "secret_ref"]),
+        }),
+      )
+    case "mcp.server.update":
+      return c.runPlan(m.planServerUpdate({ id, patch: asRecord(c.payload.patch) }))
+    case "mcp.server.delete":
+      return c.runPlan(m.planServerDelete({ id }))
+    case "mcp.server.disable":
+      return c.runPlan(m.planServerDisable({ id }))
+    case "mcp.server.connect":
+      return c.runPlan(m.planConnect({ serverId: id }))
+    case "mcp.server.disconnect":
+      return c.runPlan(m.planDisconnect({ serverId: id }))
+    case "mcp.server.reconnect":
+      return c.runPlan(m.planReconnect({ serverId: id }))
+    case "mcp.logging.level.set":
+      return c.runPlan(m.planLoggingSet({ serverId: id, level: str(c.payload, ["level"]) ?? "" }))
+    case "mcp.experimental.enable":
+      return c.runPlan(m.planExperimentalToggle({ serverId: id, flag: str(c.payload, ["flag"]) ?? "", enabled: true }))
+    case "mcp.experimental.disable":
+      return c.runPlan(m.planExperimentalToggle({ serverId: id, flag: str(c.payload, ["flag"]) ?? "", enabled: false }))
+    case "mcp.extension.enable":
+      return c.runPlan(m.planExtensionToggle({ serverId: id, enabled: true }))
+    case "mcp.extension.disable":
+      return c.runPlan(m.planExtensionToggle({ serverId: id, enabled: false }))
+    case "mcp.resource.admin.policy.set":
+      return c.runPlan(m.planResourcePolicySet({ serverId: id, policy: asRecord(c.payload.policy) }))
+    case "mcp.auth.remove":
+      return c.runPlan(m.planAuthRemove({ serverId: id }))
+    default:
+      return null
+  }
 }
 
 function serverInvoke(port: McpAdminPort, c: Ctx): Promise<HandlerResult> | null {
@@ -140,6 +235,8 @@ function serverInvoke(port: McpAdminPort, c: Ctx): Promise<HandlerResult> | null
   const version = num(c.payload, ["expectedVersion", "expected_version", "version"]) ?? 0
   switch (c.id) {
     case "mcp.server.list":
+      // Feature 017 / T007 — project the REAL connected servers when the live-host read seam is bound.
+      if (port.liveServer) return c.run(port.liveServer.list(), (o) => query(o))
       return c.run(s.list({ scope: c.scope, scopeId: c.scopeId }), (o) => query(o))
     case "mcp.server.add":
       return c.run(
@@ -147,7 +244,8 @@ function serverInvoke(port: McpAdminPort, c: Ctx): Promise<HandlerResult> | null
           scope: c.scope,
           scopeId: c.scopeId,
           name: str(c.payload, ["name"]) ?? "",
-          transportKind: (str(c.payload, ["transportKind", "transport_kind"]) ?? "streamable_http") as TransportKind,
+          // The only valid streamable member is the hyphenated `streamable-http` (schema `TransportKind`).
+          transportKind: (str(c.payload, ["transportKind", "transport_kind"]) ?? "streamable-http") as TransportKind,
           endpoint: str(c.payload, ["endpoint"]) ?? "",
           secretRef: str(c.payload, ["secretRef", "secret_ref"]),
           principal: c.principal,
@@ -178,8 +276,10 @@ function serverInvoke(port: McpAdminPort, c: Ctx): Promise<HandlerResult> | null
     case "mcp.server.delete":
       return c.run(s.delete({ id, expectedVersion: version, confirmed: bool(c.payload, "confirmed"), principal: c.principal }), (o) => query(o))
     case "mcp.server.status":
+      if (port.liveServer) return c.run(port.liveServer.status(id), (o) => query(o))
       return c.run(s.status({ id }), (o) => query(o))
     case "mcp.server.capabilities":
+      if (port.liveServer) return c.run(port.liveServer.capabilities(id), (o) => query(o))
       return c.run(s.capabilities({ id }), (o) => query(o))
     default:
       return null
@@ -268,15 +368,20 @@ function mcpInvoke(deps: McpCommandDeps): DomainInvoke {
     const principal = toOperator(ctx.request.principal)
     const scope: Scope = ctx.request.scope.kind === "global" ? "global" : "project"
     const scopeId = ctx.request.scope.ref ?? ""
+    const target = str(payload, ["id", "serverId", "server_id"]) ?? scopeId
     const c: Ctx = {
       id,
       payload,
       principal,
       scope,
       scopeId,
-      run: runner(deps, id, principal.id, str(payload, ["id", "serverId", "server_id"]) ?? scopeId),
+      run: runner(deps, id, principal.id, target),
+      runPlan: planRunner(deps, id, principal.id, target),
     }
     return (
+      // Feature 017 — the config-backed + live-service mutating verbs route to the
+      // `mutation_plan` seam first (when bound); everything else keeps the read/gap path.
+      mutationInvoke(deps.port, c) ??
       serverInvoke(deps.port, c) ??
       authInvoke(deps.port, c) ??
       resourceInvoke(deps.port, c) ??

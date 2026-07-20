@@ -492,8 +492,74 @@ export async function createLiveOperatorStack(input: CreateLiveOperatorStackInpu
         }).pipe(Effect.provideService(InstanceRef, instance)),
       ),
   }
+  // Feature 017 / T007 — the live-host server reads back `mcp.server.list`/`status`/
+  // `capabilities` over `MCP.Service.status()` + `clients()`, projecting ONLY the real
+  // connection status + transport/capabilities presence — never a fabricated SSOT field
+  // (CAS version, auditId, trust profile, timestamps) (FR1, FR2).
+  const mcpLiveServers: McpBackendLive.McpLiveServerSource = {
+    statuses: () =>
+      AppRuntime.runPromise(
+        Effect.gen(function* () {
+          const svc = yield* MCP.Service
+          const statuses = yield* svc.status()
+          return Object.fromEntries(Object.entries(statuses).map(([id, s]) => [id, s.status]))
+        }).pipe(Effect.provideService(InstanceRef, instance)),
+      ),
+    clients: () =>
+      AppRuntime.runPromise(
+        Effect.gen(function* () {
+          const svc = yield* MCP.Service
+          const clients = yield* svc.clients()
+          return Object.fromEntries(
+            Object.entries(clients).map(([id, client]) => [
+              id,
+              { transportPresent: client.transport != null, capabilitiesPresent: client.getServerCapabilities() != null },
+            ]),
+          )
+        }).pipe(Effect.provideService(InstanceRef, instance)),
+      ),
+  }
+
+  // Feature 017 / T009 — the live `MCP.Service` connection actions. `connect`/`disconnect`/
+  // `reconnect` perform the real op and read back the resulting status; a missing server is
+  // a typed `not_found` gap (never a fabricated success) (FR4, FR5).
+  const mcpConnectAction = (serverId: string, op: (svc: MCP.Interface) => Effect.Effect<void, MCP.NotFoundError>, fallback: string) =>
+    AppRuntime.runPromise(
+      Effect.gen(function* () {
+        const svc = yield* MCP.Service
+        yield* op(svc)
+        const statuses = yield* svc.status()
+        return { kind: "ok" as const, status: statuses[serverId]?.status ?? fallback }
+      }).pipe(
+        Effect.catchTag("MCP.NotFoundError", () => Effect.succeed({ kind: "not_found" as const })),
+        Effect.provideService(InstanceRef, instance),
+      ),
+    )
+  const mcpLiveActions: McpBackendLive.McpLiveActions = {
+    connect: (serverId) => mcpConnectAction(serverId, (svc) => svc.connect(serverId), "connected"),
+    disconnect: (serverId) => mcpConnectAction(serverId, (svc) => svc.disconnect(serverId), "disabled"),
+    reconnect: (serverId) =>
+      mcpConnectAction(serverId, (svc) => svc.disconnect(serverId).pipe(Effect.andThen(svc.connect(serverId))), "connected"),
+  }
+
+  // Feature 017 / T010 — the local credential clear backing `mcp.auth.remove`
+  // (`MCP.Service.removeAuth` → `McpAuth.remove`). `auth.start`/`finish` stay typed gaps
+  // (interactive OAuth cannot run headless through the operator loopback) (FR5, ADR-0017).
+  const mcpAuthClear: McpBackendLive.McpAuthClear = {
+    remove: (serverId) =>
+      AppRuntime.runPromise(
+        Effect.gen(function* () {
+          const svc = yield* MCP.Service
+          yield* svc.removeAuth(serverId)
+        }).pipe(Effect.provideService(InstanceRef, instance)),
+      ),
+  }
+
   const mcpBackend = McpBackendLive.createLiveMcpBackend({
-    override: McpBackendLive.createMcpServiceOverride(mcpHostReader),
+    override: McpBackendLive.createMcpServiceOverride(mcpHostReader, {
+      servers: mcpLiveServers,
+      mutations: { config: store.config, actions: mcpLiveActions, authClear: mcpAuthClear },
+    }),
   })
   const mcpWiring = McpStackWiring.createMcpDomainWiring({ backend: mcpBackend })
 
