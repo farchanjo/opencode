@@ -152,6 +152,24 @@ function isGlobalAuthority(authority: string): boolean {
   return authority === "global" || authority.startsWith("global:")
 }
 
+/**
+ * Feature 035: the per-project profile file owns ONLY project-scoped authorities; a
+ * `global:*` authority belongs solely on the global config document. `readRoot` for a
+ * project write returns `Config.get()`, which post-Feature-030 LAYERS the global doc's
+ * operator namespace under the profile — so `state.authorities` can carry a leaked-in
+ * `global:*` record. Drop every non-project-owned authority before the project write, so
+ * the profile can never double-write (or, worse, shadow-and-freeze) a global authority.
+ */
+function projectOwnedAuthorities(
+  authorities: OperatorState["authorities"],
+): OperatorState["authorities"] {
+  const owned: OperatorState["authorities"] = {}
+  for (const [key, record] of Object.entries(authorities)) {
+    if (!isGlobalAuthority(key)) owned[key] = record
+  }
+  return owned
+}
+
 function clone<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T
 }
@@ -220,9 +238,17 @@ export function createDurableOperatorStore(options: ConfigServiceAdapterOptions)
     const root = await readRoot(authority)
     const state = asState(root[ns])
     mutate(state)
-    const patch = { $schema: OPENCODE_CONFIG_SCHEMA, [ns]: state }
+    const global = isGlobalAuthority(authority)
+    // Feature 035: the global write persists to the global doc (which legitimately holds
+    // `global:*` authorities). The project write REPLACES the per-project profile — whose
+    // authority map must contain ONLY project-owned authorities — so strip any `global:*`
+    // record that the layered read (Feature 030) merged into `state` before persisting. The
+    // project-owned bookkeeping (idempotency/rollback/auditOutbox) is untouched, so a
+    // re-issued command still dedups and rolls back correctly.
+    const persisted = global ? state : { ...state, authorities: projectOwnedAuthorities(state.authorities) }
+    const patch = { $schema: OPENCODE_CONFIG_SCHEMA, [ns]: persisted }
     if (options.beforeWrite) await options.beforeWrite(patch)
-    if (isGlobalAuthority(authority)) {
+    if (global) {
       await options.config.updateGlobal(patch)
     } else {
       await options.config.update(patch, { replace: true })
