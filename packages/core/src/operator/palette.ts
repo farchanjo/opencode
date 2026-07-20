@@ -54,9 +54,31 @@ export type OperatorPaletteEntry = {
   readonly persistence: OperatorPersistenceClass
 }
 
+/**
+ * Feature 019 T018 (FR14) — the composed backend-readiness signal a conditional
+ * verb flips to (`semantic-lifecycle/enums-remainder.cue` `#BackendReadiness`). The
+ * palette default (no readiness) keeps a Milvus/interactive/capability-conditional
+ * verb `honest_unavailable` — the truth when the dependency is NOT composed; a caller
+ * that KNOWS the dependency is live (a configured Milvus endpoint, an interactive TUI
+ * surface, a subscribe-capable client) passes the flag so the verb reads the composed
+ * truth. Every flag defaults to `false` so an unconfigured/headless/absent context
+ * stays the honest typed gap (FR14: unconfigured Milvus / headless auth / absent
+ * capability stay `honest_unavailable`).
+ */
+export type OperatorBackendReadiness = {
+  /** A Milvus endpoint is configured — the embedding cutover/rollback/reindex + index maintenance verbs are composed. */
+  readonly milvusConfigured?: boolean
+  /** The surface is an interactive TUI — the interactive-OAuth `mcp.auth.start`/`finish` delegation is composed. */
+  readonly interactiveSurface?: boolean
+  /** A subscribe-capable MCP client is connected — the resource subscribe/unsubscribe verbs are composed. */
+  readonly subscriptionCapable?: boolean
+}
+
 export type ListPaletteOptions = {
   /** When true, secret mutation entries are executable (native keychain available). */
   readonly keychainAvailable?: boolean
+  /** Composed backend readiness — flips a conditional verb from its honest gap to the live truth (FR14). */
+  readonly readiness?: OperatorBackendReadiness
 }
 
 /** One row of the Home group list (navigation.cue #DomainGroup) (FR2, FR4). */
@@ -144,6 +166,14 @@ export const OPERATOR_PERSISTING_VERBS = [
   "semantic.model.disable",
   "semantic.embedding.select",
   "semantic.reranker.select",
+  // Feature 019 T018 (FR1-FR3, FR14) — the reranker cutover/rollback route through the
+  // config-backed registry over a per-slot version archive, with NO Milvus dependency
+  // (the pure `cutoverReranker`, `reEmbedded:false`). They are UNCONDITIONALLY composed
+  // in the live stack (the `store.config` `semantic` authority is always bound), so they
+  // flip to the composed truth here — unlike the Milvus-conditional embedding/index verbs
+  // (handled by `CONDITIONAL_PERSISTING_VERBS`, which stay honest gaps until configured).
+  "semantic.reranker.cutover",
+  "semantic.reranker.rollback",
   // output config-backed policy (T007)
   "output.retention.set",
   "output.quota.set",
@@ -171,6 +201,42 @@ export const OPERATOR_PERSISTING_VERBS = [
 ] as const
 
 const PERSISTING_VERB_SET: ReadonlySet<string> = new Set(OPERATOR_PERSISTING_VERBS)
+
+/**
+ * Feature 019 T018 (FR14) — the verbs whose backend IS composed but whose
+ * dependency is only reachable when configured/interactive/capable. Each maps to
+ * the `#BackendReadiness` flag that flips it from the honest typed gap to the live
+ * truth. With NO readiness (the default), they stay `honest_unavailable` — the
+ * truth when the dependency is not composed (an unconfigured Milvus endpoint, a
+ * headless auth surface, an absent subscription capability). This is what keeps the
+ * `semantic` and `mcp` domain badges honestly `Partial` in the default projection
+ * the TUI renders. Unlike `OPERATOR_PERSISTING_VERBS`, these are NOT unconditionally
+ * persisting, so they are deliberately kept OUT of that static set (a gapped verb
+ * must never leak into it — Feature 014/017 parity).
+ *
+ * - semantic embedding cutover/rollback/reindex + index reindex/reconcile: the
+ *   config-backed registry physically builds + validates a Milvus blue/green
+ *   generation before the alias swaps (T006/T007) and the reindex/reconcile live-doc
+ *   source diffs real enumerated state (T008/T009); all require a configured Milvus
+ *   endpoint (`milvusConfigured`).
+ * - mcp.auth.start/finish: the interactive-OAuth delegation is composed only for an
+ *   interactive TUI surface; a headless surface keeps the typed gap (T010,
+ *   `interactiveSurface`).
+ * - mcp.resource.admin.subscribe/unsubscribe: driven over the dual-authority machine
+ *   only when a subscribe-capable client is connected; an absent capability is a
+ *   fail-closed `capability_absent` (T011, `subscriptionCapable`).
+ */
+const CONDITIONAL_PERSISTING_VERBS: Readonly<Record<string, keyof OperatorBackendReadiness>> = {
+  "semantic.embedding.reindex": "milvusConfigured",
+  "semantic.embedding.cutover": "milvusConfigured",
+  "semantic.embedding.rollback": "milvusConfigured",
+  "semantic.index.reindex": "milvusConfigured",
+  "semantic.index.reconcile": "milvusConfigured",
+  "mcp.auth.start": "interactiveSurface",
+  "mcp.auth.finish": "interactiveSurface",
+  "mcp.resource.admin.subscribe": "subscriptionCapable",
+  "mcp.resource.admin.unsubscribe": "subscriptionCapable",
+}
 
 /**
  * Per-verb input-mode descriptor map (T002, FR5; Feature 014 T012). Only the
@@ -259,9 +325,20 @@ function domainLabelFor(domain: string): string {
  * its whole domain persists OR it is a per-verb config-backed exception
  * (`OPERATOR_PERSISTING_VERBS`), so a mixed domain classifies each verb truthfully.
  */
-function persistenceFor(id: string, domain: string, mutates: boolean): OperatorPersistenceClass {
+function persistenceFor(
+  id: string,
+  domain: string,
+  mutates: boolean,
+  readiness?: OperatorBackendReadiness,
+): OperatorPersistenceClass {
   if (!mutates) return "persists_today"
   if (PERSISTING_VERB_SET.has(id)) return "persists_today"
+  // Feature 019 T018 (FR14) — a conditional verb flips to the composed truth ONLY when
+  // its `#BackendReadiness` dependency is present; otherwise it stays the honest gap.
+  const readinessFlag = CONDITIONAL_PERSISTING_VERBS[id]
+  if (readinessFlag !== undefined) {
+    return readiness?.[readinessFlag] === true ? "persists_today" : "honest_unavailable"
+  }
   return PERSISTING_DOMAIN_SET.has(domain) ? "persists_today" : "honest_unavailable"
 }
 
@@ -334,7 +411,7 @@ export function listOperatorPaletteEntries(options: ListPaletteOptions = {}): re
     const secretRelated = isOperatorSecretMutationId(draft.id)
     const secretBlocked = secretRelated && !keychainAvailable
     const section: OperatorVerbSection = draft.mutates ? "configure" : "view"
-    const persistence = persistenceFor(draft.id, domain, draft.mutates)
+    const persistence = persistenceFor(draft.id, domain, draft.mutates, options.readiness)
     const availability = availabilityFor(draft.mutates, confirmRequired, persistence)
     const verbLabel = draft.title ?? verbLabelFor(operation)
     return {

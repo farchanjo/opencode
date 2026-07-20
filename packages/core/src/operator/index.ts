@@ -191,6 +191,8 @@ export {
   type OperatorVerbAvailability,
   type OperatorInputMode,
   type OperatorPersistenceClass,
+  type OperatorBackendReadiness,
+  type ListPaletteOptions,
   type OperatorToggleControl,
   type OperatorTriStateControl,
   type OperatorScreenControls,

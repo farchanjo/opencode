@@ -37,13 +37,14 @@ const SEMANTIC_REGISTRY = [
   "semantic.reranker.select",
 ] as const
 
-// The Milvus-gated semantic mutations that stay honest-unavailable.
+// The Milvus-gated semantic mutations that stay honest-unavailable in the default
+// (unconfigured) palette. Feature 019 T018 moved `reranker.cutover`/`rollback` OUT of
+// this set — they route through the config-backed registry with no Milvus dependency,
+// so they flip to persists_today unconditionally (see feature019-availability.test.ts).
 const SEMANTIC_GATED = [
   "semantic.embedding.reindex",
   "semantic.embedding.cutover",
   "semantic.embedding.rollback",
-  "semantic.reranker.cutover",
-  "semantic.reranker.rollback",
   "semantic.index.reindex",
   "semantic.index.reconcile",
 ] as const
