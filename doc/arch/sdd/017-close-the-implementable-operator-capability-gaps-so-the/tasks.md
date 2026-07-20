@@ -42,10 +42,10 @@ the user's burning pain on every screen.
 - [x] T012 — `output.stat`/`read` reflect the populated control store
 - [x] T013 — `output.follow` cursor-codec seam
 - [x] T014 — `output.release`/`delete`/`purge` store-scoped admin edge
-- [ ] T015 — Jobs occurrence projection over `EventV2Bridge` + bounded watch
-- [ ] T016 — Milvus registry binding when an endpoint is configured
-- [ ] T017 — Palette availability flip (MCP/output → persists_today/partial)
-- [ ] T018 — Keep deferred edges typed gaps + git-ignore `config.json`
+- [x] T015 — Jobs occurrence projection over `EventV2Bridge` + bounded watch
+- [x] T016 — Milvus registry binding when an endpoint is configured
+- [x] T017 — Palette availability flip (MCP/output → persists_today/partial)
+- [x] T018 — Keep deferred edges typed gaps + git-ignore `config.json`
 - [ ] T019 — TUI editing tests (multi-field modal + detail tree)
 - [ ] T020 — MCP tests (reads + `mutation_plan` + no-phantom-write + live action)
 - [ ] T021 — OutputSpool tests (writer + reads + admin edge)
@@ -419,7 +419,23 @@ the user's burning pain on every screen.
 - **Acceptance:** `jobs.history`/`show-occurrences` project real occurrence events;
   `jobs.watch` is bounded + closable; an unbound bridge degrades to a typed gap.
 - **Verification:** `bun test packages/opencode/test/operator/**`.
-- **Evidence:** _(implement)_
+- **Evidence:** 2026-07-19 — new `packages/opencode/src/operator/jobs/occurrence-projection.ts`
+  `createJobOccurrenceProjection` over a `JobOccurrenceSource` seam (`readAggregate` =
+  `readDurablePage`, `subscribe` = `EventBus.subscribeBounded`) — the SAME seams
+  `lifecycle/stack-wiring.ts:180-259` uses. It folds the durable `job.*` vocabulary
+  (`STATE_BY_TYPE`) into one bounded `Occurrence` per occurrence id (latest state wins,
+  terminal→outcome), projects notification events into redacted `NotificationEnvelope`s,
+  and filters every event by `job_definition_id` (defence in depth); a malformed event is
+  skipped (`parseEvent` returns null), never crashed on. `backend-live.ts:createLiveJobsBackend`
+  gains `occurrences?`: `history`/`watch` route to the projection when bound (else stay the
+  typed `unavailable` gap), and `show()` attaches `showOccurrences` to the persisted definition.
+  `watch` filters + maps the bounded live stream (`Stream.map`/`filter`), degrading to
+  `unavailable` when the bridge is unbound. Wired in `stack-live.ts` jobs region: resolve the
+  `EventV2Bridge.Service` singleton once, bind `readDurablePage` (guarded → `unavailable`) +
+  `EventBus.subscribeBounded` (capacity 1024). Tests `test/operator/feature017-jobs-milvus.test.ts`
+  "T015" block (history fold + foreign-definition filter, bounded limit, notification projection,
+  showOccurrences cap, bounded filtered watch via `Stream.runCollect`, unbound-bridge typed gap,
+  show()-routes-through-projection) green. `bun test test/operator/` 421 pass / 2 skip; typecheck clean.
 
 ---
 
@@ -438,7 +454,26 @@ the user's burning pain on every screen.
   adapter under a bounded probe; with none configured they return
   `milvus_unavailable`; no endpoint/credential leaks.
 - **Verification:** `bun test packages/opencode/test/operator/**`.
-- **Evidence:** _(implement)_
+- **Evidence:** 2026-07-19 — new `packages/opencode/src/operator/semantic/milvus-binding.ts`
+  `createMilvusIndexPort(deps)` binds an `IndexPort` over the shipped Milvus stack under a
+  BOUNDED probe (`MilvusEndpointConfig` = address/ssl/timeoutMs/secretRef; timeout hard-capped
+  10s). Honest MIXED split (spec "readiness: mixed"): `index.test` runs the probe → the real
+  `{ reachable, latencyMs }`; `status`/`reindex`/`reconcile`/`show-collections` run the SAME
+  probe gate then return a typed `milvus_unavailable` (the full index-maintenance pipeline is not
+  composed from the operator runtime — never a fabricated generation/count). A probe-seam outage
+  or unreachable endpoint → typed `milvus_unavailable` with a bounded, secret-free reason (no
+  address/credential/stack trace crosses the seam). `backend-live.ts:createLiveSemanticBackend`
+  gains `milvus?`: when present `index` binds the port; when absent it stays the exact `indexGap`
+  identity. Wired in `stack-live.ts` semantic region: resolve the endpoint from
+  `OPENCODE_SEMANTIC_MILVUS_ADDRESS` (ssl on unless `_INSECURE=1`, `SecretRef` from `_SECRET_REF`);
+  the live probe runs the shipped adapter health call (no gRPC client bound yet → honest
+  `reachable:false`, never rejects). **FIXED the latent port bug**: `semantic-command-port.ts:160`
+  `semantic.provider.add` residency default `"unrestricted"` (not a `ResidencyProfile` member,
+  schema `enums-state.ts:49` = `local-offline|local|remote`) → `"remote"`, pinned by the T016
+  binding tests + the full semantic suite. Tests `test/operator/feature017-jobs-milvus.test.ts`
+  "T016" block (probe path when configured, maintenance verbs stay typed gap, unreachable degrades
+  test + gates rest, probe-outage → typed gap with no secret leak, unconfigured degradation
+  identity) green. Typecheck clean.
 
 ---
 
@@ -455,7 +490,23 @@ the user's burning pain on every screen.
 - **Acceptance:** the grouped menu shows the flipped MCP/output verbs truthfully; a
   still-gapped verb keeps `honest_unavailable`.
 - **Verification:** `bun test packages/core/test/operator/**`.
-- **Evidence:** _(implement)_
+- **Evidence:** 2026-07-19 — `packages/core/src/operator/palette.ts` `OPERATOR_PERSISTING_VERBS`
+  gains the 14 newly-real MCP mutations (server.add/update/delete/disable, connect/disconnect/
+  reconnect, logging.level.set, experimental.enable/disable, extension.enable/disable,
+  resource.admin.policy.set, auth.remove) + the 3 output admin-edge verbs (release/delete/purge),
+  so `persistenceFor`/`domainBadge` flip mcp `Unavailable → Partial` and keep output `Partial`.
+  The deferred gaps stay honest: auth.start/finish + resource.admin.subscribe/unsubscribe and
+  output export/share are NOT added (still `honest_unavailable`); jobs.run-now stays inert via the
+  TUI `entity.ts` `TYPED_GAP_IDS` (unchanged). MCP server reads + jobs history/show/watch are
+  non-mutating → already `persists_today`. The now-real verbs cascade through the TUI palette
+  consumers automatically (`entity.ts` folds palette availability), so mcp entity connect/
+  disconnect/add + experimental/extension toggles are no longer inert. Tests: new
+  `packages/core/test/operator/feature017-availability.test.ts` (mcp Partial, 14 real verbs
+  persists_today, 4 gapped verbs honest, output release/delete/purge persist + export/share gated,
+  every persisting verb rides a real catalog id — parity FR17); updated
+  `feature014-availability.test.ts` + `palette-menu.test.ts` (mcp → Partial, output admin edge),
+  `screen-controls.test.ts` (mcp toggles real), tui `entity.test.ts` (mcp actions real). core 118
+  pass / tui 175 pass / 0 fail; typecheck clean.
 
 - [ ] **T018 — Keep deferred edges typed gaps + git-ignore `config.json`**
 - **Depends:** none
@@ -469,7 +520,17 @@ the user's burning pain on every screen.
 - **Acceptance:** the deferred verbs return typed gaps; `git check-ignore
   packages/opencode/config.json` matches.
 - **Verification:** `bun test packages/opencode/test/operator/**`; `git check-ignore packages/opencode/config.json`.
-- **Evidence:** _(implement)_
+- **Evidence:** 2026-07-19 — deferred edges confirmed still typed gaps (matches the boundary list):
+  `jobs.run-now` (`jobs/backend-live.ts:planRunNow` → `Effect.fail(unavailable(...))`, unchanged;
+  TUI `entity.ts TYPED_GAP_IDS` keeps it inert); the lifecycle forced-abort `cancel`
+  (`lifecycle/stack-wiring.ts:283-289` `rootInterruptor` records unavailability, first-press cancel
+  real, unchanged); the Smart Routing consumption edge (untouched — repo rule). The T015 jobs
+  projection + T016 Milvus binding introduce NO catalog id and NO dispatch path; the persisting-set
+  additions all ride existing catalog ids (`feature017-availability.test.ts` "parity" asserts every
+  `OPERATOR_PERSISTING_VERBS` entry ∈ `RESERVED_CATALOG.entries`, and the catalog `version` is
+  unchanged). `packages/opencode/.gitignore:12` already carries `config.json` and
+  `git check-ignore packages/opencode/config.json` matches (IGNORED-OK). `/Users/farchanjo/bin/speckit
+  validate --json` → `ok:true` (only 4 pre-existing waived hygiene warnings, none on Feature 017).
 
 ---
 
