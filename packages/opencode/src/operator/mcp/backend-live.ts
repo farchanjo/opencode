@@ -20,6 +20,7 @@
 export * as McpBackendLive from "./backend-live"
 
 import { Effect } from "effect"
+import { SubscriptionMachine } from "@opencode-ai/core/mcp/subscription-machine"
 import type {
   AuthPort,
   ExperimentalPort,
@@ -29,6 +30,10 @@ import type {
   ServerLifecyclePort,
 } from "@opencode-ai/protocol/mcp/ports"
 import type {
+  ExperimentalFlag,
+  ExperimentalFlagState,
+  ExperimentalStatusOutput,
+  ExtensionStatusOutput,
   McpAuthStatus,
   McpResourceDescriptor,
   McpResourceTemplateDescriptor,
@@ -38,10 +43,13 @@ import type { ConfigPort } from "@/operator/application/ports/config-port"
 import type {
   LiveServerRead,
   McpAdminBackend,
+  McpAuthFinishActionInput,
+  McpAuthStartActionInput,
   McpLiveReadError,
   McpLiveServerReader,
   McpMutationBackend,
   McpMutationError,
+  McpResourceSubscribeActionInput,
 } from "./mcp-port"
 
 export interface LiveMcpBackendDeps {
@@ -337,6 +345,53 @@ export interface McpAuthClear {
   readonly remove: (serverId: string) => Promise<void>
 }
 
+// =============================================================================
+// Feature 019 / T010-T011 — interactive-OAuth delegation + resource subscription
+// =============================================================================
+
+/** The outcome of the live `MCP.Service.startAuth` delegation (Feature 019 / FR8). */
+export type McpAuthStartResult =
+  | { readonly kind: "ok"; readonly authorizationUrl: string; readonly oauthState: string }
+  | { readonly kind: "not_found" }
+
+/** The outcome of the live `MCP.Service.finishAuth` delegation (Feature 019 / FR8). */
+export type McpAuthFinishResult =
+  | { readonly kind: "ok"; readonly status: string }
+  | { readonly kind: "not_found" }
+  | { readonly kind: "state_mismatch" }
+
+/**
+ * The live interactive-OAuth flow seam the composition root implements over
+ * `MCP.Service.startAuth`/`finishAuth` (Feature 019 / T010, FR8). `start` returns the
+ * authorize URL (not a secret) and starts the loopback callback listener; `finish`
+ * validates the CSRF state and completes the exchange. No token, code verifier, or
+ * secret material crosses this seam — only the non-secret authorize URL and a bounded
+ * connection status.
+ */
+export interface McpAuthDelegate {
+  readonly start: (serverId: string) => Promise<McpAuthStartResult>
+  readonly finish: (serverId: string, input: { oauthState: string; callbackParams: string }) => Promise<McpAuthFinishResult>
+}
+
+/** Whether a server advertises `resources.subscribe` on a live client (Feature 019 / FR9). */
+export type McpSubscribeCapability =
+  | { readonly kind: "capable" }
+  | { readonly kind: "capability_absent" }
+  | { readonly kind: "no_client" }
+
+/**
+ * The subscribe-capable live client seam the composition root implements over the SDK
+ * `subscribeResource`/`unsubscribeResource` (Feature 019 / T011, FR9). `capability`
+ * reports the negotiated `resources.subscribe` capability (absent → fail-closed
+ * `capability_absent`; no connected client → typed unavailable); `subscribe`/
+ * `unsubscribe` drive the live client subscription. Never fabricates a subscription.
+ */
+export interface McpSubscriptionClient {
+  readonly capability: (serverId: string) => Promise<McpSubscribeCapability>
+  readonly subscribe: (serverId: string, uri: string) => Promise<void>
+  readonly unsubscribe: (serverId: string, uri: string) => Promise<void>
+}
+
 export interface McpMutationDeps {
   /** The operator `store.config` authority the config-backed verbs persist through `mutateAuthority`. */
   readonly config: ConfigPort
@@ -344,8 +399,16 @@ export interface McpMutationDeps {
   readonly actions?: McpLiveActions
   /** The local credential-clear seam; absent leaves `auth.remove` a typed `mcp_unavailable` gap (T010). */
   readonly authClear?: McpAuthClear
+  /** Feature 019 / T010 — the interactive-OAuth delegate; absent leaves `auth.start`/`finish` a typed gap (FR8). */
+  readonly auth?: McpAuthDelegate
+  /** Feature 019 / T011 — the subscribe-capable live client; absent leaves subscribe/unsubscribe a typed gap (FR9). */
+  readonly subscription?: McpSubscriptionClient
   readonly now?: () => number
 }
+
+/** Feature 019 — the never-written effectOnly authorities the auth/subscription flows record under. */
+export const MCP_AUTH_FLOW_AUTHORITY = "global:mcp-auth-flow" as const
+export const MCP_SUBSCRIPTION_AUTHORITY = "global:mcp-subscriptions" as const
 
 /**
  * Build the `mutation_plan` backend for the config-backed + live-service mcp verbs.
@@ -555,6 +618,120 @@ export function createMcpMutations(deps: McpMutationDeps): McpMutationBackend {
       }
     })
 
+  // Feature 019 / T010 (FR8) — the interactive-OAuth delegation plans. The command port
+  // has already confirmed an interactive TUI surface (a headless surface never reaches
+  // here — it keeps the honest typed gap). Both are effectOnly: they run the live flow
+  // once, after every dispatcher check, and record NO authority document (the credential
+  // lives inside `McpAuth`, never the operator envelope). The effect value surfaces the
+  // non-secret authorize URL / bounded status; no token or code verifier crosses the seam.
+  const planAuthStart: McpMutationBackend["planAuthStart"] = (input: McpAuthStartActionInput) =>
+    Effect.gen(function* () {
+      if (!input.serverId) return yield* Effect.fail(invalidArg("serverId", "server id is required"))
+      if (!deps.auth) return yield* Effect.fail<McpMutationError>({ type: "mcp_unavailable", reason: "mcp auth delegation is not bound" })
+      const delegate = deps.auth
+      const serverId = input.serverId
+      return {
+        authority: MCP_AUTH_FLOW_AUTHORITY,
+        effectOnly: true,
+        effect: async (): Promise<OperatorMutationEffectResult> => {
+          let outcome: McpAuthStartResult
+          try {
+            outcome = await delegate.start(serverId)
+          } catch {
+            return { ok: false, code: "unavailable", message: "mcp auth flow is unreachable" }
+          }
+          if (outcome.kind === "not_found")
+            return { ok: false, code: "invalid_argument", message: `server not found: ${serverId}`, details: { field: "id" } }
+          // The authorize URL is NOT a secret; the oauthState is a CSRF nonce, not a credential.
+          return { ok: true, value: { serverId, delegation: "interactive_delegated", authorizationUrl: outcome.authorizationUrl } }
+        },
+        apply: (current: unknown) => current ?? null,
+      }
+    })
+
+  const planAuthFinish: McpMutationBackend["planAuthFinish"] = (input: McpAuthFinishActionInput) =>
+    Effect.gen(function* () {
+      if (!input.serverId) return yield* Effect.fail(invalidArg("serverId", "server id is required"))
+      if (!deps.auth) return yield* Effect.fail<McpMutationError>({ type: "mcp_unavailable", reason: "mcp auth delegation is not bound" })
+      const delegate = deps.auth
+      const serverId = input.serverId
+      const oauthState = input.oauthState
+      const callbackParams = input.callbackParams
+      return {
+        authority: MCP_AUTH_FLOW_AUTHORITY,
+        effectOnly: true,
+        effect: async (): Promise<OperatorMutationEffectResult> => {
+          let outcome: McpAuthFinishResult
+          try {
+            outcome = await delegate.finish(serverId, { oauthState, callbackParams })
+          } catch {
+            return { ok: false, code: "unavailable", message: "mcp auth flow is unreachable" }
+          }
+          if (outcome.kind === "not_found")
+            return { ok: false, code: "invalid_argument", message: `server not found: ${serverId}`, details: { field: "id" } }
+          if (outcome.kind === "state_mismatch")
+            return { ok: false, code: "conflict", message: "oauth state mismatch" }
+          return { ok: true, value: { serverId, delegation: "interactive_delegated", status: outcome.status } }
+        },
+        apply: (current: unknown) => current ?? null,
+      }
+    })
+
+  // Feature 019 / T011 (FR9) — resource subscribe/unsubscribe over the dual-authority
+  // machine + a subscribe-capable live client. effectOnly: the live subscription is the
+  // side effect; the operator envelope records nothing (no fabricated subscription). An
+  // absent capability fails closed via the pure machine (`capability_absent`); no client
+  // is a typed unavailable; both commit NOTHING.
+  const planSubscription = (
+    serverId: string,
+    uri: string,
+    verb: "subscribe" | "unsubscribe",
+  ): Effect.Effect<OperatorMutationPlan, McpMutationError> =>
+    Effect.gen(function* () {
+      if (!serverId) return yield* Effect.fail(invalidArg("serverId", "server id is required"))
+      if (!uri) return yield* Effect.fail(invalidArg("uri", "resource uri is required"))
+      if (!deps.subscription)
+        return yield* Effect.fail<McpMutationError>({ type: "mcp_unavailable", reason: "mcp subscription client is not bound" })
+      const client = deps.subscription
+      return {
+        authority: MCP_SUBSCRIPTION_AUTHORITY,
+        effectOnly: true,
+        effect: async (): Promise<OperatorMutationEffectResult> => {
+          let cap: McpSubscribeCapability
+          try {
+            cap = await client.capability(serverId)
+          } catch {
+            return { ok: false, code: "unavailable", message: "mcp subscription client is unreachable" }
+          }
+          if (cap.kind === "no_client") return { ok: false, code: "unavailable", message: "mcp live service is not bound" }
+          // The operator grant is implied by the audited operator principal + confirmation gate;
+          // the dual authority is server capability AND operator grant (fail-closed, C10).
+          const authority = { serverCapable: cap.kind === "capable", operatorGranted: true }
+          const decision = SubscriptionMachine.apply("unsubscribed", "subscribe", authority)
+          if (decision.kind === "fail_closed")
+            return {
+              ok: false,
+              code: "invalid_argument",
+              message: `subscription ${decision.reason}`,
+              details: { reason: decision.reason },
+            }
+          try {
+            if (verb === "subscribe") await client.subscribe(serverId, uri)
+            else await client.unsubscribe(serverId, uri)
+          } catch {
+            return { ok: false, code: "unavailable", message: `mcp ${verb} failed` }
+          }
+          return { ok: true, value: { serverId, resourceUri: uri, state: verb === "subscribe" ? "subscribed" : "unsubscribed" } }
+        },
+        apply: (current: unknown) => current ?? null,
+      }
+    })
+
+  const planResourceSubscribe: McpMutationBackend["planResourceSubscribe"] = (input: McpResourceSubscribeActionInput) =>
+    planSubscription(input.serverId, input.uri, "subscribe")
+  const planResourceUnsubscribe: McpMutationBackend["planResourceUnsubscribe"] = (input: McpResourceSubscribeActionInput) =>
+    planSubscription(input.serverId, input.uri, "unsubscribe")
+
   return {
     planServerAdd,
     planServerUpdate,
@@ -568,6 +745,74 @@ export function createMcpMutations(deps: McpMutationDeps): McpMutationBackend {
     planDisconnect,
     planReconnect,
     planAuthRemove,
+    planAuthStart,
+    planAuthFinish,
+    planResourceSubscribe,
+    planResourceUnsubscribe,
+  }
+}
+
+// =============================================================================
+// Feature 019 / T012 (FR10) — truthful Experimental/Extension toggle badges
+// =============================================================================
+//
+// The `mcp.experimental.status`/`mcp.extension.status` reads project the operator's
+// config-backed flag SSOT (the same `store.config` MCP authority the toggles write via
+// `planExperimentalToggle`/`planExtensionToggle`) so a connected server's control rows
+// render `Enabled`/`Disabled` instead of `Unknown`. The runtime `cfg.mcp` schema has NO
+// such field — reconciling the two SSOTs is a documented boundary (spec Out of Scope);
+// the badge reflects only the config-backed flag the operator toggle owns. A genuinely
+// absent server carries no aggregate state, so it still renders `Unknown` honestly.
+
+/** The four per-server experimental flags, in rollout order (mirrors `EXPERIMENTAL_FLAGS`). */
+const EXPERIMENTAL_FLAG_ORDER = ["tasks", "sampling", "elicitation", "content-stream"] as const
+
+/** Read the config-backed mcp server entry for one server id; null when genuinely absent. */
+function readServerEntry(
+  config: ConfigPort,
+  serverId: string,
+): Effect.Effect<McpServerEntry | null, { readonly type: "unavailable"; readonly reason: string }> {
+  return Effect.tryPromise({
+    try: () => config.get(MCP_CONFIG_AUTHORITY),
+    catch: () => ({ type: "unavailable" as const, reason: "mcp config authority is unreachable" }),
+  }).pipe(Effect.map((entry) => parseDoc(entry?.payload ?? null).servers[serverId] ?? null))
+}
+
+/** The config-backed `ExperimentalPort`: `status` reads the flag SSOT; enable/disable route through the mutation seam. */
+function liveExperimentalPort(config: ConfigPort): ExperimentalPort {
+  const gap = () => Effect.fail({ type: "unavailable" as const, reason: NOT_BOUND })
+  return {
+    status: (input) =>
+      readServerEntry(config, input.serverId).pipe(
+        Effect.map((entry): ExperimentalStatusOutput => {
+          if (!entry) return { flags: [] } // genuinely absent → no aggregate `enabled` → Unknown
+          const set = new Set(entry.experimental ?? [])
+          const flags: ExperimentalFlagState[] = EXPERIMENTAL_FLAG_ORDER.map((flag) => ({
+            serverId: input.serverId,
+            flag: flag as ExperimentalFlag,
+            enabled: set.has(flag),
+          }))
+          return { flags, enabled: set.has("tasks") }
+        }),
+      ),
+    enable: gap,
+    disable: gap,
+  }
+}
+
+/** The config-backed `ExtensionPort`: `status` reads the flag SSOT; enable/disable route through the mutation seam. */
+function liveExtensionPort(config: ConfigPort): ExtensionPort {
+  const gap = () => Effect.fail({ type: "unavailable" as const, reason: NOT_BOUND })
+  return {
+    status: (input) =>
+      readServerEntry(config, input.serverId).pipe(
+        Effect.map((entry): ExtensionStatusOutput => {
+          if (!entry) return { capabilityString: "experimental/opencode.contentStream" } // absent → Unknown
+          return { enabled: entry.extensionEnabled === true, capabilityString: "experimental/opencode.contentStream" }
+        }),
+      ),
+    enable: gap,
+    disable: gap,
   }
 }
 
@@ -592,4 +837,9 @@ export const createMcpServiceOverride = (reader: McpHostReader, live?: McpServic
   resource: liveResourcePort(reader),
   ...(live?.servers ? { liveServer: liveServerReader(live.servers) } : {}),
   ...(live?.mutations ? { mutations: createMcpMutations(live.mutations) } : {}),
+  // Feature 019 / T012 — when the config authority is bound, the Experimental/Extension
+  // status reads project the config-backed flag SSOT so the toggle badges render truthfully.
+  ...(live?.mutations
+    ? { experimental: liveExperimentalPort(live.mutations.config), extension: liveExtensionPort(live.mutations.config) }
+    : {}),
 })

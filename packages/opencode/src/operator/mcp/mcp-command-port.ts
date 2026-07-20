@@ -167,12 +167,27 @@ function planRunner(deps: McpCommandDeps, commandId: string, principalId: string
     )
 }
 
+/**
+ * Feature 019 / T010 (FR8) — the interactive-TUI surfaces the request envelope's
+ * `source` marks (Feature 007 data-model). Only these delegate `mcp.auth.start`/
+ * `finish` to the live OAuth flow; a headless surface (`cli`/`api`/`system`/`settings`)
+ * keeps the honest typed capability gap (the ADR-0017 boundary revised in ADR-0019).
+ */
+const INTERACTIVE_MCP_AUTH_SURFACES: ReadonlySet<string> = new Set(["palette", "slash"])
+
+/** True when the request source is an interactive TUI surface eligible for OAuth delegation (FR8). */
+function isInteractiveAuthSurface(source: string | undefined): boolean {
+  return source !== undefined && INTERACTIVE_MCP_AUTH_SURFACES.has(source)
+}
+
 interface Ctx {
   readonly id: string
   readonly payload: Record<string, unknown>
   readonly principal: OperatorPrincipal
   readonly scope: Scope
   readonly scopeId: string
+  /** The request envelope surface (Feature 007), used to gate interactive-OAuth delegation (FR8). */
+  readonly surface: string | undefined
   readonly run: ReturnType<typeof runner>
   readonly runPlan: ReturnType<typeof planRunner>
 }
@@ -224,6 +239,25 @@ function mutationInvoke(port: McpAdminPort, c: Ctx): Promise<HandlerResult> | nu
       return c.runPlan(m.planResourcePolicySet({ serverId: id, policy: asRecord(c.payload.policy) }))
     case "mcp.auth.remove":
       return c.runPlan(m.planAuthRemove({ serverId: id }))
+    // Feature 019 / T011 (FR9) — resource subscribe/unsubscribe over the dual-authority machine.
+    case "mcp.resource.admin.subscribe":
+      return c.runPlan(m.planResourceSubscribe({ serverId: id, uri: str(c.payload, ["uri"]) ?? "" }))
+    case "mcp.resource.admin.unsubscribe":
+      return c.runPlan(m.planResourceUnsubscribe({ serverId: id, uri: str(c.payload, ["uri"]) ?? "" }))
+    // Feature 019 / T010 (FR8) — interactive-TUI-only OAuth delegation. A headless surface
+    // returns null here so the verb falls through to `authInvoke`, keeping the honest gap.
+    case "mcp.auth.start":
+      if (!isInteractiveAuthSurface(c.surface)) return null
+      return c.runPlan(m.planAuthStart({ serverId: id }))
+    case "mcp.auth.finish":
+      if (!isInteractiveAuthSurface(c.surface)) return null
+      return c.runPlan(
+        m.planAuthFinish({
+          serverId: id,
+          oauthState: str(c.payload, ["oauthState", "oauth_state"]) ?? "",
+          callbackParams: str(c.payload, ["callbackParams", "callback_params"]) ?? "",
+        }),
+      )
     default:
       return null
   }
@@ -375,6 +409,7 @@ function mcpInvoke(deps: McpCommandDeps): DomainInvoke {
       principal,
       scope,
       scopeId,
+      surface: ctx.request.source,
       run: runner(deps, id, principal.id, target),
       runPlan: planRunner(deps, id, principal.id, target),
     }

@@ -225,6 +225,8 @@ interface McpHarnessDeps {
   readonly servers?: McpBackendLive.McpLiveServerSource
   readonly actions?: McpBackendLive.McpLiveActions
   readonly authClear?: McpBackendLive.McpAuthClear
+  readonly auth?: McpBackendLive.McpAuthDelegate
+  readonly subscription?: McpBackendLive.McpSubscriptionClient
 }
 
 /** Compose the mcp domain over ONE shared `store.config` seam behind the real dispatcher (mirrors stack-live). */
@@ -241,7 +243,13 @@ function mcpHarness(deps: McpHarnessDeps = {}) {
   }
   const override = McpBackendLive.createMcpServiceOverride(deps.reader ?? fakeReader(), {
     servers: deps.servers,
-    mutations: { config: store.config, actions: deps.actions, authClear: deps.authClear },
+    mutations: {
+      config: store.config,
+      actions: deps.actions,
+      authClear: deps.authClear,
+      auth: deps.auth,
+      subscription: deps.subscription,
+    },
   })
   const wiring = McpStackWiring.createMcpDomainWiring({
     backend: McpBackendLive.createLiveMcpBackend({ override }),
@@ -262,14 +270,14 @@ const mcpMutate = (
   dispatcher: ReturnType<typeof mcpHarness>["dispatcher"],
   id: string,
   payload: Record<string, unknown>,
-  opts: { version?: string } = {},
+  opts: { version?: string; source?: string } = {},
 ) =>
   dispatcher.dispatchRequest(
     {
       id,
       principal: { kind: "operator", subject: "op_1", projectBinding: "proj_17" },
       scope: { kind: "project", ref: "proj_17" },
-      source: "cli",
+      source: opts.source ?? "cli",
       payload,
       version: opts.version,
       idempotencyKey: `idem_${id}_${opts.version ?? "create"}_${Math.random().toString(36).slice(2)}`,
@@ -436,5 +444,192 @@ describe("T010 — auth split: remove converts to a mutation, start/finish stay 
     const result = await wiring.ports.mcp.invoke(ctx("mcp.auth.start", { serverId: "srv_a" }))
     expect(result.kind).toBe("failure")
     if (result.kind === "failure") expect(result.code).toBe("unavailable")
+  })
+})
+
+// =============================================================================
+// Feature 019 / T010 (FR8) — interactive-OAuth auth delegation vs headless gap
+// =============================================================================
+
+/** A live-OAuth delegate double: `start` returns a non-secret authorize URL + a CSRF nonce; `finish` completes. */
+function fakeAuthDelegate(overrides: Partial<McpBackendLive.McpAuthDelegate> = {}): McpBackendLive.McpAuthDelegate {
+  return {
+    start: async (serverId) =>
+      serverId === "missing"
+        ? { kind: "not_found" }
+        : { kind: "ok", authorizationUrl: "https://auth.example.test/authorize?client_id=abc", oauthState: "st_secret_nonce" },
+    finish: async (serverId, input) =>
+      serverId === "missing"
+        ? { kind: "not_found" }
+        : input.oauthState === "mismatch"
+          ? { kind: "state_mismatch" }
+          : { kind: "ok", status: "connected" },
+    ...overrides,
+  }
+}
+
+describe("Feature 019 T010 — mcp.auth.start/finish delegate for the interactive TUI (FR8)", () => {
+  test("an interactive TUI surface delegates start and returns the authorize URL — no secret in the envelope", async () => {
+    const { dispatcher } = mcpHarness({ auth: fakeAuthDelegate() })
+    const result = await mcpMutate(dispatcher, "mcp.auth.start", { serverId: "srv_a" }, { source: "palette" })
+    expect(result.ok).toBe(true)
+    expect(result.outcome).toBe("success")
+    const eff = result.effective as { serverId: string; delegation: string; authorizationUrl: string }
+    expect(eff.delegation).toBe("interactive_delegated")
+    expect(eff.authorizationUrl).toBe("https://auth.example.test/authorize?client_id=abc")
+    // The authorize URL is not a secret; NO token, code, verifier, or oauthState crosses the envelope.
+    const serialized = JSON.stringify(result.effective)
+    for (const forbidden of ["oauthState", "st_secret_nonce", "code_verifier", "access_token", "secret", "token"]) {
+      expect(serialized).not.toContain(forbidden)
+    }
+  })
+
+  test("a headless surface (cli) keeps the exact typed capability gap — never delegates", async () => {
+    const { dispatcher } = mcpHarness({ auth: fakeAuthDelegate() })
+    const result = await mcpMutate(dispatcher, "mcp.auth.start", { serverId: "srv_a" }, { source: "cli" })
+    expect(result.ok).toBe(false)
+    expect(result.outcome).toBe("unavailable")
+  })
+
+  test("an interactive slash surface completes the exchange via finish", async () => {
+    const { dispatcher } = mcpHarness({ auth: fakeAuthDelegate() })
+    const result = await mcpMutate(
+      dispatcher,
+      "mcp.auth.finish",
+      { serverId: "srv_a", oauthState: "st_secret_nonce", callbackParams: "code=abc&state=st_secret_nonce" },
+      { source: "slash" },
+    )
+    expect(result.ok).toBe(true)
+    const eff = result.effective as { serverId: string; delegation: string; status: string }
+    expect(eff.delegation).toBe("interactive_delegated")
+    expect(eff.status).toBe("connected")
+  })
+
+  test("a state mismatch surfaces a typed conflict, never a completed exchange", async () => {
+    const { dispatcher } = mcpHarness({ auth: fakeAuthDelegate() })
+    const result = await mcpMutate(
+      dispatcher,
+      "mcp.auth.finish",
+      { serverId: "srv_a", oauthState: "mismatch", callbackParams: "code=abc&state=other" },
+      { source: "palette" },
+    )
+    expect(result.ok).toBe(false)
+    expect(result.outcome).toBe("conflict")
+  })
+
+  test("an unbound auth delegate on an interactive surface is a typed mcp_unavailable gap", async () => {
+    const { dispatcher } = mcpHarness() // no auth delegate wired
+    const result = await mcpMutate(dispatcher, "mcp.auth.start", { serverId: "srv_a" }, { source: "palette" })
+    expect(result.ok).toBe(false)
+    expect(result.error?.code).toBe("unavailable")
+  })
+})
+
+// =============================================================================
+// Feature 019 / T011 (FR9) — resource subscribe/unsubscribe over the live client
+// =============================================================================
+
+/** A subscribe-capable client double; `absent` lacks the capability, `nolink` has no connected client. */
+function fakeSubscriptionClient(spy: { calls: string[] }): McpBackendLive.McpSubscriptionClient {
+  return {
+    capability: async (serverId) =>
+      serverId === "absent"
+        ? { kind: "capability_absent" }
+        : serverId === "nolink"
+          ? { kind: "no_client" }
+          : { kind: "capable" },
+    subscribe: async (serverId, uri) => void spy.calls.push(`sub:${serverId}:${uri}`),
+    unsubscribe: async (serverId, uri) => void spy.calls.push(`unsub:${serverId}:${uri}`),
+  }
+}
+
+describe("Feature 019 T011 — mcp.resource.admin.subscribe/unsubscribe over the dual-authority machine (FR9)", () => {
+  test("a capable server drives the live subscribe exactly once and reports the subscribed state", async () => {
+    const spy = { calls: [] as string[] }
+    const { dispatcher } = mcpHarness({ subscription: fakeSubscriptionClient(spy) })
+    const result = await mcpMutate(dispatcher, "mcp.resource.admin.subscribe", { serverId: "srv_a", uri: "mcp://srv/doc.md" })
+    expect(result.ok).toBe(true)
+    const eff = result.effective as { serverId: string; resourceUri: string; state: string }
+    expect(eff.state).toBe("subscribed")
+    expect(eff.resourceUri).toBe("mcp://srv/doc.md")
+    expect(spy.calls).toEqual(["sub:srv_a:mcp://srv/doc.md"])
+  })
+
+  test("unsubscribe drives the live unsubscribe once and reports the unsubscribed state", async () => {
+    const spy = { calls: [] as string[] }
+    const { dispatcher } = mcpHarness({ subscription: fakeSubscriptionClient(spy) })
+    const result = await mcpMutate(dispatcher, "mcp.resource.admin.unsubscribe", { serverId: "srv_a", uri: "mcp://srv/doc.md" })
+    expect(result.ok).toBe(true)
+    expect((result.effective as { state: string }).state).toBe("unsubscribed")
+    expect(spy.calls).toEqual(["unsub:srv_a:mcp://srv/doc.md"])
+  })
+
+  test("a server without the subscribe capability fails closed (capability_absent) — no phantom subscription", async () => {
+    const spy = { calls: [] as string[] }
+    const { dispatcher } = mcpHarness({ subscription: fakeSubscriptionClient(spy) })
+    const result = await mcpMutate(dispatcher, "mcp.resource.admin.subscribe", { serverId: "absent", uri: "mcp://srv/doc.md" })
+    expect(result.ok).toBe(false)
+    expect(result.error?.code).toBe("invalid_argument")
+    expect(JSON.stringify(result.error)).toContain("capability_absent")
+    expect(spy.calls).toEqual([]) // no live subscribe attempted
+  })
+
+  test("no connected client is a typed unavailable, never a fabricated subscription", async () => {
+    const spy = { calls: [] as string[] }
+    const { dispatcher } = mcpHarness({ subscription: fakeSubscriptionClient(spy) })
+    const result = await mcpMutate(dispatcher, "mcp.resource.admin.subscribe", { serverId: "nolink", uri: "mcp://srv/doc.md" })
+    expect(result.ok).toBe(false)
+    expect(result.outcome).toBe("unavailable")
+    expect(spy.calls).toEqual([])
+  })
+
+  test("an unbound subscription client is a typed mcp_unavailable gap", async () => {
+    const { dispatcher } = mcpHarness() // no subscription client wired
+    const result = await mcpMutate(dispatcher, "mcp.resource.admin.subscribe", { serverId: "srv_a", uri: "mcp://srv/doc.md" })
+    expect(result.ok).toBe(false)
+    expect(result.error?.code).toBe("unavailable")
+  })
+})
+
+// =============================================================================
+// Feature 019 T012 (FR10) — truthful Experimental/Extension badges from config SSOT
+// =============================================================================
+
+describe("Feature 019 T012 — mcp status carries config-backed experimental/extension flag state (FR10)", () => {
+  test("experimental.status projects the config-backed flag SSOT so badges render truthfully", async () => {
+    const { dispatcher, wiring } = mcpHarness()
+    const added = await mcpMutate(dispatcher, "mcp.server.add", { name: "srv_x", transportKind: "stdio", endpoint: "opencode" })
+    await mcpMutate(dispatcher, "mcp.experimental.enable", { serverId: "srv_x", flag: "tasks", confirmed: true }, { version: added.version })
+    const status = await wiring.ports.mcp.invoke(ctx("mcp.experimental.status", { serverId: "srv_x" }))
+    expect(status.kind).toBe("query")
+    if (status.kind !== "query") return
+    const out = status.effective as { enabled: boolean; flags: ReadonlyArray<{ flag: string; enabled: boolean }> }
+    // The aggregate `enabled` (the default `tasks` flag) is the boolean the toggle row reads.
+    expect(out.enabled).toBe(true)
+    expect(out.flags.find((f) => f.flag === "tasks")?.enabled).toBe(true)
+    expect(out.flags.find((f) => f.flag === "sampling")?.enabled).toBe(false)
+  })
+
+  test("extension.status projects the config-backed enabled flag truthfully", async () => {
+    const { dispatcher, wiring } = mcpHarness()
+    const added = await mcpMutate(dispatcher, "mcp.server.add", { name: "srv_x", transportKind: "stdio", endpoint: "opencode" })
+    await mcpMutate(dispatcher, "mcp.extension.enable", { serverId: "srv_x", confirmed: true }, { version: added.version })
+    const status = await wiring.ports.mcp.invoke(ctx("mcp.extension.status", { serverId: "srv_x" }))
+    if (status.kind === "query") expect((status.effective as { enabled: boolean }).enabled).toBe(true)
+  })
+
+  test("a configured-but-unset server renders Disabled (enabled:false), not Unknown", async () => {
+    const { dispatcher, wiring } = mcpHarness()
+    await mcpMutate(dispatcher, "mcp.server.add", { name: "srv_y", transportKind: "stdio", endpoint: "opencode" })
+    const status = await wiring.ports.mcp.invoke(ctx("mcp.experimental.status", { serverId: "srv_y" }))
+    if (status.kind === "query") expect((status.effective as { enabled: boolean }).enabled).toBe(false)
+  })
+
+  test("a genuinely absent server carries NO aggregate enabled — the honest Unknown baseline", async () => {
+    const { wiring } = mcpHarness()
+    const experimental = await wiring.ports.mcp.invoke(ctx("mcp.experimental.status", { serverId: "srv_absent" }))
+    if (experimental.kind === "query") expect("enabled" in (experimental.effective as object)).toBe(false)
+    const extension = await wiring.ports.mcp.invoke(ctx("mcp.extension.status", { serverId: "srv_absent" }))
+    if (extension.kind === "query") expect("enabled" in (extension.effective as object)).toBe(false)
   })
 })

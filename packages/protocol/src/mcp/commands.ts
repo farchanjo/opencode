@@ -656,6 +656,13 @@ export interface ExperimentalStatusInput {
 }
 export interface ExperimentalStatusOutput {
   readonly flags: readonly ExperimentalFlagState[]
+  /**
+   * Feature 019 / FR10 — the aggregate config-backed toggle state for the domain
+   * Experimental control row (the default `tasks` flag the toggle governs). Present
+   * only when the server has a config-backed flag SSOT entry, so a genuinely absent
+   * server still renders `Unknown`; a connected server renders `Enabled`/`Disabled`.
+   */
+  readonly enabled?: boolean
 }
 
 export interface ExperimentalToggleInput {
@@ -684,7 +691,13 @@ export interface ExtensionStatusInput {
   readonly serverId: ServerId
 }
 export interface ExtensionStatusOutput {
-  readonly enabled: boolean
+  /**
+   * Feature 019 / FR10 — the config-backed extension toggle state. Present only when
+   * the server has a config-backed flag SSOT entry so a genuinely absent server still
+   * renders `Unknown`; a connected server renders `Enabled`/`Disabled` (never optional
+   * at the wire when the config entry exists).
+   */
+  readonly enabled?: boolean
   readonly capabilityString: "experimental/opencode.contentStream"
 }
 

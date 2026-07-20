@@ -98,6 +98,52 @@ describe("Feature 015 T008 — toggle state derivation (FR7, FR15)", () => {
   })
 })
 
+describe("Feature 019 T012 — truthful MCP Experimental/Extension toggle badges (FR10)", () => {
+  // Once the mcp status read carries the config-backed flag state, the toggle rows read
+  // the same `enabled` boolean the generic derivation already consumes. This pins that
+  // an available control renders Enabled/Disabled from the config-backed effective, and
+  // renders Unknown ONLY when the flag state is genuinely absent (no config entry).
+  const experimentalToggle: OperatorToggleControl = {
+    ...mcpToggle,
+    base: "mcp.experimental",
+    label: "Experimental",
+    enableId: "mcp.experimental.enable",
+    disableId: "mcp.experimental.disable",
+    availability: "available",
+  }
+  const extensionToggle: OperatorToggleControl = {
+    ...mcpToggle,
+    base: "mcp.extension",
+    label: "Extension",
+    enableId: "mcp.extension.enable",
+    disableId: "mcp.extension.disable",
+    availability: "available",
+  }
+
+  test("experimental.status config-backed effective renders Enabled/Disabled, not Unknown", () => {
+    // Shape mirrors `liveExperimentalPort.status`: flags[] + the aggregate `enabled` for the default flag.
+    const enabled = { flags: [{ serverId: "srv", flag: "tasks", enabled: true }], enabled: true }
+    const disabled = { flags: [{ serverId: "srv", flag: "tasks", enabled: false }], enabled: false }
+    expect(toggleBadge(toggleStateFrom(experimentalToggle, enabled))).toBe("Enabled")
+    expect(toggleBadge(toggleStateFrom(experimentalToggle, disabled))).toBe("Disabled")
+  })
+
+  test("extension.status config-backed effective renders Enabled/Disabled, not Unknown", () => {
+    const on = { enabled: true, capabilityString: "experimental/opencode.contentStream" }
+    const off = { enabled: false, capabilityString: "experimental/opencode.contentStream" }
+    expect(toggleBadge(toggleStateFrom(extensionToggle, on))).toBe("Enabled")
+    expect(toggleBadge(toggleStateFrom(extensionToggle, off))).toBe("Disabled")
+  })
+
+  test("a genuinely absent flag state (no aggregate `enabled`) still renders Unknown", () => {
+    // The backend omits `enabled` for a server with no config-backed flag SSOT entry.
+    expect(toggleBadge(toggleStateFrom(experimentalToggle, { flags: [] }))).toBe("Unknown")
+    expect(toggleBadge(toggleStateFrom(extensionToggle, { capabilityString: "experimental/opencode.contentStream" }))).toBe(
+      "Unknown",
+    )
+  })
+})
+
 describe("Feature 015 T009 — tri-state mode derivation (FR8)", () => {
   test("auto wins, else enabled maps to on/off", () => {
     expect(triStateModeFrom(smartTriState, { auto: true, enabled: true })).toBe("auto")

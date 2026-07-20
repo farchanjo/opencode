@@ -124,6 +124,23 @@ export interface McpServerActionInput {
   readonly serverId: string
 }
 
+/** Feature 019 / T010 — interactive-OAuth `mcp.auth.start` delegation input (FR8). */
+export interface McpAuthStartActionInput {
+  readonly serverId: string
+}
+/** Feature 019 / T010 — interactive-OAuth `mcp.auth.finish` delegation input (FR8). */
+export interface McpAuthFinishActionInput {
+  readonly serverId: string
+  readonly oauthState: string
+  /** Opaque callback query string; the code is never logged verbatim and never crosses an envelope (Security). */
+  readonly callbackParams: string
+}
+/** Feature 019 / T011 — resource `subscribe`/`unsubscribe` over the dual-authority machine (FR9). */
+export interface McpResourceSubscribeActionInput {
+  readonly serverId: string
+  readonly uri: string
+}
+
 /**
  * The mutation-plan seam the composition root injects when the operator runtime is
  * bound. The config-backed verbs persist through `mutateAuthority` over the operator
@@ -146,6 +163,23 @@ export interface McpMutationBackend {
   readonly planDisconnect: (input: McpServerActionInput) => Effect.Effect<OperatorMutationPlan, McpMutationError>
   readonly planReconnect: (input: McpServerActionInput) => Effect.Effect<OperatorMutationPlan, McpMutationError>
   readonly planAuthRemove: (input: McpServerActionInput) => Effect.Effect<OperatorMutationPlan, McpMutationError>
+  /**
+   * Feature 019 / T010 (FR8) — the interactive-TUI-only `mcp.auth.start`/`finish`
+   * delegation to the live OAuth flow, expressed as effectOnly mutation plans (the
+   * authorize URL surfaces via the effect value; no token/secret crosses the seam).
+   * A headless surface never reaches these (the command port gates on the request
+   * source); an unbound delegate is a typed `mcp_unavailable` gap.
+   */
+  readonly planAuthStart: (input: McpAuthStartActionInput) => Effect.Effect<OperatorMutationPlan, McpMutationError>
+  readonly planAuthFinish: (input: McpAuthFinishActionInput) => Effect.Effect<OperatorMutationPlan, McpMutationError>
+  /**
+   * Feature 019 / T011 (FR9) — resource `subscribe`/`unsubscribe` driven over the pure
+   * dual-authority subscription machine + a subscribe-capable live client, as effectOnly
+   * mutation plans. An absent server capability is a fail-closed `capability_absent`
+   * rejection; an unbound client is a typed `mcp_unavailable`; never a fabricated subscription.
+   */
+  readonly planResourceSubscribe: (input: McpResourceSubscribeActionInput) => Effect.Effect<OperatorMutationPlan, McpMutationError>
+  readonly planResourceUnsubscribe: (input: McpResourceSubscribeActionInput) => Effect.Effect<OperatorMutationPlan, McpMutationError>
 }
 
 /** A bounded, secret-free operator audit event (never a secret/token/URI-as-content/path, C26). */

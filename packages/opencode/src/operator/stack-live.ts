@@ -656,8 +656,7 @@ export async function createLiveOperatorStack(input: CreateLiveOperatorStackInpu
   }
 
   // Feature 017 / T010 — the local credential clear backing `mcp.auth.remove`
-  // (`MCP.Service.removeAuth` → `McpAuth.remove`). `auth.start`/`finish` stay typed gaps
-  // (interactive OAuth cannot run headless through the operator loopback) (FR5, ADR-0017).
+  // (`MCP.Service.removeAuth` → `McpAuth.remove`).
   const mcpAuthClear: McpBackendLive.McpAuthClear = {
     remove: (serverId) =>
       AppRuntime.runPromise(
@@ -668,10 +667,93 @@ export async function createLiveOperatorStack(input: CreateLiveOperatorStackInpu
       ),
   }
 
+  // Feature 019 / T010 (FR8) — the interactive-OAuth delegate over `MCP.Service`
+  // (`startAuth` returns the authorize URL + starts the loopback callback listener;
+  // `finishAuth` completes the exchange). Reached ONLY for an interactive TUI surface
+  // (the command port gates on the request source); a headless surface keeps the typed
+  // gap (ADR-0019 decision 5). The authorize URL is not a secret; no token or code
+  // verifier crosses the seam. `startAuth` may `die` for a non-OAuth server — the plan
+  // effect catches it and degrades to a typed `unavailable`.
+  const mcpAuthDelegate: McpBackendLive.McpAuthDelegate = {
+    start: (serverId) =>
+      AppRuntime.runPromise(
+        Effect.gen(function* () {
+          const svc = yield* MCP.Service
+          const result = yield* svc
+            .startAuth(serverId)
+            .pipe(Effect.catchTag("MCP.NotFoundError", () => Effect.succeed(null)))
+          if (!result) return { kind: "not_found" as const }
+          return { kind: "ok" as const, authorizationUrl: result.authorizationUrl, oauthState: result.oauthState }
+        }).pipe(Effect.provideService(InstanceRef, instance)),
+      ),
+    finish: (serverId, input) =>
+      AppRuntime.runPromise(
+        Effect.gen(function* () {
+          const svc = yield* MCP.Service
+          // The opaque callback query string carries the CSRF `state` + the authorization
+          // `code`; validate the state against the flow nonce before completing the exchange.
+          const params = new URLSearchParams(input.callbackParams.replace(/^\?/, ""))
+          const returnedState = params.get("state")
+          if (input.oauthState && returnedState && returnedState !== input.oauthState) {
+            return { kind: "state_mismatch" as const }
+          }
+          const code = params.get("code") ?? ""
+          const status = yield* svc
+            .finishAuth(serverId, code)
+            .pipe(Effect.catchTag("MCP.NotFoundError", () => Effect.succeed(null)))
+          if (!status) return { kind: "not_found" as const }
+          return { kind: "ok" as const, status: status.status }
+        }).pipe(Effect.provideService(InstanceRef, instance)),
+      ),
+  }
+
+  // Feature 019 / T011 (FR9) — the subscribe-capable live client over the SDK
+  // `subscribeResource`/`unsubscribeResource`. `capability` reports the negotiated
+  // `resources.subscribe` capability (absent → fail-closed `capability_absent`; no
+  // connected client → typed unavailable); the pure dual-authority machine gates the op.
+  const mcpSubscriptionClient: McpBackendLive.McpSubscriptionClient = {
+    capability: (serverId) =>
+      AppRuntime.runPromise(
+        Effect.gen(function* () {
+          const svc = yield* MCP.Service
+          const clients = yield* svc.clients()
+          const client = clients[serverId]
+          if (!client) return { kind: "no_client" as const }
+          return client.getServerCapabilities()?.resources?.subscribe === true
+            ? { kind: "capable" as const }
+            : { kind: "capability_absent" as const }
+        }).pipe(Effect.provideService(InstanceRef, instance)),
+      ),
+    subscribe: (serverId, uri) =>
+      AppRuntime.runPromise(
+        Effect.gen(function* () {
+          const svc = yield* MCP.Service
+          const clients = yield* svc.clients()
+          const client = clients[serverId]
+          if (client) yield* Effect.promise(() => client.subscribeResource({ uri }))
+        }).pipe(Effect.provideService(InstanceRef, instance)),
+      ),
+    unsubscribe: (serverId, uri) =>
+      AppRuntime.runPromise(
+        Effect.gen(function* () {
+          const svc = yield* MCP.Service
+          const clients = yield* svc.clients()
+          const client = clients[serverId]
+          if (client) yield* Effect.promise(() => client.unsubscribeResource({ uri }))
+        }).pipe(Effect.provideService(InstanceRef, instance)),
+      ),
+  }
+
   const mcpBackend = McpBackendLive.createLiveMcpBackend({
     override: McpBackendLive.createMcpServiceOverride(mcpHostReader, {
       servers: mcpLiveServers,
-      mutations: { config: store.config, actions: mcpLiveActions, authClear: mcpAuthClear },
+      mutations: {
+        config: store.config,
+        actions: mcpLiveActions,
+        authClear: mcpAuthClear,
+        auth: mcpAuthDelegate,
+        subscription: mcpSubscriptionClient,
+      },
     }),
   })
   const mcpWiring = McpStackWiring.createMcpDomainWiring({ backend: mcpBackend })
