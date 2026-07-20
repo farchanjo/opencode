@@ -38,9 +38,9 @@ coordinator) is FIRST — nothing runs without it.
 - [x] T009 — Honest run-now outcomes (overlap-rejected / executor-unavailable / replay)
 - [x] T010 — Emit definition-keyed `job.*` occurrence events
 - [x] T011 — History/show/watch resolve by `jobDefinitionId` (real executions)
-- [ ] T012 — `InterruptRegistry` process-singleton + execution-layer registration
-- [ ] T013 — Second-press forced abort consults the registry; first-press unchanged
-- [ ] T014 — Palette availability flip (`jobs.run-now` + process/task `cancel`)
+- [x] T012 — `InterruptRegistry` process-singleton + execution-layer registration
+- [x] T013 — Second-press forced abort consults the registry; first-press unchanged
+- [x] T014 — Palette availability flip (`jobs.run-now` + process/task `cancel`)
 - [ ] T015 — Composition + coordinator tests (arming, fail-open, admit→run→terminal)
 - [ ] T016 — Run-now + occurrence-history tests (effect once, overlap, real history)
 - [ ] T017 — Interrupt-edge + availability/parity tests (FR12)
@@ -311,7 +311,7 @@ coordinator) is FIRST — nothing runs without it.
 
 ## Group D — Interrupt edge (FR9, FR10)
 
-- [ ] **T012 — `InterruptRegistry` process-singleton + execution-layer registration**
+- [x] **T012 — `InterruptRegistry` process-singleton + execution-layer registration**
 - **Depends:** none
 - **Paths:** `packages/core/src/session/interrupt-registry.ts`, `packages/core/src/session/run-coordinator.ts`, `packages/core/src/session/execution/local.ts`
 - **Deliverable:** a process-singleton `InterruptRegistry`
@@ -322,9 +322,28 @@ coordinator) is FIRST — nothing runs without it.
 - **Acceptance:** the execution layer registers the active root run; the registry
   exposes only the narrow interrupt-key edge.
 - **Verification:** `bun test packages/core/test/session/**`; `bun run typecheck`.
-- **Evidence:** _(reserved)_
+- **Evidence:** 2026-07-20 — new process-singleton
+  `packages/core/src/session/interrupt-registry.ts` (module-level `Map<string,
+  Entry>`, shared across the whole process regardless of the resolving Effect
+  runtime — NO layer coupling). Surface: `register(rootKey, () => Effect<void>):
+  () => void` (token-guarded deregister so a stale terminal never evicts a fresher
+  entry, `interrupt-registry.ts:59`), `interrupt(rootKey): Effect<ForcedAbortOutcome>`
+  (`:80`, present → runs the handle + `disposition: "interrupted"`; absent →
+  `disposition: "unconfirmed"`, `reason: "no_active_run_registered"`, never a throw),
+  `has`/`size`/`reset`, and `withRegisteredRun(rootKey, handle, run)` (`:115`, registers
+  at run start + deregisters on terminal via `Effect.ensuring`). The execution layer
+  (`packages/core/src/session/execution/local.ts:22-45`) composes its drain through
+  `withRegisteredRun(String(sessionID), () => coordinator.interrupt(sessionID), …)` —
+  the interrupt key it exposes is EXACTLY the `SessionRunCoordinator` key operator
+  cancel targets (a forward `let coordinator` breaks the construction cycle; the handle
+  is only invoked at forced-abort time). Test:
+  `packages/core/test/session/interrupt-registry.test.ts` (register/deregister
+  lifecycle, token-guarded double-register, absent → unconfirmed, interrupt of a live
+  run over a REAL coordinator composed exactly as `local.ts` composes it → fiber
+  aborted + deregistered on terminal). `bun run typecheck` (core) EXIT=0; `bun test
+  test/session test/operator session-run-coordinator.test.ts` 335 pass.
 
-- [ ] **T013 — Second-press forced abort consults the registry; first-press unchanged**
+- [x] **T013 — Second-press forced abort consults the registry; first-press unchanged**
 - **Depends:** T012
 - **Paths:** `packages/opencode/src/operator/lifecycle/stack-wiring.ts`, `packages/opencode/src/operator/lifecycle/**`
 - **Deliverable:** replace the log-only `rootInterruptor` stub (`stack-wiring.ts:283-289`)
@@ -336,11 +355,30 @@ coordinator) is FIRST — nothing runs without it.
 - **Acceptance:** a registered root run is interrupted on second press; an absent key
   degrades to `unconfirmed`; the first-press path is byte-for-byte unchanged.
 - **Verification:** `bun test packages/opencode/test/operator/**` (forced abort).
-- **Evidence:** _(reserved)_
+- **Evidence:** 2026-07-20 — the log-only stub is replaced
+  (`packages/opencode/src/operator/lifecycle/stack-wiring.ts` `rootInterruptor`): it
+  now imports the narrow `SessionInterruptRegistry` from
+  `@opencode-ai/core/session/interrupt-registry` (the SMALLEST edge — NO operator→
+  `SessionExecution` dependency) and its `interrupt(key)` calls
+  `SessionInterruptRegistry.interrupt(key)`, logging the returned disposition. A
+  registered in-process run → the live `SessionRunCoordinator.interrupt` runs
+  (`interrupted`); an absent entry → `unconfirmed`, issuing nothing (never a
+  fabricated stop). The operator-facing cancel outcome stays `unconfirmed` (the
+  `CancelOutcome` literal set has no "interrupted" — no remote kill promised); the
+  disposition is the narrow `#ForcedAbortOutcome`. The FIRST-press path (fence +
+  cancel_requested emits, `:291-295`) and the `Cancel` service are UNTOUCHED. Tests:
+  `packages/opencode/test/operator/forced-abort-interrupt.test.ts` drives the REAL
+  `Cancel` service over the SAME registry-backed `rootInterruptor` stack-wiring builds
+  — a second press against a registered live run really aborts its fiber
+  (`Cause.hasInterruptsOnly`) + deregisters; a second press with no live run stays
+  `unconfirmed`; the first press fences + emits two `cancel_requested` and never
+  consults the registry; the shipped `test/lifecycle/cancel.test.ts` regression is
+  unchanged and green. `bun run typecheck` (opencode) EXIT=0; `bun test test/operator
+  test/lifecycle test/jobs` 569 pass / 2 skip.
 
 ## Group E — Availability flip + parity (FR11, FR12, FR13)
 
-- [ ] **T014 — Palette availability flip (`jobs.run-now` + process/task `cancel`)**
+- [x] **T014 — Palette availability flip (`jobs.run-now` + process/task `cancel`)**
 - **Depends:** T008, T013
 - **Paths:** `packages/core/src/operator/palette.ts`
 - **Deliverable:** update `OPERATOR_PERSISTING_VERBS`/`persistenceFor`/`domainBadge`
@@ -350,7 +388,36 @@ coordinator) is FIRST — nothing runs without it.
 - **Acceptance:** the newly-composed verbs no longer read `unavailable`; still-gapped
   verbs stay honest; no verb advertises a capability it lacks.
 - **Verification:** `bun test packages/core/test/operator/**` (palette).
-- **Evidence:** _(reserved)_
+- **Evidence:** 2026-07-20 — availability-truth decision + rationale:
+  (1) **`jobs.run-now`** — the core `palette.ts` needs NO code change: `jobs` is
+  already in `OPERATOR_PERSISTING_DOMAINS`, so `persistenceFor("jobs.run-now")` is
+  `persists_today`/available. The stale gap lived ONLY in the TUI presentation set
+  `TYPED_GAP_IDS` (`packages/tui/src/operator/entity.ts`), which marked run-now inert.
+  Group B (T008/T009) made run-now enqueue an immediate occurrence through
+  `mutateAuthority` and commit (effect runs once after the CAS checks), so the VERB
+  genuinely works and per FR11 must not read `unavailable`; run-now is removed from
+  `TYPED_GAP_IDS` (now `new Set<string>()`, kept as the seam for any future
+  presentation-only gap). The disarmed-executor / overlap-rejected envelope and the
+  occurrence's own `headless_incapable` terminal (ADR-0018 decision 3) are honest
+  RUNTIME outcomes of a working verb, NOT a catalog-level gap — the honest availability
+  class is therefore `persists_today`/available (NOT a typed gap).
+  (2) **process/task `cancel`** — NO code change: `process`/`task` are already
+  persisting domains, so both verbs already read available (the first-press cancel was
+  always real). With T013 the second-press forced abort is now real WHEN the run is
+  in-process; a cross-process second press stays `unconfirmed` — that is an honest
+  runtime disposition, not a per-command-id (catalog) unavailability, so `available`
+  stays truthful and is confirmed by test (no downgrade needed).
+  (3) **Boundaries** — `mcp.auth.start`/`finish` and `output.export`/`share` stay
+  `honest_unavailable` typed gaps; smart consumption unchanged. Parity pinned: reserved
+  catalog version unchanged at `1.3.0`, no new id, palette entry count == catalog
+  entry count. Tests: `packages/core/test/operator/feature018-availability.test.ts`
+  (run-now + cancel read composed truth; boundaries stay honest; version/id/count
+  parity) + updated `packages/tui/test/operator/entity.test.ts` (run-now no longer
+  `unavailable`, still rides the canonical id). `bun test test/operator` (core) 335
+  pass; `bun test test/operator` (tui) 175 pass. NOTE: T017's interrupt-edge +
+  availability + parity assertions are satisfied by these same tests
+  (`interrupt-registry.test.ts`, `forced-abort-interrupt.test.ts`,
+  `feature018-availability.test.ts`).
 
 ## Group F — Tests + guard scope + doc sync (FR12)
 
