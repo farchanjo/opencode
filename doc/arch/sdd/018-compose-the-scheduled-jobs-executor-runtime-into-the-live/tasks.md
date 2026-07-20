@@ -34,10 +34,10 @@ coordinator) is FIRST — nothing runs without it.
 - [x] T005 — Implement `createProcess`/`provisionTodo`/`provisionOutputGroup`
 - [x] T006 — Run headless via the shared spool writer; same permission surface (no bypass)
 - [x] T007 — Bounded concurrency over the existing overlap/misfire policies
-- [ ] T008 — Convert `jobs.run-now` to an effectful mutation plan (enqueue occurrence)
-- [ ] T009 — Honest run-now outcomes (overlap-rejected / executor-unavailable / replay)
-- [ ] T010 — Emit definition-keyed `job.*` occurrence events
-- [ ] T011 — History/show/watch resolve by `jobDefinitionId` (real executions)
+- [x] T008 — Convert `jobs.run-now` to an effectful mutation plan (enqueue occurrence)
+- [x] T009 — Honest run-now outcomes (overlap-rejected / executor-unavailable / replay)
+- [x] T010 — Emit definition-keyed `job.*` occurrence events
+- [x] T011 — History/show/watch resolve by `jobDefinitionId` (real executions)
 - [ ] T012 — `InterruptRegistry` process-singleton + execution-layer registration
 - [ ] T013 — Second-press forced abort consults the registry; first-press unchanged
 - [ ] T014 — Palette availability flip (`jobs.run-now` + process/task `cancel`)
@@ -193,7 +193,7 @@ coordinator) is FIRST — nothing runs without it.
 
 ## Group B — Run-now conversion (FR7)
 
-- [ ] **T008 — Convert `jobs.run-now` to an effectful mutation plan (enqueue occurrence)**
+- [x] **T008 — Convert `jobs.run-now` to an effectful mutation plan (enqueue occurrence)**
 - **Depends:** T001, T005
 - **Paths:** `packages/opencode/src/operator/jobs/backend-live.ts`, `packages/opencode/src/operator/jobs/**`
 - **Deliverable:** convert `planRunNow` (`backend-live.ts:93`) from the typed
@@ -204,9 +204,22 @@ coordinator) is FIRST — nothing runs without it.
 - **Acceptance:** a dispatch enqueues one immediate occurrence and returns its identity;
   the effect runs once after the checks; an idempotent replay does not re-enqueue.
 - **Verification:** `bun test packages/opencode/test/operator/**` (run-now plan).
-- **Evidence:** _(reserved)_
+- **Evidence:** 2026-07-20 — a new `enqueueImmediate` seam on the executor composition
+  singleton (`executor-composition.ts:enqueueImmediate`, driving the SAME trigger
+  service + bounded overlap tracker the cron loop uses — no second executor/dispatch
+  path) is bound at the operator composition root
+  (`operator/stack-live.ts` `jobsRunNow` → `ExecutorComposition.ensureExecutorComposition().enqueueImmediate`).
+  `planRunNow` (`operator/jobs/backend-live.ts`) now returns an `OperatorMutationPlan`
+  whose `effect` calls that seam; `apply` is identity (run-now records no definition
+  mutation — the settled token rides the `jobs` authority) so `mutateAuthority` runs
+  the enqueue EXACTLY ONCE after the contract/CAS checks. An unbound executor keeps the
+  honest `unavailable` gap. Test: `test/jobs/run-now.test.ts` "a dispatch enqueues one
+  immediate occurrence and commits (effect runs once)" (`runNow.calls === 1`, `result.ok`);
+  `test/jobs/executor-composition.test.ts` "enqueues one immediate occurrence, provisions +
+  runs headless, emits terminal". `bun run typecheck` EXIT=0; `bun test test/jobs` 85 pass;
+  `bun test test/operator` 429 pass.
 
-- [ ] **T009 — Honest run-now outcomes (overlap-rejected / executor-unavailable / replay)**
+- [x] **T009 — Honest run-now outcomes (overlap-rejected / executor-unavailable / replay)**
 - **Depends:** T008
 - **Paths:** `packages/opencode/src/operator/jobs/**`
 - **Deliverable:** map the enqueue result to the honest `#RunNowOutcome` — `enqueued`,
@@ -215,11 +228,25 @@ coordinator) is FIRST — nothing runs without it.
 - **Acceptance:** an in-flight `forbid` run returns the typed rejection; a disarmed
   executor returns the typed gap.
 - **Verification:** `bun test packages/opencode/test/operator/**` (outcome cases).
-- **Evidence:** _(reserved)_
+- **Evidence:** 2026-07-20 — `EnqueueImmediateResult`
+  (`executor-composition.ts`) is the closed `enqueued | overlap_rejected |
+  executor_unavailable` union: an in-flight `forbid` sibling (tracked by the bounded
+  active-occurrence tracker) → `overlap_rejected`; a capability the in-process surface
+  cannot enforce (queue/replace) → `overlap_rejected`; a disarmed composition →
+  `executor_unavailable`. `planRunNow` maps these onto the mutation `effect`'s typed
+  failure (`conflict` / `unavailable`) so `mutateAuthority` aborts BEFORE the CAS write
+  — NO phantom write, the effect still ran exactly once. A disabled/not-found definition
+  is a typed failure at PLAN time before any effect. Tests: `test/jobs/run-now.test.ts`
+  "an overlap rejection returns a typed failure and commits nothing (no phantom)"
+  (asserts the `jobs` authority version is UNCHANGED after a rejection), "a disarmed
+  executor returns a typed unavailable and commits nothing", "a disabled definition is a
+  typed failure BEFORE any plan/effect", "a not-found definition is a typed failure";
+  `test/jobs/executor-composition.test.ts` "a forbid overlap with an in-flight sibling →
+  overlap_rejected, no second run", "a disarmed executor → executor_unavailable".
 
 ## Group C — Definition-keyed occurrence events (FR8)
 
-- [ ] **T010 — Emit definition-keyed `job.*` occurrence events**
+- [x] **T010 — Emit definition-keyed `job.*` occurrence events**
 - **Depends:** T006
 - **Paths:** `packages/opencode/src/jobs/**`, `packages/opencode/src/event-v2-bridge.ts`
 - **Deliverable:** emit the `job.*` occurrence events (`events-occurrence.cue`) through
@@ -230,20 +257,57 @@ coordinator) is FIRST — nothing runs without it.
 - **Acceptance:** a completed occurrence emits definition-keyed events; the durable read
   resolves them by `jobDefinitionId`.
 - **Verification:** `bun test packages/opencode/test/jobs/**` + `packages/opencode/test/operator/**`.
-- **Evidence:** _(reserved)_
+- **Evidence:** 2026-07-20 — **implemented WITHOUT a schema or bridge change** (both are
+  out of the Feature 018 guard scope). The `EventV2Bridge.publishJobEvent` derives the
+  durable aggregate from the top-level `root_session_id` projected from
+  `envelope.tree.root_session_id` (`jobs/event-definitions.ts:37` `aggregate:
+  "root_session_id"`); `Ids.RootSessionId` and `Ids.JobDefinitionId` share the SAME id
+  pattern, so a scheduled occurrence — which has no external parent session — roots on
+  its own definition (`rootSessionId = jobDefinitionId`), making the durable aggregate ==
+  `jobDefinitionId` (`#DefinitionKeyedAggregate`). This is set for run-now
+  (`operator/stack-live.ts` `jobsRunNow.rootSessionId = request.jobDefinitionId`) and for
+  scheduled due signals (`jobs/executor-reconcile.ts` `toDueRegistrationView.rootSessionId
+  = summary.jobDefinitionId`), so every trigger-service + terminal event lands under the
+  `jobDefinitionId` aggregate. Test: `test/jobs/executor-composition.test.ts` "every
+  occurrence event roots on the definition (definition-keyed aggregate)" (asserts every
+  emitted envelope `rootSessionId === jobDefinitionId`);
+  `test/jobs/definition-keyed-history.test.ts` round-trip.
 
-- [ ] **T011 — History/show/watch resolve by `jobDefinitionId` (real executions)**
+- [x] **T011 — History/show/watch resolve by `jobDefinitionId` (real executions)**
 - **Depends:** T010
 - **Paths:** `packages/opencode/src/operator/jobs/occurrence-projection.ts`, `packages/opencode/src/operator/jobs/backend-live.ts`
 - **Deliverable:** confirm the Feature 017 occurrence projection
   (`occurrence-projection.ts`, `backend-live.ts:48`) resolves the definition-keyed
   events so `jobs.history`/`show-occurrences`/`watch` reflect real executions
   (`#OccurrenceRead`) instead of an honest-empty list; the watch subscription stays
-  bounded and closable (FR8).
+  bounded and closable (FR8). ALSO wire the live `reconcileSource`/`resolveDueContext`
+  (left honest-empty by Group A) to the real jobs persistence so enabled definitions
+  rehydrate at `arm()`.
 - **Acceptance:** after a job runs, `jobs.history` returns real occurrences keyed by
   definition; `watch` is bounded and closable; an unbound bridge degrades to a typed gap.
 - **Verification:** `bun test packages/opencode/test/operator/**` (history/watch).
-- **Evidence:** _(reserved)_
+- **Evidence:** 2026-07-20 — the SHIPPED Feature 017 `createJobOccurrenceProjection`
+  (unchanged) reads the durable page by `jobDefinitionId`; with T010's definition-keyed
+  aggregate its `history`/`showOccurrences` now return REAL executions. Round-trip proven
+  end to end: the executor emits under the `jobDefinitionId` aggregate → the real
+  projection resolves them (`test/jobs/definition-keyed-history.test.ts` "executor emits
+  under the jobDefinitionId aggregate → jobs.history returns it"; a foreign definition's
+  aggregate stays empty — defence in depth). RECONCILE REHYDRATION: a new
+  `jobs/executor-reconcile.ts` `createExecutorReconcileSeams(persistence)` projects the
+  committed operator `jobs` records into the cron adapter's `RegistrationView` /
+  `DueRegistrationView`, reusing the REAL `createOperatorJobPersistence` (no second
+  store); `executor-composition-live.ts` binds it over a lazy, fail-open READ-ONLY
+  durable store on the ambient server `Config.Service` (a slow/absent config never blocks
+  arming and never claims past execution). Test: `test/jobs/executor-reconcile.test.ts`
+  "arm() re-registers a persisted enabled definition (startup rehydration)", "a persisted
+  disabled definition is not re-registered", "resolveDueContext yields a definition-keyed
+  view; a missing definition drops honestly". NOTE (availability): the core palette
+  already reads `jobs.run-now` as `persists_today`/available (the `jobs` domain is a
+  persisting domain) so no core flip is required; the TUI `TYPED_GAP_IDS` marker
+  (`packages/tui/src/operator/entity.ts`) is deliberately left unchanged — the run-now
+  enqueue+commit path is real, but a headless goal-bearing occurrence still honestly
+  degrades to `headless_incapable` (ADR-0018 decision 3), and the holistic availability
+  flip is Group E / T014.
 
 ## Group D — Interrupt edge (FR9, FR10)
 
