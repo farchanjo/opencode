@@ -619,3 +619,65 @@ the user's burning pain on every screen.
   machinery (Feature 005), the `EventV2Bridge` durable seam (Feature 002/003), the
   `semantic/milvus-adapter` stack (Feature 006), and the Feature 015 edit-modal
   machinery — all already in the codebase; no new dependency is introduced.
+
+## Fix-round — adversarial review (2026-07-19)
+
+An adversarial review of the landed backend work confirmed 2 defects + 1 root
+mechanism. All fixed spec-first (ADR-0017 superseding decision) then in code; see
+that ADR section for the design rationale.
+
+- [x] **FR-1 — Effectful apply: the irreversible op runs AFTER the CAS checks (DEFECT 1)**
+- **Was:** `output.release`/`delete`/`purge`, `mcp.server.connect`/`disconnect`/`reconnect`,
+  and `mcp.auth.remove` ran their destructive op at plan-BUILD time
+  (`dispatcher.ts` `handler(ctx)`), BEFORE `mutateAuthority`'s contract/idempotency/CAS
+  validation — a 2nd op on a shared authority destroyed data then failed CAS, and an
+  idempotent replay re-ran the op.
+- **Paths:** `packages/opencode/src/operator/application/handler.ts` (new `effect` +
+  `OperatorMutationEffectResult` on `OperatorMutationPlan`),
+  `application/mutation.ts` (runs `effect` after all checks, before the CAS write),
+  `application/dispatcher.ts` (threads `plan.effect`),
+  `operator/outputspool/backend-live.ts` + `operator/mcp/backend-live.ts` (op deferred
+  into `effect`; only the non-destructive pre-read stays at plan build).
+- **Evidence:** `test/operator/feature017-fixround.test.ts` — a 2nd `output.delete` /
+  `mcp.server.connect` without the CAS token does NOT run the destructive op
+  (op-count spy stays 1) and the record survives; threading the right version runs it
+  once; an idempotent replay returns the stored result with the live op NOT re-run
+  (connect count stays 1). `bun test test/operator/ test/config/` green (614 pass).
+
+- [x] **FR-2 — Preflight resolves the SAME authority the plan commits to (ROOT MECHANISM)**
+- **Was:** the preflight read `commandId.split(".")[0]`, which never equals the shared
+  global authority (`global:telemetry`/`global:mcp`/`global:output-admin`/…), so the
+  client threaded the wrong `expectedVersion` and every 2nd mutation on a shared
+  authority failed `mutations require version` — also breaking pre-existing 014 verbs
+  (2nd `telemetry.configure`).
+- **Paths:** `packages/opencode/src/operator/application/command-authority.ts` (new
+  registry sourced from the domains' exported authority constants + the composition
+  root's scope resolvers — no re-typed string table), exported constants in
+  `telemetry`/`smart`/`budget`/`pools`/`semantic`/`mcp` backends, `http/handler.ts`
+  (preflight consults the resolver + scope), `http/mount.ts` + `stack-live.ts` +
+  `worker-adapter.ts` + `adapters/inbound/tui-port.ts` (thread the resolver through
+  every operator surface), `adapters/inbound/http-slash-port.ts` +
+  `rpc-slash-port.ts` (send the resolved scope).
+- **Evidence:** `feature017-fixround.test.ts` — resolver maps every shared/scope-dependent
+  authority; end-to-end two consecutive `telemetry.configure`, `output.retention.set`,
+  and `mcp.server.add` succeed through the real dispatcher with the preflight-threaded
+  CAS token (and the buggy prefix fallback is asserted to mis-resolve to null).
+
+- [x] **FR-3 — Eager process spool writer, independent of the operator stack (DEFECT 2)**
+- **Was:** the production writer was subscribed only inside the lazy
+  `createLiveOperatorStack`, so a session that never opened the operator never spooled;
+  output before first operator access was lost.
+- **Paths:** `packages/opencode/src/outputspool/spool-process-writer.ts` (new process
+  singleton, idempotent, fail-open), `server/server.ts` (armed eagerly at server start),
+  `operator/stack-live.ts` (REUSES the shared store + subscription — no second
+  `operator-control.db` connection, no duplicate GlobalBus listener; dispose no longer
+  tears the writer down).
+- **Evidence:** `feature017-fixround.test.ts` — a `message.part.updated` GlobalBus event
+  is spooled to the shared control store with NO operator stack ever created; a second
+  `ensureProcessSpoolWriter` reuses the same store.
+
+- [x] **FR-4 — Suites + typecheck green**
+- **Verification:** `bun run typecheck` (exit 0); `bun test test/operator/ test/config/`
+  (614 pass, 0 fail); `bun test test/session/` (368 pass); `bun test test/server/`
+  (293 pass); `packages/tui` `bun test test/operator/` (175 pass);
+  `speckit validate --json` green.

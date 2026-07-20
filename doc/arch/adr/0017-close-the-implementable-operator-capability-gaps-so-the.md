@@ -216,6 +216,54 @@ writer lifecycle as a statechart in `doc/arch/statecharts/output-spool-writer.md
   forced-abort edge, and the Smart Routing consumption edge remain open for future
   features once those dependencies are reachable from the operator `AppRuntime`.
 
+## Superseding decision — fix-round (2026-07-19)
+
+An adversarial review of the landed backend work found the "no phantom writes" and
+"the operator reads real output" outcomes were only PARTIALLY realized. Three
+defects, and the honest fix now recorded as superseding the relevant clauses above:
+
+- **The store-scoped / live-service op ran at plan-BUILD time, before the CAS
+  checks (supersedes the `release`/`delete`/`purge` and `server.connect`/`disconnect`/
+  `reconnect` + `auth.remove` clauses).** The plan's `apply` was described as "performs
+  the control-store op", but in code the op executed inside the effect that BUILT the
+  plan — i.e. at `dispatcher.ts` `handler(ctx)`, BEFORE `mutateAuthority`'s
+  contract/idempotency/CAS validation. A second op on a shared authority
+  (`global:output-admin`/`global:mcp-connections`/`global:mcp-auth`) destroyed data and
+  then failed CAS, and an idempotent replay re-ran the destructive op. **Fix:**
+  `OperatorMutationPlan` gains an optional `effect` (`packages/opencode/src/operator/
+  application/handler.ts`). `mutateAuthority` runs it EXACTLY ONCE, AFTER contract +
+  idempotency-claim + CAS-precondition validation and BEFORE the committed CAS write;
+  a typed failure aborts with an envelope and commits nothing, and an idempotent replay
+  returns the stored result WITHOUT running the effect. The non-destructive pre-read
+  (`require`) stays at plan build so `not_found` still fails before any op. The pure
+  config-backed plans keep `effect` unset and stay pure.
+
+- **The preflight resolved the wrong authority (new decision).** The mutation preflight
+  read `commandId.split(".")[0]`, which never equals the shared global authority a plan
+  commits to, so the client threaded the wrong `expectedVersion` and every 2nd mutation
+  on a shared authority failed `mutations require version` (this also broke the
+  pre-existing Feature 014 verbs, e.g. a 2nd `telemetry.configure`). **Fix:** a per-command
+  authority registry (`packages/opencode/src/operator/application/command-authority.ts`)
+  SOURCED from the domains — static authorities are the domain modules' own exported
+  constants, scope-dependent ones use the SAME resolver lambdas the composition root
+  binds to the backends. It is threaded into the preflight through every operator surface
+  (HTTP handler, the trusted worker fetch, the in-process TUI slash port); the client
+  sends the resolved scope so a scope-dependent authority matches. Unknown ids fall back
+  to the prefix (no regression).
+
+- **The production spool writer was unreachable in normal sessions (supersedes the
+  "writer subscribed at the session message-part seam" placement).** The subscription
+  lived only inside the lazy `createLiveOperatorStack`, so a session that never opened
+  the operator never spooled, and output before first operator access was lost. **Fix:**
+  a process-wide singleton bootstrap (`packages/opencode/src/outputspool/
+  spool-process-writer.ts`) armed eagerly at server start (`server.ts`), independent of
+  the operator stack; the operator stack REUSES the one store + subscription (never a
+  second `operator-control.db` connection or a duplicate GlobalBus listener). Fail-open.
+
+All three preserve the invariants: every mutating verb still commits through the single
+`mutateAuthority` path, nothing is fabricated on a rejected mutation, and no catalog id
+or version changes.
+
 ## Related
 
 - Feature specification: [017 Close the Implementable Operator Capability Gaps](../sdd/017-close-the-implementable-operator-capability-gaps-so-the/spec.md)

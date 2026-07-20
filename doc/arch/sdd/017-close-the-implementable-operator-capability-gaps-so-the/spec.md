@@ -2,7 +2,7 @@
 id: 019f7cb5-1e69-7022-b1da-9b64b6e1c52d
 number: 017
 slug: close-the-implementable-operator-capability-gaps-so-the
-status: analyzed
+status: implemented
 created_at: 2026-07-19T23:27:52.425498Z
 ---
 # Feature Specification: Close the Implementable Operator Capability Gaps
