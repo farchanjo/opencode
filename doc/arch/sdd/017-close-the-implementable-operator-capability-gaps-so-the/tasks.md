@@ -28,12 +28,12 @@ Legend:
 Checkbox backlog (details under each group below). Group A (TUI editing) is FIRST —
 the user's burning pain on every screen.
 
-- [ ] T001 — Extend the edit descriptor from one field to an ordered field list
-- [ ] T002 — Render the multi-field edit modal (per-field validation, enum pickers)
-- [ ] T003 — Compose the byte-exact payload, single dispatch, in-modal error
-- [ ] T004 — `pools.set` bindings-list editor
-- [ ] T005 — `routing.configure` structured sub-form + advanced-JSON fallback
-- [ ] T006 — Detail view tree renderer (distinct from the compact status strip)
+- [x] T001 — Extend the edit descriptor from one field to an ordered field list
+- [x] T002 — Render the multi-field edit modal (per-field validation, enum pickers)
+- [x] T003 — Compose the byte-exact payload, single dispatch, in-modal error
+- [x] T004 — `pools.set` bindings-list editor
+- [x] T005 — `routing.configure` structured sub-form + advanced-JSON fallback
+- [x] T006 — Detail view tree renderer (distinct from the compact status strip)
 - [ ] T007 — MCP `liveServerPort` over `MCP.Service.status()`/`clients()`
 - [ ] T008 — Convert config-backed MCP mutations to the `mutation_plan` contract
 - [ ] T009 — Live-service MCP action plans (`connect`/`disconnect`/`reconnect`)
@@ -57,7 +57,7 @@ the user's burning pain on every screen.
 
 ## Group A — Operator TUI editing: multi-field modals + detail view tree (FR19-FR23) — FIRST
 
-- [ ] **T001 — Extend the edit descriptor from one field to an ordered field list**
+- [x] **T001 — Extend the edit descriptor from one field to an ordered field list**
 - **Depends:** none
 - **Paths:** `packages/tui/src/operator/form/edit-descriptor.ts`, `form/descriptor.ts`
 - **Deliverable:** grow the Feature 015 single-field `OperatorEditPrefill` (`extract`
@@ -70,9 +70,14 @@ the user's burning pain on every screen.
   carries no resolved value; a verb absent from the registry keeps the honest empty
   behavior.
 - **Verification:** `bun test packages/tui/test/operator/**`; `bun run typecheck`.
-- **Evidence:** _(implement: date + file:line + test result)_
+- **Evidence:** 2026-07-19 — `packages/tui/src/operator/form/field-list.ts` new
+  `EditField`/`EditFieldListDescriptor` + `resolveOperatorFieldList` registry covering
+  telemetry.configure / budget.set / pools.set / routing.configure / mcp.server.add+update /
+  output.retention.set / output.quota.set / jobs.create+update / semantic.provider.add+update;
+  secret fields (`field-list.ts:283,325` secretRef) carry no `prefill`. Tests
+  `packages/tui/test/operator/multi-field.test.ts` (T001 blocks) green; tui + core typecheck clean.
 
-- [ ] **T002 — Render the multi-field edit modal (per-field validation, enum pickers)**
+- [x] **T002 — Render the multi-field edit modal (per-field validation, enum pickers)**
 - **Depends:** T001
 - **Paths:** `packages/tui/src/operator/form/edit-modal.tsx`, `form/index.tsx`
 - **Deliverable:** render the ordered field list in the modal — one labeled input per
@@ -83,9 +88,15 @@ the user's burning pain on every screen.
   picker (not a raw JSON prompt); an invalid field shows an in-modal error; the modal
   contract is unchanged.
 - **Verification:** `bun test packages/tui/test/operator/modal.test.ts`.
-- **Evidence:** _(implement)_
+- **Evidence:** 2026-07-19 — `packages/tui/src/operator/form/multi-field-modal.tsx`
+  `MultiFieldForm` renders the ordered list (one `<input>`/`<textarea>` per text field,
+  enum properties as `DialogSelect` pickers, toggles, bindings editor) with a silent
+  pre-fill read, per-field validation, in-modal error, busy state, `esc`/Save, unchanged
+  Feature 015 modal contract. Wired via `dialog-settings.tsx onSelectSetting` +
+  `entity-screens.tsx` create/edit ahead of the single-field path. `modal.test.ts`
+  (Feature 015) + `multi-field.test.ts` green; full tui suite 500/500.
 
-- [ ] **T003 — Compose the byte-exact payload, single dispatch, in-modal error**
+- [x] **T003 — Compose the byte-exact payload, single dispatch, in-modal error**
 - **Depends:** T002
 - **Paths:** `packages/tui/src/operator/form/**`
 - **Deliverable:** on Save compose exactly the port-contract payload — byte-exact keys
@@ -96,9 +107,16 @@ the user's burning pain on every screen.
 - **Acceptance:** Save composes the exact typed payload and dispatches once; a
   non-composable payload stays in-modal (no global toast).
 - **Verification:** `bun test packages/tui/test/operator/dispatch.test.ts`.
-- **Evidence:** _(implement)_
+- **Evidence:** 2026-07-19 — `field-list.ts composePayload` + per-verb `compose`
+  build byte-exact payloads (the 014 lesson: `mcp.server.add` → `{name,transportKind,endpoint}`,
+  NOT `{id,url,transport}`; budget nests under `limits`; update verbs nest under `patch`;
+  CAS `expectedVersion` rides the existing dispatch preflight, not hand-composed).
+  `MultiFieldForm.submit` composes once and dispatches once through `executeOperatorCommand`
+  (silent); a required/parse/JSON failure sets the in-modal error, never a toast. Tests
+  `multi-field.test.ts` (byte-exact compose per verb + single-dispatch spy on pools.set +
+  in-modal error paths) green.
 
-- [ ] **T004 — `pools.set` bindings-list editor**
+- [x] **T004 — `pools.set` bindings-list editor**
 - **Depends:** T003
 - **Paths:** `packages/tui/src/operator/form/**`
 - **Deliverable:** a bindings-list editor managing an ordered list of `{role, models}`
@@ -113,9 +131,15 @@ the user's burning pain on every screen.
   `requires a bindings array of { role, models }` toast is gone (surfaced in-modal if
   incomposable).
 - **Verification:** `bun test packages/tui/test/operator/**`.
-- **Evidence:** _(implement)_
+- **Evidence:** 2026-07-19 — `field-list.ts` `bindings_list` field + `prefillBindings`
+  (from `pools.show` effective) + `composeBindingsPayload` → exactly `{bindings:[{role,models}]}`
+  (blank-role rows dropped, model ids trimmed). `multi-field-modal.tsx` `BindingsEditor` +
+  `BindingRowEditor` add/remove binding rows and add/remove model entries in-modal; a
+  non-composable payload surfaces in-modal. The old `requires a bindings array` global toast
+  path is bypassed. Tests `multi-field.test.ts` (T004 block: prefill, add/remove flows,
+  compose, single dispatch) green.
 
-- [ ] **T005 — `routing.configure` structured sub-form + advanced-JSON fallback**
+- [x] **T005 — `routing.configure` structured sub-form + advanced-JSON fallback**
 - **Depends:** T003
 - **Paths:** `packages/tui/src/operator/form/**`
 - **Deliverable:** because the routing policy is a large document, render a structured
@@ -127,9 +151,15 @@ the user's burning pain on every screen.
 - **Acceptance:** `routing.configure` opens the structured common fields + a labeled
   advanced JSON field; no bare unlabeled JSON prompt path remains.
 - **Verification:** `bun test packages/tui/test/operator/**`.
-- **Evidence:** _(implement)_
+- **Evidence:** 2026-07-19 — `field-list.ts` `routing.configure` descriptor: `enabled`
+  toggle + `mode` picker (`always`/`auto`/`never`, verbatim `RoutingConfig.RoutingMode`) +
+  labeled `advanced_json` field; `compose` spreads the advanced policy over the structured
+  fields. Confirmed the `routing.configure` port is an unconditional `not_implemented`
+  documented boundary (`routing/adapters/inbound/routing-command-port.ts`) — the modal
+  replaces the raw prompt and surfaces the typed outcome in-modal. Tests `multi-field.test.ts`
+  (T005 block) green.
 
-- [ ] **T006 — Detail view tree renderer (distinct from the compact status strip)**
+- [x] **T006 — Detail view tree renderer (distinct from the compact status strip)**
 - **Depends:** none
 - **Paths:** `packages/tui/src/operator/status.ts`, `packages/tui/src/operator/**` (view modal)
 - **Deliverable:** a new detail-tree renderer for the view modal that expands records/
@@ -143,7 +173,14 @@ the user's burning pain on every screen.
   view modal (not `{2}`); depth/row bounds truncate with `... N more`; the inline
   status strip keeps its compact `{n}` summary.
 - **Verification:** `bun test packages/tui/test/operator/**`.
-- **Evidence:** _(implement)_
+- **Evidence:** 2026-07-19 — `status.ts` new `toDetailTree`/`OperatorDetailRow`
+  (`MAX_DETAIL_DEPTH=4`, `MAX_DETAIL_ROWS=200`): records/arrays expand indented; a
+  depth-bound or row-budget overflow collapses to an honest `… N more` marker (never a
+  `{n}` within the bound); scalars verbatim under the shared string cap. The compact strip
+  (`toStatusNodes`/`formatStatusValue`/`toStatusGroups`) is UNCHANGED. `form/view-modal.tsx`
+  renders the tree with per-row indentation. Tests `multi-field.test.ts` (T006 block:
+  `telemetry.test` target expansion vs strip `{2}`, depth collapse, row-budget truncation)
+  green.
 
 ---
 
