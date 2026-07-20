@@ -29,12 +29,12 @@ it needs no Milvus and unblocks the archive the embedding rollback also reads.
 - [x] T001 — Route `semantic.reranker.cutover`/`rollback` through the config-backed registry
 - [x] T002 — Extend the `RegistryDocument` with a per-slot binding version archive
 - [x] T003 — Honest reranker gates (`not_validated` / `no_archived_prior` / `cas_conflict`)
-- [ ] T004 — Bind a real Milvus gRPC/HTTP client when the endpoint is configured
-- [ ] T005 — Add `enumerate-indexed-docs` + `createCollection/buildGeneration` to `MilvusPort`
-- [ ] T006 — Embedding cutover/rollback over the live port (build+validate before the swap)
-- [ ] T007 — All-collections atomic CAS alias swap; unconfigured → `milvus_unavailable`
-- [ ] T008 — Reindex/reconcile live-doc source (agent/skill builders) + bound embedding client
-- [ ] T009 — Content-free reconcile that never re-pins the binding
+- [x] T004 — Bind a real Milvus gRPC/HTTP client when the endpoint is configured
+- [x] T005 — Add `enumerate-indexed-docs` + `createCollection/buildGeneration` to `MilvusPort`
+- [x] T006 — Embedding cutover/rollback over the live port (build+validate before the swap)
+- [x] T007 — All-collections atomic CAS alias swap; unconfigured → `milvus_unavailable`
+- [x] T008 — Reindex/reconcile live-doc source (agent/skill builders) + bound embedding client
+- [x] T009 — Content-free reconcile that never re-pins the binding
 - [ ] T010 — Delegate `mcp.auth.start`/`finish` for the interactive TUI; headless keeps the gap
 - [ ] T011 — `mcp.resource.admin.subscribe`/`unsubscribe` over the dual-authority machine
 - [ ] T012 — Truthful experimental/extension badges from the config-backed flag state
@@ -122,7 +122,7 @@ it needs no Milvus and unblocks the archive the embedding rollback also reads.
 
 ## Group B1 — Live Milvus client + port methods (FR4, FR6)
 
-- [ ] **T004 — Bind a real Milvus gRPC/HTTP client when the endpoint is configured**
+- [x] **T004 — Bind a real Milvus gRPC/HTTP client when the endpoint is configured**
 - **Depends:** none
 - **Paths:** `packages/opencode/src/operator/stack-live.ts`, `packages/opencode/src/semantic/milvus-adapter.ts`
 - **Deliverable:** replace `createGrpcMilvusAdapter({})` (`stack-live.ts:513-537`) with a real
@@ -132,9 +132,20 @@ it needs no Milvus and unblocks the archive the embedding rollback also reads.
 - **Acceptance:** a configured endpoint binds a live client whose `health` reaches the backend; an
   unconfigured endpoint returns `milvus_unavailable`.
 - **Verification:** `bun test packages/opencode/test/semantic/**`; live path is env-gated (T017).
-- **Evidence:** _(reserved)_
+- **Evidence:** 2026-07-20 — Transport chosen: **Milvus REST v2 HTTP API** (`/v2/vectordb/*` on the
+  same `:19530` port), the seam the `MilvusGrpcClient` contract supports cleanly under Bun.
+  `milvus-adapter.ts` `createHttpMilvusClient` implements it with bounded per-request timeouts
+  (`AbortController`, default 5000ms, hard-capped 30000), TLS-by-default (secure unless the address
+  carries an explicit `http://` scheme or `ssl:false`), a resolved `authorization` header
+  (SecretRef-supplied, never inline), and a non-zero-`code`/transport fault → thrown bounded reason
+  (no endpoint/credential across the seam). `stack-live.ts` now binds
+  `createGrpcMilvusAdapter({ client: createHttpMilvusClient({ address, ssl: !insecure, authorization }) })`
+  when `OPENCODE_SEMANTIC_MILVUS_ADDRESS` is set, and passes the port to the semantic backend + the
+  config-backed registry; unconfigured binds NO port (identical `milvus_unavailable` floor — pinned by
+  `feature019-embedding-lifecycle.test.ts` "unconfigured … same typed unavailable envelope"). Live proof
+  under T017.
 
-- [ ] **T005 — Add `enumerate-indexed-docs` + `createCollection/buildGeneration` to `MilvusPort`**
+- [x] **T005 — Add `enumerate-indexed-docs` + `createCollection/buildGeneration` to `MilvusPort`**
 - **Depends:** T004
 - **Paths:** `packages/opencode/src/semantic/milvus-adapter.ts`
 - **Deliverable:** add the enumerate-indexed-docs method returning `{canonicalId, contentHash}` per
@@ -143,11 +154,21 @@ it needs no Milvus and unblocks the archive the embedding rollback also reads.
   partition filter on every op (FR6).
 - **Acceptance:** the two new methods exist on the port and resolve typed gaps when unreachable.
 - **Verification:** `bun test packages/opencode/test/semantic/**` (port surface).
-- **Evidence:** _(reserved)_
+- **Evidence:** 2026-07-20 — `MilvusPort` gains `enumerateIndexed` (`{canonicalId, contentHash}` per
+  collection/project, mandatory-`projectId` guarded → `invalid_filters`) and `buildGeneration`
+  (`building → validated`, materializes a fresh generation for every collection together). Implemented
+  on all three surfaces: the in-memory fake (generation buckets keyed apart from the live alias; a
+  `swapAliases` promotes a generation into the live alias), the `createGrpcMilvusAdapter` guard (unbound
+  client → `milvus_unavailable`), and the REST client (`/collections/create` with a fixed
+  `id`/`content_hash`/`project_id`/`vector` schema + `/collections/describe` validation; `/entities/query`
+  enumerate). `UpsertInput`/`TombstoneInput`/`EnumerateIndexedInput` carry an optional `generationId` so a
+  reindex targets the blue/green generation, not the live alias. Tests:
+  `feature019-milvus-port.test.ts` T005 cases (enumerate content-free, invalid_filters, build+swap
+  isolation, unbound gap) green; `milvus-adapter.test.ts` (18) still green.
 
 ## Group B2 — Embedding cutover/rollback over the live port (FR5)
 
-- [ ] **T006 — Embedding cutover/rollback over the live port (build+validate before the swap)**
+- [x] **T006 — Embedding cutover/rollback over the live port (build+validate before the swap)**
 - **Depends:** T005
 - **Paths:** `packages/opencode/src/semantic/cutover-executor.ts`, `packages/opencode/src/operator/semantic/**`
 - **Deliverable:** drive `cutoverEmbedding`/`rollbackEmbedding` over the live port; build a
@@ -157,9 +178,21 @@ it needs no Milvus and unblocks the archive the embedding rollback also reads.
 - **Acceptance:** a cutover swaps the alias only after a built+validated generation; `select`/
   `reindex` never activate the live alias.
 - **Verification:** `bun test packages/opencode/test/semantic/**` (build-then-swap).
-- **Evidence:** _(reserved)_
+- **Evidence:** 2026-07-20 — `semantic.embedding.reindex`/`cutover`/`rollback` now route through the
+  config-backed registry (`semantic-command-port.ts` `embeddingInvoke`) as **effectful
+  `OperatorMutationPlan`s** (ADR-0017/018 contract): `registry-backend.ts` `planReindexEmbedding`
+  builds+validates a generation in the plan `effect` (`CutoverExecutor` reuses `MilvusPort`, never a
+  config-only flip) and records it `validated` on the `RegistryDocument` (`embeddingGenerations`);
+  `planCutoverEmbedding` gates on a staged **validated** candidate AND a **validated generation**
+  (`resolveCutoverGeneration`) — the cardinal-honesty gate: no built+validated generation →
+  `no_candidate_staged`, never a swap. The swap runs in the effect AFTER the confirmation gate, then
+  `apply` promotes staged→active, archives the prior binding + supersedes the prior generation, and
+  points `embeddingLiveGeneration` at the new one. Generation/alias state persists alongside the
+  registry doc (ADR-0019 decision 3). Tests: `feature019-embedding-lifecycle.test.ts` T006 cases
+  (reindex builds a validated generation; cutover swaps only after build+validate; `not_validated`;
+  cardinal-honesty refusal; `confirmation_required`) green.
 
-- [ ] **T007 — All-collections atomic CAS alias swap; unconfigured → `milvus_unavailable`**
+- [x] **T007 — All-collections atomic CAS alias swap; unconfigured → `milvus_unavailable`**
 - **Depends:** T006
 - **Paths:** `packages/opencode/src/semantic/cutover-executor.ts`, `packages/opencode/src/semantic/milvus-adapter.ts`
 - **Deliverable:** swap every collection alias together under one CAS
@@ -169,11 +202,20 @@ it needs no Milvus and unblocks the archive the embedding rollback also reads.
 - **Acceptance:** the swap is atomic across collections; a contention swaps none; unconfigured →
   typed gap.
 - **Verification:** `bun test packages/opencode/test/semantic/**` (atomic swap, contention).
-- **Evidence:** _(reserved)_
+- **Evidence:** 2026-07-20 — `planCutoverEmbedding` drives `CutoverExecutor.cutoverEmbedding` over the
+  fixed `GENERATION_COLLECTIONS = [agents, skills, skill_chunks, tools]` in ONE `swapAliases` call (the
+  swap-spy test asserts `targets.length === 4` — never split). The executor's in-core
+  `IndexGeneration.cutoverAll` CAS plus the port's `cas_conflict` gap short-circuit the effect
+  (`{ ok:false, code:"conflict" }`) so `mutateAuthority` commits nothing on contention. Unconfigured
+  (no bound Milvus port) → the three embedding plans fail `{ type:"unavailable", reason:"milvus_unavailable" }`,
+  mapped by `mapError` to the identical `unavailable` dispatch envelope as today. Tests:
+  `feature019-embedding-lifecycle.test.ts` T007 cases (all-collections swap, CAS-contention aborts,
+  unconfigured floor, rollback restores archived prior/generation, `no_archived_prior`) green;
+  `rollbackEmbedding` reuses `cutoverEmbedding` so the atomic-swap owner is single-sourced.
 
 ## Group B3 — Reindex/reconcile + live-doc source (FR6, FR7)
 
-- [ ] **T008 — Reindex/reconcile live-doc source (agent/skill builders) + bound embedding client**
+- [x] **T008 — Reindex/reconcile live-doc source (agent/skill builders) + bound embedding client**
 - **Depends:** T005
 - **Paths:** `packages/opencode/src/semantic/index-jobs.ts`, `packages/opencode/src/semantic/embedding-client.ts`, `packages/opencode/src/operator/semantic/**`
 - **Deliverable:** add agent/skill live-doc builders alongside `toolLiveDoc` (`index-jobs.ts:85`),
@@ -183,9 +225,19 @@ it needs no Milvus and unblocks the archive the embedding rollback also reads.
 - **Acceptance:** reconcile diffs real live docs against real enumerated indexed docs for
   agents/skills/tools.
 - **Verification:** `bun test packages/opencode/test/semantic/**` (live-doc + reconcile).
-- **Evidence:** _(reserved)_
+- **Evidence:** 2026-07-20 — `index-jobs.ts` adds `agentLiveDoc` (reads `AgentDoc.scope` DocScope
+  filters) and `skillLiveDoc` (SkillDoc carries no DocScope → caller supplies the mandatory partition
+  filters) beside the shipped `toolLiveDoc`; all three are content-free (canonical id + content hash +
+  injected vectors, never a body). `milvus-binding.ts` `createMilvusIndexPort` gains an optional live
+  composition (`port` MilvusPort + `source` LiveDocSource + `context` + `spool`): `reconcile` collects
+  the live-doc source, enumerates prior indexed state via the new `enumerateIndexed` seam, and runs
+  `runReconcile` to diff+apply; `reindex` forces a full rebuild (indexed treated empty). The embedding
+  client (`embedding-client.ts` `probe`/`embed`) is the injected upstream that produces the LiveDoc
+  vectors via the `LiveDocSource` seam — a missing embedding provider makes `collect` reject and the
+  verb degrades typed (never fabricated vectors). Tests: `feature019-milvus-port.test.ts` T008 cases
+  (agent/skill builders, reconcile diff for agents/tools) green.
 
-- [ ] **T009 — Content-free reconcile that never re-pins the binding**
+- [x] **T009 — Content-free reconcile that never re-pins the binding**
 - **Depends:** T008
 - **Paths:** `packages/opencode/src/semantic/index-jobs.ts`, `packages/opencode/src/operator/semantic/**`
 - **Deliverable:** report a bounded, content-free `#ReconcilePlan` (upserted/tombstoned/unchanged
@@ -194,7 +246,14 @@ it needs no Milvus and unblocks the archive the embedding rollback also reads.
 - **Acceptance:** reconcile reports counts + unchanged version; a Milvus gap is a typed
   `milvus_unavailable`, never a crash.
 - **Verification:** `bun test packages/opencode/test/semantic/**` (content-free, never re-pin).
-- **Evidence:** _(reserved)_
+- **Evidence:** 2026-07-20 — `createMilvusIndexPort.reconcile` returns only bounded counts
+  (`{ upsertedCount, tombstonedCount, outputRef }`) and threads the pinned `context.bindingVersion`
+  UNCHANGED into `runReconcile` — the spool-summary spy asserts `bindingVersion === 7` after a
+  reconcile that upserts 2 (one changed + one new) and tombstones 1, proving the diff runs against real
+  enumerated state and never re-pins. Every failure path (context/source/enumerate/apply) maps to a
+  typed `milvus_unavailable` (never a crash); an unbound source keeps the honest not-composed gap. Tests:
+  `feature019-milvus-port.test.ts` T009 cases (content-free counts + version unchanged; full rebuild;
+  unbound-source gap) green.
 
 ## Group C — MCP delegation edges (FR8-FR10)
 
@@ -298,7 +357,20 @@ it needs no Milvus and unblocks the archive the embedding rollback also reads.
   CI is green without the endpoints.
 - **Verification:** env-gated `bun test`; manual acceptance against a live Milvus endpoint and a
   live OTLP collector.
-- **Evidence:** _(reserved — implement runs this against the real hosts and records raw evidence)_
+- **Evidence:** 2026-07-20 — **Milvus half done** (OTLP half pending Group D). `feature019-milvus-live.test.ts`
+  is env-gated (`test.skipIf(!OPENCODE_SEMANTIC_MILVUS_ADDRESS)`) and exercises health →
+  buildGeneration → upsert → enumerate → swapAliases against a live endpoint over the REST client,
+  with an `opencode_test__…`-prefixed throwaway collection ALWAYS dropped in `finally`. Raw run against
+  a live Milvus endpoint (`OPENCODE_SEMANTIC_MILVUS_ADDRESS=<host>:19530 OPENCODE_SEMANTIC_MILVUS_INSECURE=1`):
+  `1 pass, 0 fail, 6 expect()` — health `reachable:true`; buildGeneration `validated:true`; upsert
+  `upsertCount:2`; enumerate returned `[agent:alpha(h1), agent:beta(h2)]`; swapAliases `swapped:[agents]`.
+  Raw REST contract confirmed manually (`code:0` on every op): `/collections/create` (custom
+  id/content_hash/project_id/vector schema, AUTOINDEX COSINE) → `/collections/describe`
+  (`LoadStateLoading`, index present) → `/entities/upsert` (`upsertCount:2`) → `/entities/query`
+  (`[{content_hash:h1,id:agent:alpha},{content_hash:h2,id:agent:beta}]`) → `/aliases/create` +
+  `/aliases/alter` (describe confirmed re-point) → `/entities/delete` (`deleteCount:1`) →
+  `/aliases/drop` + `/collections/drop` (server left clean: only the pre-existing collection remained).
+  Without the env var the test SKIPS, so CI stays green (`bun test test/semantic/` = 138 pass / 2 skip).
 
 ## Group E — Availability flip + parity (FR14-FR16)
 
