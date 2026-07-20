@@ -26,10 +26,11 @@ Created: 2026-07-20
 ## Functional Requirements
 
 1. **Relocate project persistence.** The project-scoped operator config namespace
-   MUST persist to `<OPENCODE_CONFIG_DIR>/profiles/<ENCODED_ABSPATH>/config.json`
-   instead of `<projectDir>/config.json`, where `<OPENCODE_CONFIG_DIR>` is the
-   global config root (`Global.Path.config`, the same root that holds the global
-   `config.json`).
+   MUST persist to `<configRoot>/profiles/<ENCODED_ABSPATH>/config.json` instead of
+   `<projectDir>/config.json`, where `<configRoot>` is the operative config root
+   `Flag.OPENCODE_CONFIG_DIR ?? Global.Path.config`. When `OPENCODE_CONFIG_DIR` is
+   set (e.g. an isolated profile such as `~/.opencodedev`), the profile store MUST
+   live under that override, NOT under the fixed XDG `~/.config/opencode`.
 2. **Readable, reversible-ish path key.** The encoding MUST resolve the project
    directory to a canonical absolute path, drop the leading separator, replace
    each path separator with `-`, and sanitize any character outside
@@ -49,10 +50,12 @@ Created: 2026-07-20
    the next write MUST persist to the relocated path. The loader MUST emit a
    warning that surfaces the stray in-tree file as a secret-leak vector to delete,
    and MUST NOT auto-delete the legacy file.
-7. **Env-flag handling.** The profiles directory MUST move with the global config
-   root (it is anchored on `Global.Path.config`). The
-   `OPENCODE_DISABLE_PROJECT_CONFIG` gate behavior MUST be unchanged: when set,
-   the project namespace (including the relocated one) is skipped entirely.
+7. **Env-flag handling.** The profiles directory MUST move with
+   `OPENCODE_CONFIG_DIR` (anchored on `Flag.OPENCODE_CONFIG_DIR ??
+   Global.Path.config`). The `OPENCODE_DISABLE_PROJECT_CONFIG` gate behavior MUST be
+   unchanged: when set, the project namespace (including the relocated one) is
+   skipped entirely. (Residual, out of scope: the *global* `config.json` seam still
+   anchors on the raw `Global.Path.config` and does not relocate under the override.)
 8. **Scope boundary.** `opencode.json`/`opencode.jsonc` project-tree discovery,
    global-scoped operator authorities, and user-authored source-controlled config
    MUST be untouched. Only opencode-persisted project data relocates.

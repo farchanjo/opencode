@@ -77,9 +77,12 @@ unchanged CAS write/read alignment.
 Key decisions recorded:
 
 1. **Relocation + anchor (FR1).** Per-project persistence moves to
-   `<Global.Path.config>/profiles/<ENCODED_ABSPATH>/config.json`. The directory is
-   anchored on `Global.Path.config`, the same root that holds the global
-   `config.json`, so it inherits any `OPENCODE_CONFIG_DIR` relocation of that root.
+   `<configRoot>/profiles/<ENCODED_ABSPATH>/config.json`, where `configRoot` is the
+   operative config root `Flag.OPENCODE_CONFIG_DIR ?? Global.Path.config` (mirroring
+   `Global.make()`). The raw `Global.Path.config` is the fixed XDG dir and does NOT
+   honor `OPENCODE_CONFIG_DIR`; anchoring the profile store on the override is what
+   lets an isolated profile (`~/.opencodedev`) own its own `profiles/<key>/` tree
+   instead of leaking per-project data back into `~/.config/opencode`.
 2. **Readable encoding (FR2).** The absolute path is resolved to a canonical form,
    then encoded: normalize Windows separators to POSIX, drop the leading
    separator, replace each separator with `-`, and sanitize any character outside
@@ -106,11 +109,19 @@ Key decisions recorded:
    in-tree file as a secret-leak vector to delete. opencode NEVER auto-deletes the
    legacy file. The next write persists to the relocated path.
 7. **Env-flag behavior (FR7, invariant).** The profiles directory moves with
-   `OPENCODE_CONFIG_DIR` via the `Global.Path.config` anchor. The
-   `OPENCODE_DISABLE_PROJECT_CONFIG` gate is unchanged: the read seam lives inside
-   the gate, so setting the flag skips the project namespace (relocated and legacy)
-   entirely. `opencode.json`/`opencode.jsonc` discovery and global-scoped operator
-   authorities are untouched.
+   `OPENCODE_CONFIG_DIR` via the `Flag.OPENCODE_CONFIG_DIR ?? Global.Path.config`
+   anchor. The `OPENCODE_DISABLE_PROJECT_CONFIG` gate is unchanged: the read seam
+   lives inside the gate, so setting the flag skips the project namespace (relocated
+   and legacy) entirely. `opencode.json`/`opencode.jsonc` discovery and
+   global-scoped operator authorities are untouched.
+
+   **Documented residual:** the *global* `config.json` read/write in `config.ts`
+   still anchors on the raw `Global.Path.config` and therefore does NOT relocate
+   under `OPENCODE_CONFIG_DIR` — an isolated profile owns its per-project
+   `profiles/` tree but its global `config.json` still resolves to
+   `~/.config/opencode`. Aligning that global seam is a separate follow-up (it
+   touches auth/global-config resolution and array merge semantics) and is out of
+   scope here.
 
 ### Consequences
 

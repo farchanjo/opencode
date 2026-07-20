@@ -25,14 +25,17 @@ A small module colocated with the config path resolution, holding:
   `Users-farchanjo-dev-cloudstack`.
 - `projectProfileDir(dir): string` — resolves the input dir to a canonical
   absolute path (`Filesystem.resolve`, which normalizes and follows symlinks),
-  then returns `<Global.Path.config>/profiles/<key>`. This is the canonical
-  directory future project-scoped persistence (operator config, memory files)
-  reuses.
+  then returns `<configRoot>/profiles/<key>`. This is the canonical directory
+  future project-scoped persistence (operator config, memory files) reuses.
 - `projectOperatorConfigPath(dir): string` — `<projectProfileDir>/config.json`.
 
-The directory is anchored on `Global.Path.config` — the same root that holds the
-global `config.json` — so it inherits whatever that root resolves to, including
-the `OPENCODE_CONFIG_DIR` override that relocates the global config root.
+The directory is anchored on the **operative config root** —
+`Flag.OPENCODE_CONFIG_DIR ?? Global.Path.config`, mirroring `Global.make()` in
+`core/global.ts`. Anchoring on the raw `Global.Path.config` was wrong: that value
+is the fixed XDG dir and never honors `OPENCODE_CONFIG_DIR`, so an isolated
+profile (`~/.opencodedev`) would leak its per-project data back into
+`~/.config/opencode`. Honoring the override is what lets the profile own its own
+`profiles/<key>/` tree.
 
 ### Seam moves in `packages/opencode/src/config/config.ts`
 
@@ -56,8 +59,12 @@ file is never auto-deleted (it may hold data opencode does not manage); the next
 
 ### Env-flag handling
 
-- `OPENCODE_CONFIG_DIR` — the profiles directory moves with the global config
-  root because it is anchored on `Global.Path.config`; no additional handling.
+- `OPENCODE_CONFIG_DIR` — the profiles directory moves with the override because
+  `projectProfileDir` anchors on `Flag.OPENCODE_CONFIG_DIR ?? Global.Path.config`.
+  Note (documented residual): the *global* `config.json` read/write in `config.ts`
+  still anchors on the raw `Global.Path.config` and does NOT honor the override; a
+  future feature can align that seam so an isolated profile also owns its global
+  `config.json`. This feature only relocates the per-project (profile) data.
 - `OPENCODE_DISABLE_PROJECT_CONFIG` — unchanged. The read seam lives inside the
   existing gate, so setting the flag skips the project namespace (relocated and
   legacy) entirely.
