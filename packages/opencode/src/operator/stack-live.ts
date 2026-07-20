@@ -32,6 +32,7 @@ import { createDomainStubs, domainHandlerFor, handlersFromDomainPorts, wireDomai
 import { createRoutingService } from "@/routing/application/routing-service"
 import { createRoutingDomainPort } from "@/routing/adapters/inbound/routing-command-port"
 import { createConfigAdapter, toRoutingConfigSource } from "@/routing/adapters/outbound/config-adapter"
+import { createRoutingConfigureBackend } from "@/routing/adapters/outbound/configure-backend"
 import {
   createCandidateSource,
   createCatalogAdapter,
@@ -810,7 +811,11 @@ export async function createLiveOperatorStack(input: CreateLiveOperatorStackInpu
       ...smartWiring.ports,
       ...budgetWiring.ports,
       ...poolsWiring.ports,
-      routing: createRoutingDomainPort(routingService),
+      // Feature 024 — a write-capable configure backend over the SAME committed
+      // store.config seam smart/budget/pools project. routing.configure now persists
+      // via a CAS mutation_plan (partial-merged to preserve role_pools + activation),
+      // replacing the not_implemented stub. No parallel store, no new command id.
+      routing: createRoutingDomainPort(routingService, createRoutingConfigureBackend({ config: store.config })),
     },
     { dnsResolver },
   )

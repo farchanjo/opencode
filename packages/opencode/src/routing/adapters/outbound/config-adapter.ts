@@ -25,7 +25,10 @@ export type RoutingConfigScope = "global" | "project"
 export type RoutingConfigOrigin = RoutingConfigScope | "default"
 
 // Config.Service authority keys per scope (mirrors telemetry-service.ts AUTHORITY).
-const AUTHORITY: Record<RoutingConfigScope, string> = {
+// Exported as the single routing-module SSOT: `smart`/`budget`/`pools` and the
+// `routing.configure` mutation backend all commit to these same per-scope routing
+// documents, so the shared-authority merge (Feature 024) reads one source of truth.
+export const AUTHORITY: Record<RoutingConfigScope, string> = {
   global: "global:routing",
   project: "routing",
 }

@@ -20,15 +20,25 @@
  *   - routing.test                -> RoutingPort.test({ taskDescription, scope })
  *   - routing.explain             -> RoutingPort.explain(decisionId)      (surface-only)
  *   - routing.capability.inspect  -> RoutingPort.capabilityInspect(modelId) (surface-only)
- *   - routing.configure           -> not_implemented (Config.Service mutation, T027)
+ *   - routing.configure           -> RoutingConfigureBackend.planConfigure (Feature 024)
+ *
+ * Feature 024: `routing.configure` is no longer a `not_implemented` stub. When a
+ * write-capable `RoutingConfigureBackend` is wired (the live stack always wires it),
+ * it validates the payload and returns a `mutation_plan` the dispatcher commits via
+ * `mutateAuthority` (CAS over the shared `routing` / `global:routing` authority,
+ * partial-merged to preserve role_pools + sibling activation). A backend-less port
+ * (read-only construction) still answers `not_implemented`, since it genuinely
+ * cannot persist.
  */
 export * as RoutingCommandPort from "./routing-command-port"
 
 import { Effect } from "effect"
 import type { Budget } from "@opencode-ai/schema/routing/budget"
+import type { RoutingConfig } from "@opencode-ai/schema/routing/config"
 import type { RoutingError } from "@opencode-ai/protocol/routing/index"
-import type { HandlerContext, HandlerResult, FailureHandlerResult } from "@/operator/application/handler"
+import type { HandlerContext, HandlerResult, FailureHandlerResult, OperatorMutationPlan } from "@/operator/application/handler"
 import type { DomainInvoke } from "@/operator/application/ports/domain-ports"
+import type { RoutingConfigureBackend, RoutingConfigureInput } from "../outbound/configure-backend"
 import type { RoutingPort } from "../../application/ports"
 
 export interface RoutingDomainPort {
@@ -36,6 +46,9 @@ export interface RoutingDomainPort {
 }
 
 const ROUTING_SCOPES: ReadonlySet<string> = new Set(["global", "project", "session"])
+
+/** The closed set of routing modes an operator may set (mirrors RoutingConfig.RoutingMode). */
+const ROUTING_MODES: ReadonlySet<string> = new Set(["always", "auto", "never"])
 
 function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {}
@@ -96,11 +109,55 @@ function runQuery<A>(effect: Effect.Effect<A, RoutingError>): Promise<HandlerRes
 }
 
 /**
+ * Run a mutation-plan Effect and project it onto a HandlerResult. On success the
+ * dispatcher commits the plan through `mutateAuthority` (the single CAS write); on
+ * a typed RoutingError the mutation is rejected and NOTHING is committed.
+ */
+function runPlan(effect: Effect.Effect<OperatorMutationPlan, RoutingError>): Promise<HandlerResult> {
+  const program = effect.pipe(
+    Effect.match({
+      onSuccess: (plan): HandlerResult => ({ kind: "mutation_plan", ...plan }),
+      onFailure: (error): HandlerResult => routingErrorToFailure(error),
+    }),
+  )
+  return Effect.runPromise(program)
+}
+
+/**
+ * Parse the local `routing.configure` payload into the content-free configure input,
+ * or a typed `invalid_argument` failure. The TUI form composes
+ * `{ enabled, mode, ...advanced }` (field-list.ts), so the advanced `budgetPolicy`
+ * override is spread at the top level. An all-empty payload is rejected — a Save must
+ * change at least one field.
+ */
+function parseConfigure(payload: Record<string, unknown>): RoutingConfigureInput | FailureHandlerResult {
+  const enabled = typeof payload.enabled === "boolean" ? payload.enabled : undefined
+
+  let mode: RoutingConfig.RoutingMode | undefined
+  const rawMode = payload.mode
+  if (rawMode !== undefined) {
+    if (typeof rawMode !== "string" || !ROUTING_MODES.has(rawMode)) {
+      return fail("invalid_argument", "routing.configure mode must be one of always, auto, or never", { field: "mode" })
+    }
+    mode = rawMode as RoutingConfig.RoutingMode
+  }
+
+  const budgetPolicy = "budgetPolicy" in payload ? payload.budgetPolicy : undefined
+
+  if (enabled === undefined && mode === undefined && budgetPolicy === undefined) {
+    return fail("invalid_argument", "routing.configure requires at least one of enabled, mode, or a policy override", {
+      field: "payload",
+    })
+  }
+  return { enabled, mode, budgetPolicy }
+}
+
+/**
  * Build the routing DomainPort. Wire it into the Feature 007 dispatcher via
  * `wireDomainPorts({ routing: createRoutingDomainPort(routing) })` at the
  * composition root — it overrides the stub without touching the registry.
  */
-export function createRoutingDomainPort(routing: RoutingPort): RoutingDomainPort {
+export function createRoutingDomainPort(routing: RoutingPort, configure?: RoutingConfigureBackend): RoutingDomainPort {
   const invoke: DomainInvoke = (ctx: HandlerContext): Promise<HandlerResult> => {
     const id = String(ctx.descriptor.id)
     const payload = asRecord(ctx.request.payload)
@@ -130,10 +187,18 @@ export function createRoutingDomainPort(routing: RoutingPort): RoutingDomainPort
         return runQuery(routing.capabilityInspect(modelId))
       }
 
-      case "routing.configure":
-        return Promise.resolve(
-          fail("not_implemented", "routing.configure persists via Config.Service (Feature 007 mutation path)"),
-        )
+      case "routing.configure": {
+        // A read-only construction (no write-capable backend) genuinely cannot
+        // persist — surface the honest not_implemented rather than a phantom success.
+        if (configure === undefined) {
+          return Promise.resolve(
+            fail("not_implemented", "routing.configure requires a write-capable routing config backend"),
+          )
+        }
+        const parsed = parseConfigure(payload)
+        if ("kind" in parsed) return Promise.resolve(parsed)
+        return runPlan(configure.planConfigure(parsed))
+      }
 
       default:
         return Promise.resolve(fail("not_implemented", `routing command ${id} is not implemented`))
