@@ -183,27 +183,29 @@ describe("T001-T003 eager arming + reconcile + dispatch", () => {
     expect(forked).toHaveLength(1) // one due signal → one fire-and-forget onDue
   })
 
-  test("ensureExecutorComposition arms once and reuses the armed instance (idempotent, T001)", () => {
+  test("ensureExecutorComposition arms once and reuses the armed instance (idempotent, T001)", async () => {
     const { deps } = buildDeps()
-    const first = ensureExecutorComposition(deps)
-    const second = ensureExecutorComposition()
+    // Feature 022 (ADR-0022): the accessor is async — its live deps load via a
+    // dynamic import for `bun build --compile`; explicit `deps` still arm eagerly.
+    const first = await ensureExecutorComposition(deps)
+    const second = await ensureExecutorComposition()
     expect(first.state).toBe("armed")
     expect(second).toBe(first) // never a second cron loop
     expect(currentExecutorComposition()).toBe(first)
   })
 
-  test("ensureExecutorComposition fails open when construction throws (T002)", () => {
+  test("ensureExecutorComposition fails open when construction throws (T002)", async () => {
     const throwingDeps = new Proxy({} as ExecutorCompositionDeps, {
       get() {
         throw new Error("injected arming fault: bad definition")
       },
     })
-    const composition = ensureExecutorComposition(throwingDeps)
+    const composition = await ensureExecutorComposition(throwingDeps)
     expect(composition.state).toBe("disarmed")
     expect(composition.adapter).toBeNull()
     expect(composition.reason).toContain("injected arming fault")
     // A second call reuses the disarmed instance — never a crash, never a retry loop.
-    expect(ensureExecutorComposition()).toBe(composition)
+    expect(await ensureExecutorComposition()).toBe(composition)
   })
 })
 
@@ -415,7 +417,7 @@ describe("T008-T009 run-now enqueueImmediate", () => {
         throw new Error("injected arming fault")
       },
     })
-    const composition = ensureExecutorComposition(throwingDeps)
+    const composition = await ensureExecutorComposition(throwingDeps)
     expect(composition.state).toBe("disarmed")
     const result = await composition.enqueueImmediate(enqInput())
     expect(result.outcome).toBe("executor_unavailable")
