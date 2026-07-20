@@ -21,6 +21,7 @@ export * as SemanticBackendLive from "./backend-live"
 
 import { Effect } from "effect"
 import { createConfigBackedRegistry } from "./registry-backend"
+import { MilvusBinding } from "./milvus-binding"
 import type { BindingPort, IndexPort, ModelPort, ProviderPort } from "@opencode-ai/protocol/semantic/ports"
 import type { ConfigPort } from "@/operator/application/ports/config-port"
 import type { SemanticBackend } from "./semantic-port"
@@ -29,6 +30,13 @@ import type { SemanticRegistryBackend } from "./registry-backend"
 export interface LiveSemanticBackendDeps {
   /** Real per-port implementations the composition root injects as the stack is bound; unset falls back to the honest gap. */
   readonly override?: Partial<SemanticBackend>
+  /**
+   * Feature 017 / T016 (FR13, FR14) — the Milvus registry binding. When a Milvus
+   * endpoint is configured the composition root supplies it, and `index.*` binds
+   * over the shipped adapter under a bounded probe; unset degrades every index verb
+   * to the same typed `milvus_unavailable` gap as today (the unconfigured identity).
+   */
+  readonly milvus?: MilvusBinding.MilvusIndexBindingDeps
   /**
    * The `Config.Service` seam backing the config-backed registry half (Feature 014
    * T009). When bound, the registry reads + CAS round-trip plans are wired real; the
@@ -86,11 +94,16 @@ const indexGap: IndexPort = {
 
 const gapBackend: SemanticBackend = { provider: providerGap, model: modelGap, binding: bindingGap, index: indexGap }
 
-/** Build the live backend: the honest gap default overlaid with any injected real ports + the config-backed registry. */
+/**
+ * Build the live backend: the honest gap default overlaid with any injected real
+ * ports + the config-backed registry. When a Milvus endpoint is configured
+ * (`deps.milvus`), the `index` port binds over the shipped adapter under a bounded
+ * probe (T016); an explicit `override.index` still wins for tests/composition.
+ */
 export const createLiveSemanticBackend = (deps: LiveSemanticBackendDeps = {}): SemanticBackend => ({
   provider: deps.override?.provider ?? gapBackend.provider,
   model: deps.override?.model ?? gapBackend.model,
   binding: deps.override?.binding ?? gapBackend.binding,
-  index: deps.override?.index ?? gapBackend.index,
+  index: deps.override?.index ?? (deps.milvus ? MilvusBinding.createMilvusIndexPort(deps.milvus) : gapBackend.index),
   registry: deps.registry ?? deps.override?.registry ?? (deps.config ? createConfigBackedRegistry({ config: deps.config }) : undefined),
 })

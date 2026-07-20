@@ -113,21 +113,26 @@ describe("Feature 015 T015 — semantic item actions + honest secret/Milvus gaps
   })
 })
 
-describe("Feature 015 T016 — mcp servers (honest-unavailable backend marked inert, FR14, FR15)", () => {
-  test("connect/disconnect toggles over the live connection state, all actions inert", () => {
+describe("Feature 017 — mcp servers now bind the live connection actions (FR15)", () => {
+  test("connect/disconnect toggles over the live connection state, now marked real", () => {
     const connected = buildOperatorEntityActions("mcp_server", { entityId: "srv_a", label: "srv", badge: "connected", active: true })
     expect(connected[0]).toMatchObject({ interaction: "toggle", id: "mcp.server.disconnect", verb: "disconnect" })
     const disconnected = buildOperatorEntityActions("mcp_server", { entityId: "srv_a", label: "srv", badge: "disconnected", active: false })
     expect(disconnected[0]).toMatchObject({ id: "mcp.server.connect", verb: "connect" })
-    // The whole mcp backend is honest-unavailable today → every action marked inert.
-    for (const action of connected) expect(action.availability).toBe("unavailable")
+    // Feature 017 T008/T009 flipped the config + live-connection mutations to real, so
+    // the non-secret entity actions are no longer inert (never a fabricated success).
+    for (const action of connected) {
+      if (action.id === "mcp.auth.remove") continue // secret-gated stays inert until keychain
+      expect(action.availability).not.toBe("unavailable")
+    }
   })
 })
 
 describe("Feature 015 T017 — availability + parity (FR15, FR17)", () => {
-  test("create availability is honest per domain (jobs persists, mcp unavailable)", () => {
+  test("create availability is honest per domain (jobs persists; mcp.server.add now real)", () => {
     expect(entityCreateAvailability("job")).not.toBe("unavailable")
-    expect(entityCreateAvailability("mcp_server")).toBe("unavailable")
+    // Feature 017 T008 — mcp.server.add commits through the store.config MCP authority.
+    expect(entityCreateAvailability("mcp_server")).not.toBe("unavailable")
   })
 
   test("every entity action / create / list-read rides a REAL catalog command id (no new dispatch path)", () => {
@@ -160,8 +165,9 @@ describe("Feature 016 T009/T012 — entity-first Configure affordances (FR5)", (
       ["create", "Add server", "mcp.server.add"],
       ["list", "Servers", "mcp.server.list"],
     ])
-    // the mcp backend is honest-unavailable → the create affordance is marked inert.
-    expect(aff[0].availability).toBe("unavailable")
+    // Feature 017 T008 — mcp.server.add now commits through the store.config MCP
+    // authority, so the create affordance is no longer inert.
+    expect(aff[0].availability).not.toBe("unavailable")
     expect(aff[1].availability).toBe("available")
   })
 
@@ -314,8 +320,9 @@ describe("Feature 015 T023 — semantic + mcp list → item → action dispatch 
       payload: { id: connected.entityId },
     })
     expect(spy.tryHandleCalls[0].text).toBe('/op.mcp.server.disconnect {"id":"srv_a"}')
-    // the whole mcp backend is honest-unavailable → the action is marked inert.
-    expect(toggle.availability).toBe("unavailable")
+    // Feature 017 T009 — the live connection action now commits through a store-scoped
+    // authority, so the toggle is no longer inert; it still rides the canonical id.
+    expect(toggle.availability).not.toBe("unavailable")
     // it still surfaces the typed envelope, never a fabricated success.
     expect(result.outcome).toBeDefined()
   })

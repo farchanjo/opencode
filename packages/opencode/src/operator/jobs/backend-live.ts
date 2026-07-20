@@ -36,9 +36,16 @@ import { Effect } from "effect"
 import { OperatorJobPersistence } from "./persistence"
 import type { JobsError } from "@opencode-ai/protocol/jobs/commands"
 import type { JobsBackend } from "./jobs-port"
+import type { JobOccurrenceProjection } from "./occurrence-projection"
 
 export interface LiveJobsBackendDeps {
   readonly persistence: OperatorJobPersistence.OperatorJobPersistence
+  /**
+   * Feature 017 / T015 — the occurrence projection over the durable `EventV2Bridge`
+   * seam (GAP F). When bound, `history` / `show`'s occurrence list / `watch` project
+   * the real `job.*` durable events; when unset they stay the typed capability gap.
+   */
+  readonly occurrences?: JobOccurrenceProjection.JobOccurrenceProjection
 }
 
 /** A persistence error is surfaced as a typed, honest `unavailable` — never a false read. */
@@ -52,14 +59,29 @@ const unavailable = (reason: string): JobsError => ({ type: "unavailable", reaso
  */
 export function createLiveJobsBackend(deps: LiveJobsBackendDeps): JobsBackend {
   const persistence = deps.persistence
+  const occurrences = deps.occurrences
   return {
     list: persistence.list,
     status: persistence.status,
-    show: persistence.show,
-    // RESIDUAL: occurrence/notification history + observation seams not reachable
-    // from the operator AppRuntime today — a typed capability gap, never fabricated.
-    history: () => Effect.fail(unavailable("occurrence/notification history projection not wired")),
-    watch: () => Effect.fail(unavailable("live job.* observation stream not wired")),
+    // Feature 017 / T015 — the definition read is honestly persisted; its occurrence
+    // list projects the durable `job.*` events over the EventV2Bridge seam when the
+    // projection is bound, else stays an honest empty list (FR11).
+    show: (input) =>
+      Effect.gen(function* () {
+        const base = yield* persistence.show(input)
+        if (occurrences === undefined) return base
+        const list = yield* occurrences.showOccurrences(input.jobDefinitionId, input.occurrenceLimit)
+        return { ...base, occurrences: list }
+      }),
+    // Feature 017 / T015 — history/watch project the durable occurrence events over
+    // the same EventV2Bridge seam the lifecycle domain uses; an unbound bridge (no
+    // projection) stays a typed capability gap, never fabricated (FR11, FR12).
+    history: occurrences
+      ? occurrences.history
+      : () => Effect.fail(unavailable("occurrence/notification history projection not wired")),
+    watch: occurrences
+      ? occurrences.watch
+      : () => Effect.fail(unavailable("live job.* observation stream not wired")),
     planCreate: persistence.planCreate,
     planUpdate: persistence.planUpdate,
     planEnable: persistence.planEnable,

@@ -125,9 +125,13 @@ const PERSISTING_DOMAIN_SET: ReadonlySet<string> = new Set(OPERATOR_PERSISTING_D
  *   Config.Service `semantic` authority (T009); the Milvus-gated
  *   embedding/reranker/index mutations fall to the domain default
  *   (`honest_unavailable`).
- * - output: the two policy setters persist through the round-trip seam (T007);
- *   the control-store lifecycle mutations (export/share/release/delete/purge)
- *   fall to the domain default.
+ * - output: the two policy setters persist through the round-trip seam (T007) and,
+ *   from Feature 017 (T014), the control-store admin edge (release/delete/purge)
+ *   commits through the store-scoped authority; export/share stay honest gaps.
+ * - mcp: from Feature 017 the config-backed server/logging/experimental/extension
+ *   mutations (T008), the live-service connection actions (T009), and auth.remove
+ *   (T010) commit honestly; auth.start/finish and resource subscribe/unsubscribe
+ *   stay typed capability gaps, so the domain renders the honest `Partial` badge.
  */
 export const OPERATOR_PERSISTING_VERBS = [
   // semantic config-backed registry (T009)
@@ -143,6 +147,27 @@ export const OPERATOR_PERSISTING_VERBS = [
   // output config-backed policy (T007)
   "output.retention.set",
   "output.quota.set",
+  // Feature 017 T014 — output control-store admin edge (store-scoped authority)
+  "output.release",
+  "output.delete",
+  "output.purge",
+  // Feature 017 T008 — mcp config-backed mutations (store.config MCP authority)
+  "mcp.server.add",
+  "mcp.server.update",
+  "mcp.server.delete",
+  "mcp.server.disable",
+  "mcp.logging.level.set",
+  "mcp.experimental.enable",
+  "mcp.experimental.disable",
+  "mcp.extension.enable",
+  "mcp.extension.disable",
+  "mcp.resource.admin.policy.set",
+  // Feature 017 T009 — mcp live-service connection actions (store-scoped authority)
+  "mcp.server.connect",
+  "mcp.server.disconnect",
+  "mcp.server.reconnect",
+  // Feature 017 T010 — mcp local credential clear (store-scoped authority)
+  "mcp.auth.remove",
 ] as const
 
 const PERSISTING_VERB_SET: ReadonlySet<string> = new Set(OPERATOR_PERSISTING_VERBS)

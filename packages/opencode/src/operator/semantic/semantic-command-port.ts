@@ -157,7 +157,7 @@ function providerInvoke(port: SemanticPort, c: Ctx): Promise<HandlerResult> | nu
   const addInput = {
     scope: c.scope, scopeId: c.scopeId, name: str(c.payload, ["name"]) ?? "", baseUrl: str(c.payload, ["baseUrl", "base_url"]) ?? "",
     transportPolicy: { tlsRequired: c.payload.tlsRequired !== false, allowInsecureLocalProfile: bool(c.payload, "allowInsecureLocalProfile") },
-    secretRef: str(c.payload, ["secretRef", "secret_ref"]), residency: (str(c.payload, ["residency"]) ?? "unrestricted") as never, principal: c.principal,
+    secretRef: str(c.payload, ["secretRef", "secret_ref"]), residency: (str(c.payload, ["residency"]) ?? "remote") as never, principal: c.principal,
   }
   switch (c.id) {
     // Reads + config-backed mutations ride the registry round-trip when bound; provider.test stays the gated live probe.

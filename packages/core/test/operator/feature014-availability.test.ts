@@ -60,8 +60,10 @@ describe("T019 — mixed domains derive Partial", () => {
     }
   })
 
-  test("a fully-gated domain (mcp) stays Unavailable; a fully-persisting one (langlock) stays Available", () => {
-    expect(groups.get("mcp")!.badge).toBe("Unavailable")
+  test("mcp becomes Partial after Feature 017; a fully-persisting domain (langlock) stays Available", () => {
+    // Feature 017 flipped mcp from fully-gated to mixed: config/live/auth-remove
+    // mutations persist, auth.start/finish + resource subscribe/unsubscribe stay gaps.
+    expect(groups.get("mcp")!.badge).toBe("Partial")
     expect(groups.get("langlock")!.badge).toBe("Available")
   })
 })
@@ -97,10 +99,15 @@ describe("T019 — semantic per-verb truthfulness (FR12)", () => {
 describe("T019 — output per-verb truthfulness (FR12)", () => {
   const panel = buildOperatorDomainPanel("output")
 
-  test("the two policy setters persist; the lifecycle mutations stay gated", () => {
+  test("the policy setters + Feature 017 admin edge persist; export/share stay gated", () => {
     expect(verb(panel.configure, "output.retention.set").persistence).toBe("persists_today")
     expect(verb(panel.configure, "output.quota.set").persistence).toBe("persists_today")
-    for (const id of ["output.export", "output.share", "output.release", "output.delete", "output.purge"]) {
+    // Feature 017 T014 — the store-scoped admin edge now commits release/delete/purge.
+    for (const id of ["output.release", "output.delete", "output.purge"]) {
+      expect(verb(panel.configure, id).persistence).toBe("persists_today")
+    }
+    // export/share remain honest capability gaps by design (FR16).
+    for (const id of ["output.export", "output.share"]) {
       expect(verb(panel.configure, id).persistence).toBe("honest_unavailable")
     }
   })

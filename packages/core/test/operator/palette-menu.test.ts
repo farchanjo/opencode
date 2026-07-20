@@ -72,8 +72,10 @@ describe("T014 group list — 12 domains with badges + counts (FR2)", () => {
     expect(byDomain.get("semantic")!.badge).toBe("Partial")
     // output likewise: retention/quota persist, the lifecycle mutations stay gated.
     expect(byDomain.get("output")!.badge).toBe("Partial")
-    // mcp stays fully honest-unavailable (T008 kept every mcp mutation a typed gap).
-    expect(byDomain.get("mcp")!.badge).toBe("Unavailable")
+    // Feature 017 T008/T009/T010 flipped mcp to a mixed domain: the config-backed
+    // mutations, live connection actions, and auth.remove commit honestly while
+    // auth.start/finish and resource subscribe/unsubscribe stay typed gaps → Partial.
+    expect(byDomain.get("mcp")!.badge).toBe("Partial")
     // Feature 013 flipped the four config-backed domains to persists_today (FR12).
     expect(byDomain.get("telemetry")!.badge).toBe("Available")
     expect(byDomain.get("smart")!.badge).toBe("Available")

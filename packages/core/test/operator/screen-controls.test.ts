@@ -27,11 +27,13 @@ describe("Feature 015 T008 — enable/disable pairs collapse into one toggle (FR
     expect(consumedIds.has("telemetry.off")).toBe(true)
   })
 
-  test("mcp experimental/extension render as two toggles, marked inert (unavailable backend, FR15)", () => {
+  test("mcp experimental/extension render as two toggles, now real (Feature 017 T008)", () => {
     const { toggles } = buildOperatorScreenControls("mcp")
     const labels = toggles.map((t) => t.label).sort()
     expect(labels).toEqual(["Experimental", "Extension"])
-    for (const toggle of toggles) expect(toggle.availability).toBe("unavailable")
+    // Feature 017 T008 flipped the config-backed experimental/extension toggles to
+    // commit through the store.config MCP authority, so they are no longer inert.
+    for (const toggle of toggles) expect(toggle.availability).not.toBe("unavailable")
   })
 
   test("per-entity jobs.enable/disable are NOT a domain toggle — they belong to entity CRUD (FR12)", () => {

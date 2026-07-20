@@ -49,6 +49,8 @@ import { LifecycleStackWiring } from "./lifecycle/stack-wiring"
 import { JobsStackWiring } from "./jobs/stack-wiring"
 import { JobsBackendLive } from "./jobs/backend-live"
 import { OperatorJobPersistence } from "./jobs/persistence"
+import { JobOccurrenceProjection } from "./jobs/occurrence-projection"
+import { EventBus } from "@opencode-ai/core/lifecycle/event-bus"
 import { LangLockStackWiring } from "./langlock/stack-wiring"
 import { LangLockBackendLive } from "./langlock/backend-live"
 import { LangLockPersistence } from "@/langlock/persistence"
@@ -58,6 +60,8 @@ import { ControlStore } from "@/outputspool/control-store"
 import { SessionSpoolWriter } from "@/session/output-spool-writer"
 import { SemanticStackWiring } from "./semantic/stack-wiring"
 import { SemanticBackendLive } from "./semantic/backend-live"
+import type { MilvusBinding } from "./semantic/milvus-binding"
+import { MilvusAdapter } from "@/semantic/milvus-adapter"
 import { McpStackWiring } from "./mcp/stack-wiring"
 import { McpBackendLive } from "./mcp/backend-live"
 import { TelemetryStackWiring } from "./telemetry/stack-wiring"
@@ -378,8 +382,37 @@ export async function createLiveOperatorStack(input: CreateLiveOperatorStackInpu
   // Feature 003 tasks.md Residuals note). Feature 007 stays the sole
   // command-registration authority — this override replaces the not_implemented
   // stub and adds no ids.
+  // Feature 017 / T015 (FR11, FR12) — the jobs occurrence projection over the durable
+  // EventV2Bridge seam, closing GAP F. The one resolved `EventV2Bridge.Service`
+  // singleton (the same the lifecycle wiring taps) backs `readAggregate`
+  // (`readDurablePage`) and the bounded live `subscribe` (`EventBus.subscribeBounded`)
+  // so `jobs.history` / `jobs.show` occurrences / `jobs.watch` project real `job.*`
+  // durable events. An unbound bridge degrades every read to a typed `unavailable`.
+  const jobsBridge = await AppRuntime.runPromise(
+    Effect.gen(function* () {
+      return yield* EventV2Bridge.Service
+    }),
+  )
+  const jobOccurrenceSource: JobOccurrenceProjection.JobOccurrenceSource = {
+    readAggregate: (input) =>
+      Effect.tryPromise({
+        try: () =>
+          AppRuntime.runPromise(
+            Effect.gen(function* () {
+              const svc = yield* EventV2Bridge.Service
+              return yield* svc.readDurablePage(input)
+            }),
+          ),
+        catch: (cause) => ({ type: "unavailable", reason: String(cause) }),
+      }),
+    subscribe: () =>
+      EventBus.subscribeBounded(jobsBridge, { capacity: 1024, overflow: "backpressure" }).pipe(
+        Effect.mapError((cause) => ({ type: "unavailable", reason: String(cause) })),
+      ),
+  }
   const jobsBackend = JobsBackendLive.createLiveJobsBackend({
     persistence: OperatorJobPersistence.createOperatorJobPersistence({ config: store.config }),
+    occurrences: JobOccurrenceProjection.createJobOccurrenceProjection(jobOccurrenceSource),
   })
   const jobsWiring = JobsStackWiring.createJobsDomainWiring({ backend: jobsBackend })
 
@@ -451,7 +484,39 @@ export async function createLiveOperatorStack(input: CreateLiveOperatorStackInpu
   // (`unavailable`/`milvus_unavailable`) — never fabricated (FR8, FR14). Feature
   // 007 stays the sole command-registration authority — this override replaces the
   // not_implemented stub and adds no ids (the reserved 30 semantic.* ids live at 1.3.0).
-  const semanticBackend = SemanticBackendLive.createLiveSemanticBackend({ config: store.config })
+  // Feature 017 / T016 (FR13, FR14) — bind the Milvus index override WHEN an endpoint
+  // is configured. The endpoint (host:port) is resolved from the operator environment;
+  // when present the `index.*` verbs bind over the shipped `milvus-adapter` under a
+  // BOUNDED probe (a probe-seam outage or an unreachable endpoint → typed
+  // `milvus_unavailable`), and when absent every index verb degrades to the exact same
+  // typed `milvus_unavailable` gap as today. The endpoint/credential never cross the
+  // result seam — only a bounded reachability finding or a typed gap (FR14, FR18).
+  const milvusAddress = process.env["OPENCODE_SEMANTIC_MILVUS_ADDRESS"]?.trim()
+  const milvus: MilvusBinding.MilvusIndexBindingDeps | undefined =
+    milvusAddress && milvusAddress.length > 0
+      ? {
+          endpoint: {
+            address: milvusAddress,
+            ssl: process.env["OPENCODE_SEMANTIC_MILVUS_INSECURE"] !== "1",
+            secretRef: process.env["OPENCODE_SEMANTIC_MILVUS_SECRET_REF"] || undefined,
+          },
+          // The live probe runs the shipped adapter health call; no gRPC client is bound
+          // from the operator runtime yet, so it resolves an honest `reachable:false`
+          // finding rather than fabricating a healthy endpoint (never rejects).
+          probe: async () => {
+            const started = Date.now()
+            const health = await AppRuntime.runPromise(
+              MilvusAdapter.createGrpcMilvusAdapter({})
+                .health()
+                .pipe(Effect.match({ onFailure: () => null, onSuccess: (h) => h })),
+            )
+            return health === null
+              ? { reachable: false, latencyMs: Date.now() - started }
+              : { reachable: health.reachable, latencyMs: health.latencyMs }
+          },
+        }
+      : undefined
+  const semanticBackend = SemanticBackendLive.createLiveSemanticBackend({ config: store.config, milvus })
   const semanticWiring = SemanticStackWiring.createSemanticDomainWiring({ backend: semanticBackend })
 
   // === Feature 008 / 014 T008 — mcp domain port composition =================
