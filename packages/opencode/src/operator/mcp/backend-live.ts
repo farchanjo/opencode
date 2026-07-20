@@ -707,7 +707,14 @@ export function createMcpMutations(deps: McpMutationDeps): McpMutationBackend {
           // The operator grant is implied by the audited operator principal + confirmation gate;
           // the dual authority is server capability AND operator grant (fail-closed, C10).
           const authority = { serverCapable: cap.kind === "capable", operatorGranted: true }
-          const decision = SubscriptionMachine.apply("unsubscribed", "subscribe", authority)
+          // Drive the machine with the verb's OWN event: a subscribe from `unsubscribed`
+          // (dual-authority gated → `fail_closed` on an absent capability), an unsubscribe from
+          // `subscribed` (a plain transition, never authority-gated). Applying `subscribe` for an
+          // unsubscribe would wrongly re-run the capability gate on teardown.
+          const decision =
+            verb === "subscribe"
+              ? SubscriptionMachine.apply("unsubscribed", "subscribe", authority)
+              : SubscriptionMachine.apply("subscribed", "unsubscribe", authority)
           if (decision.kind === "fail_closed")
             return {
               ok: false,
