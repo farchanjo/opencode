@@ -26,9 +26,9 @@ Legend:
 Checkbox backlog (details under each group below). Group A (reranker lifecycle) is FIRST —
 it needs no Milvus and unblocks the archive the embedding rollback also reads.
 
-- [ ] T001 — Route `semantic.reranker.cutover`/`rollback` through the config-backed registry
-- [ ] T002 — Extend the `RegistryDocument` with a per-slot binding version archive
-- [ ] T003 — Honest reranker gates (`not_validated` / `no_archived_prior` / `cas_conflict`)
+- [x] T001 — Route `semantic.reranker.cutover`/`rollback` through the config-backed registry
+- [x] T002 — Extend the `RegistryDocument` with a per-slot binding version archive
+- [x] T003 — Honest reranker gates (`not_validated` / `no_archived_prior` / `cas_conflict`)
 - [ ] T004 — Bind a real Milvus gRPC/HTTP client when the endpoint is configured
 - [ ] T005 — Add `enumerate-indexed-docs` + `createCollection/buildGeneration` to `MilvusPort`
 - [ ] T006 — Embedding cutover/rollback over the live port (build+validate before the swap)
@@ -55,7 +55,7 @@ it needs no Milvus and unblocks the archive the embedding rollback also reads.
 
 ## Group A — Reranker lifecycle over a config-backed archive (FR1-FR3) — FIRST
 
-- [ ] **T001 — Route `semantic.reranker.cutover`/`rollback` through the config-backed registry**
+- [x] **T001 — Route `semantic.reranker.cutover`/`rollback` through the config-backed registry**
 - **Depends:** none
 - **Paths:** `packages/opencode/src/operator/semantic/semantic-command-port.ts`, `packages/opencode/src/operator/semantic/registry-backend.ts`
 - **Deliverable:** move `semantic.reranker.cutover`/`rollback` (`semantic-command-port.ts:243-244`)
@@ -67,9 +67,17 @@ it needs no Milvus and unblocks the archive the embedding rollback also reads.
 - **Acceptance:** a reranker cutover commits config-backed with no Milvus call; the rerank
   cache/eval version is invalidated; a successful activation does not churn the CAS version.
 - **Verification:** `bun test packages/opencode/test/semantic/** packages/opencode/test/operator/**`.
-- **Evidence:** _(reserved)_
+- **Evidence:** 2026-07-20 — `semantic-command-port.ts:239-251` routes
+  `semantic.reranker.cutover`/`rollback` through `c.registry` (`planCutoverReranker`/
+  `planRollbackReranker`) as `OperatorMutationPlan`s when the registry is bound, keeping the
+  gated Milvus path only as the unbound fallback. `registry-backend.ts` `planCutoverReranker`
+  reuses the pure `CutoverExecutor.cutoverReranker` (no `MilvusPort`, `reEmbedded:false`) and
+  bumps `rerankEvalVersion` in the committed transform; the activated binding keeps its
+  operator-authored version (no version churn). Tests: `feature019-reranker-lifecycle.test.ts`
+  (13) + `feature019-reranker-dispatch.test.ts` (3) green; `bun test test/operator/` 449 pass /
+  2 skip; `bun test test/semantic/` 129 pass; `bun run typecheck` 30/30.
 
-- [ ] **T002 — Extend the `RegistryDocument` with a per-slot binding version archive**
+- [x] **T002 — Extend the `RegistryDocument` with a per-slot binding version archive**
 - **Depends:** T001
 - **Paths:** `packages/opencode/src/operator/semantic/registry-backend.ts`
 - **Deliverable:** extend the `RegistryDocument` with a per-slot archive — current + superseded
@@ -80,9 +88,18 @@ it needs no Milvus and unblocks the archive the embedding rollback also reads.
 - **Acceptance:** `bindingHistory` returns the multi-entry archive; `bindingStatus` reports the
   real rung; a cutover retains the prior as superseded.
 - **Verification:** `bun test packages/opencode/test/operator/**` (archive round-trip).
-- **Evidence:** _(reserved)_
+- **Evidence:** 2026-07-20 — `registry-backend.ts` extends `RegistryDocument` with
+  `embeddingStaged`/`rerankerStaged` (the in-flight candidate a `select` stages),
+  `embeddingArchive`/`rerankerArchive` (superseded priors, newest-first), and
+  `rerankEvalVersion`; every new field is `Schema.optional` + `normalizeDocument` so a pre-019
+  document round-trips losslessly (no provider/model loss). `bindingHistory` now composes
+  `slotHistory` = staged + current + superseded; `bindingStatus` derives the rung via
+  `degradationRung` (active embedding → `full_semantic`, else `catalog_lexical`) instead of the
+  hardcoded `full_semantic`. A cutover archives the outgoing active (`activateReranker`). Tests:
+  `feature019-reranker-lifecycle.test.ts` archive/history/status cases green; existing
+  `feature014-registry-wire.test.ts` (draft `binding.history` length 1) still green.
 
-- [ ] **T003 — Honest reranker gates (`not_validated` / `no_archived_prior` / `cas_conflict`)**
+- [x] **T003 — Honest reranker gates (`not_validated` / `no_archived_prior` / `cas_conflict`)**
 - **Depends:** T002
 - **Paths:** `packages/opencode/src/operator/semantic/registry-backend.ts`, `packages/opencode/src/operator/semantic/semantic-command-port.ts`
 - **Deliverable:** gate the activation — a cutover without a validated staged candidate →
@@ -91,7 +108,17 @@ it needs no Milvus and unblocks the archive the embedding rollback also reads.
   → `confirmation_required` (`#CutoverGate`, `#RollbackTarget`) (FR3).
 - **Acceptance:** each gate returns its typed refusal and commits nothing; no path fabricates a swap.
 - **Verification:** `bun test packages/opencode/test/operator/**` (gate cases).
-- **Evidence:** _(reserved)_
+- **Evidence:** 2026-07-20 — `planCutoverReranker` gates: no/unvalidated staged candidate →
+  `not_validated`; a candidate whose state is not a legal `staged → active` source
+  (`BindingLifecycle.apply` non-transition) → `not_validated`; unconfirmed → `confirmation_required`
+  (via the pure `cutoverReranker`). `planRollbackReranker` gates: empty/unknown archive target →
+  `no_archived_prior` (new `BindingError` member added to `packages/protocol/src/semantic/commands.ts`
+  + mapped in `semantic-command-port.ts` `mapError`); unconfirmed with a real prior →
+  `confirmation_required`. `cas_conflict` is enforced by `mutateAuthority` on the authority CAS token
+  (a contention swaps nothing). All refusals are `Effect.fail` BEFORE producing a plan, so nothing is
+  committed; the dispatch test asserts the audited rejection + no phantom active binding. Tests:
+  `feature019-reranker-lifecycle.test.ts` (7 gate cases) + `feature019-reranker-dispatch.test.ts`
+  (rejection audited, no phantom write) green.
 
 ## Group B1 — Live Milvus client + port methods (FR4, FR6)
 
