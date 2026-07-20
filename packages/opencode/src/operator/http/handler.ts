@@ -16,6 +16,7 @@ import {
 import type { Dispatcher } from "../application/dispatcher"
 import type { OperatorCommandRegistry } from "../application/registry"
 import { bindOperatorPrincipal, constantTimeEqual, type AuthContext } from "../auth/principal"
+import { authorityKeyForCommandId } from "../adapters/outbound/config-status"
 import { assertOperatorRequestAccess, assertOriginPolicy } from "./loopback"
 
 const MAX_BODY_BYTES = 256 * 1024
@@ -226,7 +227,7 @@ async function handlePreflight(request: Request, deps: OperatorHttpDeps): Promis
   // Resolve the SAME authority the command's mutation plan commits to; fall back to the prefix
   // only for ids the registry does not know (non-mutating / not yet mapped) — never a shared global.
   const resolved = deps.resolveAuthority?.(commandId, scopeCtx) ?? null
-  const authority = resolved ?? commandId.split(".")[0] ?? commandId
+  const authority = resolved ?? authorityKeyForCommandId(commandId)
   const entry = await deps.config.get(authority)
   return json(
     {

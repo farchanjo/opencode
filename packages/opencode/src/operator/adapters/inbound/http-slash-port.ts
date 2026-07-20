@@ -19,6 +19,7 @@ import {
   type SlashConfirmStore,
 } from "./slash-confirm"
 import { mapOperatorResultToDisplay, type OperatorSlashDisplay } from "./slash-display"
+import { authorityKeyForCommandId } from "../outbound/config-status"
 import type { TuiOperatorSlashPort } from "./tui-port"
 
 export type HttpSlashPortOptions = {
@@ -213,7 +214,7 @@ export function createHttpOperatorSlashPort(options: HttpSlashPortOptions): TuiO
           configured: json.configured === true,
           scopeKind: scopeResult.scope.kind,
           scopeRef: scopeResult.scope.ref ?? null,
-          authority: json.authority ?? input.commandId.split(".")[0] ?? input.commandId,
+          authority: json.authority ?? authorityKeyForCommandId(input.commandId),
         }
       } catch (error) {
         return {

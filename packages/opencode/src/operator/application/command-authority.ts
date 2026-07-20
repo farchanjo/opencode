@@ -67,31 +67,68 @@ const MCP_CONNECTION_VERBS: ReadonlySet<string> = new Set([
 /** The store-scoped outputspool admin verbs that record under the single `global:output-admin` authority. */
 const OUTPUT_ADMIN_VERBS: ReadonlySet<string> = new Set(["output.release", "output.delete", "output.purge"])
 
+/** The command domain (prefix before the first `.`), or the whole id when it has none. */
+function domainOf(commandId: string): string {
+  return commandId.includes(".") ? commandId.slice(0, commandId.indexOf(".")) : commandId
+}
+
+/**
+ * Resolve the SCOPE-INDEPENDENT Config authority a mutating command commits to, or
+ * `null` for a scope-dependent (`smart`/`budget`/`routing`/`langlock`, `output`
+ * retention/quota) or unknown/non-mutating id. This is the ONE source of truth for
+ * the static command→authority mapping — sourced from the domain modules' exported
+ * constants (no re-typed string table) — shared by both the wired
+ * `createOperatorAuthorityResolver` and the degraded `authorityKeyForCommandId`
+ * fallback (`adapters/outbound/config-status.ts`), so the two can never drift. A
+ * preflight path that does NOT thread the full resolver still resolves the correct
+ * authority for these static commands (`pools.set → "routing"`), closing the
+ * stale-binary / mis-wired-port hazard at the root (Feature 021 FR-A).
+ */
+export function staticAuthorityForCommandId(commandId: string): string | null {
+  switch (domainOf(commandId)) {
+    case "telemetry":
+      return TELEMETRY_AUTHORITY
+    case "semantic":
+      return SEMANTIC_AUTHORITY
+    case "pools":
+      return POOLS_AUTHORITY
+    case "jobs":
+      return JOBS_AUTHORITY
+    case "mcp":
+      if (MCP_CONNECTION_VERBS.has(commandId)) return MCP_CONNECTIONS_AUTHORITY
+      if (commandId === "mcp.auth.remove") return MCP_AUTH_AUTHORITY
+      if (MCP_CONFIG_VERBS.has(commandId)) return MCP_CONFIG_AUTHORITY
+      return null
+    case "output":
+      // retention.set / quota.set are scope-dependent (resolver lambdas); admin verbs are static.
+      if (OUTPUT_ADMIN_VERBS.has(commandId)) return OUTPUT_ADMIN_AUTHORITY
+      return null
+    default:
+      return null
+  }
+}
+
 /**
  * Build the authority resolver. Static authorities come from the domain modules'
- * exported constants; scope-dependent ones use the injected resolver lambdas (the
- * same ones the composition root binds to the backends). Absent lambdas resolve
- * their verbs to null so the preflight falls back to the prefix (no regression).
+ * exported constants (via `staticAuthorityForCommandId` — the ONE shared SSOT);
+ * scope-dependent ones use the injected resolver lambdas (the same ones the
+ * composition root binds to the backends). Absent lambdas resolve their verbs to
+ * null so the preflight falls back to the prefix (no regression).
  */
 export function createOperatorAuthorityResolver(deps: AuthorityResolverDeps = {}): OperatorAuthorityResolver {
   const norm = (kind: string): "global" | "project" => (kind === "global" ? "global" : "project")
   return (commandId, scope) => {
+    // The scope-independent authorities resolve from the single shared SSOT.
+    const staticAuthority = staticAuthorityForCommandId(commandId)
+    if (staticAuthority !== null) return staticAuthority
+    // Only the scope-DEPENDENT domains remain, resolved with the request scope + lambdas.
     const s = norm(scope.scopeKind)
     const scopeId = scope.scopeRef ?? ""
-    const domain = commandId.includes(".") ? commandId.slice(0, commandId.indexOf(".")) : commandId
-    switch (domain) {
-      case "telemetry":
-        return TELEMETRY_AUTHORITY
-      case "semantic":
-        return SEMANTIC_AUTHORITY
+    switch (domainOf(commandId)) {
       case "smart":
         return SMART_AUTHORITY[s]
       case "budget":
         return BUDGET_AUTHORITY[s]
-      case "pools":
-        return POOLS_AUTHORITY
-      case "jobs":
-        return JOBS_AUTHORITY
       // routing shares the same per-scope routing document authority as smart/budget.
       case "routing":
         return SMART_AUTHORITY[s]
@@ -102,12 +139,6 @@ export function createOperatorAuthorityResolver(deps: AuthorityResolverDeps = {}
           return deps.retentionAuthorityFor ? deps.retentionAuthorityFor(s, scopeId) : null
         if (commandId === "output.quota.set")
           return deps.quotaAuthorityFor ? deps.quotaAuthorityFor(s, scopeId) : null
-        if (OUTPUT_ADMIN_VERBS.has(commandId)) return OUTPUT_ADMIN_AUTHORITY
-        return null
-      case "mcp":
-        if (MCP_CONNECTION_VERBS.has(commandId)) return MCP_CONNECTIONS_AUTHORITY
-        if (commandId === "mcp.auth.remove") return MCP_AUTH_AUTHORITY
-        if (MCP_CONFIG_VERBS.has(commandId)) return MCP_CONFIG_AUTHORITY
         return null
       default:
         return null

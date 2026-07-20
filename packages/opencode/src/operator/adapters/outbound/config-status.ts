@@ -5,12 +5,20 @@
 import type { HandlerContext, HandlerResult, OperatorCommandHandler } from "../../application/handler"
 import type { ConfigPort } from "../../application/ports/config-port"
 import { createHandlerMap, type HandlerMap } from "../../application/handler"
+import { staticAuthorityForCommandId } from "../../application/command-authority"
 
-/** Map domain / command prefix → Config authority key. */
+/**
+ * Map a command id → the Config authority it commits to, for a preflight path that
+ * did NOT thread the full `createOperatorAuthorityResolver`. It consults the SAME
+ * domain command→authority SSOT (`staticAuthorityForCommandId`) the wired resolver
+ * uses, so a scope-independent static command resolves correctly by construction
+ * (`pools.set → "routing"`, not the id prefix `"pools"` — the Feature 021 root
+ * fix). A scope-dependent (`smart`/`budget`/`routing`/`langlock`, `output`
+ * retention/quota) or unknown/non-mutating id keeps the prefix fallback (no
+ * regression) — those are reached only through the wired resolver in production.
+ */
 export function authorityKeyForCommandId(commandId: string): string {
-  const domain = commandId.split(".")[0] ?? commandId
-  // semantic uses "semantic" authority; others use domain name
-  return domain
+  return staticAuthorityForCommandId(commandId) ?? commandId.split(".")[0] ?? commandId
 }
 
 /**
