@@ -41,7 +41,7 @@ async function causeText<A>(eff: Effect.Effect<A, SmartError>): Promise<string> 
 describe("T006 backend-live — honest projection over RoutingConfig.Activation", () => {
   test("resolve on an unconfigured store projects the safe disabled default", async () => {
     const { backend } = build()
-    const summary = await run(backend.resolve())
+    const summary = await run(backend.resolve("project"))
     expect(summary.enabled).toBe(false)
     expect(summary.auto).toBe(false)
     expect(summary.configured).toBe(false)
@@ -49,9 +49,20 @@ describe("T006 backend-live — honest projection over RoutingConfig.Activation"
     expect(summary.version).toBe(INITIAL_CONFIG_VERSION)
   })
 
-  test("planOn targets the global routing authority and its apply flips enabled=true (nothing persisted)", async () => {
+  test("a project-scope planOn targets the PROJECT routing authority (not global) even on a fresh store", async () => {
+    // Feature 025: the write scope follows the REQUEST scope, not the effective
+    // origin — so a fresh (default-resolved) project still targets `routing`, keeping
+    // the committed authority aligned with the mutation preflight.
     const { config, backend } = build()
-    const plan = await run(backend.planOn(input(INITIAL_CONFIG_VERSION)))
+    const plan = await run(backend.planOn(input(INITIAL_CONFIG_VERSION), "project"))
+    expect(plan.authority).toBe("routing")
+    expect(await config.get("routing")).toBeNull()
+    expect(activationOf(plan.apply(null)).enabled).toBe(true)
+  })
+
+  test("a global-scope planOn targets the GLOBAL routing authority", async () => {
+    const { config, backend } = build()
+    const plan = await run(backend.planOn(input(INITIAL_CONFIG_VERSION), "global"))
     expect(plan.authority).toBe("global:routing")
     expect(await config.get("global:routing")).toBeNull()
     expect(activationOf(plan.apply(null)).enabled).toBe(true)
@@ -59,13 +70,13 @@ describe("T006 backend-live — honest projection over RoutingConfig.Activation"
 
   test("planOff apply flips enabled=false", async () => {
     const { backend } = build()
-    const plan = await run(backend.planOff(input(INITIAL_CONFIG_VERSION)))
+    const plan = await run(backend.planOff(input(INITIAL_CONFIG_VERSION), "project"))
     expect(activationOf(plan.apply(null)).enabled).toBe(false)
   })
 
-  test("planAuto apply sets mode=auto without discarding the models/enforcement", async () => {
+  test("planAuto apply merges mode=auto onto the fresh on-disk payload without discarding models/enforcement", async () => {
     const { backend } = build()
-    const plan = await run(backend.planAuto(input(INITIAL_CONFIG_VERSION)))
+    const plan = await run(backend.planAuto(input(INITIAL_CONFIG_VERSION), "project"))
     const next = plan.apply(null) as RoutingConfig.Info
     expect(next.activation.mode).toBe("auto")
     expect(next.models).toBeDefined()
@@ -77,7 +88,7 @@ describe("T006 backend-live — Config.Service outage degrades to a typed capabi
   test("an unreachable store resolves to unavailable, never fabricated data", async () => {
     const broken: ConfigPort = { ...createMemoryConfigPort(), get: () => Promise.reject(new Error("config down")) }
     const { backend } = build(broken)
-    expect(await causeText(backend.resolve())).toContain("unavailable")
-    expect(await causeText(backend.planOn(input(INITIAL_CONFIG_VERSION)))).toContain("unavailable")
+    expect(await causeText(backend.resolve("project"))).toContain("unavailable")
+    expect(await causeText(backend.planOn(input(INITIAL_CONFIG_VERSION), "project"))).toContain("unavailable")
   })
 })
