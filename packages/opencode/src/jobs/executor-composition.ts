@@ -121,6 +121,42 @@ export interface DueRegistrationView {
 export type DueContextResolver = (signal: DueSignal) => Effect.Effect<DueRegistrationView | null, TriggerError>
 
 // =============================================================================
+// Run-now immediate-occurrence seam (Group B, T008/T009)
+// =============================================================================
+
+/**
+ * The bounded context an operator `jobs.run-now` supplies to enqueue ONE immediate
+ * occurrence through the SAME composition the cron loop drives — never a second
+ * executor or dispatch path (FR7, FR12). `rootSessionId` is the definition-keyed
+ * durable aggregate the occurrence events are written under (Group C, T010): a
+ * scheduled occurrence has no external parent session, so its aggregate root IS the
+ * job definition, and the Feature 017 occurrence projection reads by
+ * `jobDefinitionId` directly.
+ */
+export interface EnqueueImmediateInput {
+  readonly jobDefinitionId: string
+  readonly scheduleId: string
+  readonly overlapPolicy: OverlapPolicy
+  readonly overlapCapabilities: Overlap.OverlapCapabilities
+  /** The definition-keyed durable aggregate (`= jobDefinitionId`); never an external session (Group C). */
+  readonly rootSessionId: string
+  /** Executor-owned fencing generation carried in the idempotency tuple; never authored by the operator (C6). */
+  readonly generation: number
+}
+
+/**
+ * The honest outcome of a run-now enqueue (`runnow.cue #RunNowResult`,
+ * `enums.cue #RunNowOutcome`). `enqueued` carries the created occurrence identity;
+ * `overlap_rejected` is an in-flight `forbid` sibling (or a capability the surface
+ * cannot enforce); `executor_unavailable` is a disarmed executor — never a
+ * fabricated occurrence (FR7, FR13).
+ */
+export type EnqueueImmediateResult =
+  | { readonly outcome: "enqueued"; readonly occurrenceId: string }
+  | { readonly outcome: "overlap_rejected"; readonly reason: string }
+  | { readonly outcome: "executor_unavailable"; readonly reason: string }
+
+// =============================================================================
 // Composition dependencies + surface
 // =============================================================================
 
@@ -152,6 +188,12 @@ export interface ExecutorComposition {
    * a resolution/trigger fault is absorbed (fail-open per due signal).
    */
   readonly onDue: (signal: DueSignal) => Effect.Effect<void>
+  /**
+   * Enqueue ONE immediate occurrence through the same trigger service + bounded
+   * overlap tracker the cron loop uses (run-now, T008). Resolves to the honest
+   * outcome; a disarmed composition resolves `executor_unavailable`. Never throws.
+   */
+  readonly enqueueImmediate: (input: EnqueueImmediateInput) => Promise<EnqueueImmediateResult>
   /** Run the startup reconcile sweep (rehydrate enabled definitions); fail-open. */
   readonly arm: () => Effect.Effect<void>
   /** Count of occurrences currently running headless (bounded-concurrency probe). */
@@ -321,6 +363,60 @@ export function buildExecutorComposition(deps: ExecutorCompositionDeps): Executo
       )
     }).pipe(Effect.catch(() => Effect.void)) // fail-open per due signal
 
+  // Run-now: enqueue ONE immediate occurrence through the SAME trigger service +
+  // bounded overlap tracker the cron loop uses (T008, T009). No second executor,
+  // no second dispatch path. A `forbid` sibling in flight → overlap_rejected; a
+  // capability the surface cannot enforce → overlap_rejected; a trigger fault →
+  // executor_unavailable. Never a fabricated occurrence (FR7, FR13).
+  const enqueueImmediate = async (input: EnqueueImmediateInput): Promise<EnqueueImmediateResult> => {
+    const key = `${input.jobDefinitionId}:${input.scheduleId}`
+    const nominalMs = clock()
+    const triggerInput: TriggerInput = {
+      jobDefinitionId: input.jobDefinitionId as TriggerInput["jobDefinitionId"],
+      scheduleId: input.scheduleId as TriggerInput["scheduleId"],
+      nominalDueTime: new Date(nominalMs).toISOString(),
+      generation: input.generation as TriggerInput["generation"],
+      rootSessionId: input.rootSessionId as TriggerInput["rootSessionId"],
+      correlationId: `runnow_${input.jobDefinitionId}_${nominalMs}_${input.generation}`,
+      causationId: null,
+      nominalDueMs: nominalMs,
+      observedAtMs: clock(),
+      overlapPolicy: input.overlapPolicy,
+      overlapCapabilities: input.overlapCapabilities,
+      running: tracker.running(key),
+      runningIsMutating: tracker.runningIsMutating(key),
+    }
+    const result = await Effect.runPromise(
+      triggerService.trigger(triggerInput).pipe(
+        Effect.map((out) => ({ ok: true as const, out })),
+        Effect.catch((error) => Effect.succeed({ ok: false as const, error })),
+      ),
+    )
+    if (!result.ok) {
+      // A capability the in-process surface cannot enforce (queue/replace) is an
+      // honest overlap rejection; any other trigger fault degrades to unavailable.
+      if (result.error.type === "capability_unsupported") {
+        return { outcome: "overlap_rejected", reason: `overlap capability unsupported: ${result.error.capability}` }
+      }
+      return { outcome: "executor_unavailable", reason: runnerFault(result.error).reason ?? "trigger failed" }
+    }
+    const out = result.out
+    if (out.outcome === "admitted") {
+      tracker.begin(key)
+      runFork(
+        runAdmitted(out.occurrence, triggerInput.correlationId, triggerInput.causationId).pipe(
+          Effect.ensuring(Effect.sync(() => tracker.end(key))),
+        ),
+      )
+      return { outcome: "enqueued", occurrenceId: out.occurrence.occurrenceId }
+    }
+    if (out.outcome === "overlap_rejected") {
+      return { outcome: "overlap_rejected", reason: "overlap policy forbids a concurrent occurrence" }
+    }
+    // claimed (admission denied) / coalesced / queued — bounded, honest, not enqueued.
+    return { outcome: "overlap_rejected", reason: `not admitted: ${out.outcome}` }
+  }
+
   const adapter = createBunCronAdapter({
     cron: trackedCron,
     clock,
@@ -340,6 +436,7 @@ export function buildExecutorComposition(deps: ExecutorCompositionDeps): Executo
     adapter,
     triggerService,
     onDue,
+    enqueueImmediate,
     arm,
     activeOccurrences: () => tracker.size(),
     reason: null,
@@ -381,6 +478,7 @@ const disarmed = (reason: string): ExecutorComposition => ({
   adapter: null,
   triggerService: null,
   onDue: () => Effect.void,
+  enqueueImmediate: () => Promise.resolve({ outcome: "executor_unavailable", reason }),
   arm: () => Effect.void,
   activeOccurrences: () => 0,
   reason,

@@ -334,3 +334,90 @@ describe("T007 bounded concurrency over the overlap policy", () => {
     expect(types(emitted).filter((t) => t === "job.execution_completed")).toHaveLength(2)
   })
 })
+
+// =============================================================================
+// T008-T009 — run-now enqueueImmediate through the SAME composition
+// =============================================================================
+
+describe("T008-T009 run-now enqueueImmediate", () => {
+  afterEach(() => __resetExecutorCompositionForTests())
+
+  const enqInput = (over: Partial<Parameters<ReturnType<typeof buildExecutorComposition>["enqueueImmediate"]>[0]> = {}) => ({
+    jobDefinitionId: "job_test_1",
+    scheduleId: "sch_1",
+    overlapPolicy: "forbid" as const,
+    overlapCapabilities: IN_PROCESS_OVERLAP,
+    rootSessionId: "job_test_1",
+    generation: 0,
+    ...over,
+  })
+
+  test("enqueues one immediate occurrence, provisions + runs headless, emits terminal (T008)", async () => {
+    const { runner, ran } = fakeRunner({ disposition: "completed" })
+    const { deps, emitted, calls } = buildDeps({
+      runner,
+      runFork: (effect) => void Effect.runPromise(effect),
+      newOccurrenceId: () => "occ_now",
+    })
+    const composition = buildExecutorComposition(deps)
+    const result = await composition.enqueueImmediate(enqInput())
+    expect(result.outcome).toBe("enqueued")
+    if (result.outcome === "enqueued") expect(result.occurrenceId).toBe("occ_now")
+    await new Promise((r) => setTimeout(r, 10))
+    expect(calls.created).toEqual(["occ_now"])
+    expect(ran.map((o) => o.occurrenceId)).toEqual(["occ_now"])
+    expect(types(emitted)).toContain("job.execution_completed")
+    expect(composition.activeOccurrences()).toBe(0)
+  })
+
+  test("every occurrence event roots on the definition (definition-keyed aggregate, T010)", async () => {
+    const { deps, emitted } = buildDeps({
+      runFork: (effect) => void Effect.runPromise(effect),
+      newOccurrenceId: () => "occ_k",
+    })
+    const composition = buildExecutorComposition(deps)
+    await composition.enqueueImmediate(enqInput({ rootSessionId: "job_test_1" }))
+    await new Promise((r) => setTimeout(r, 10))
+    // The durable aggregate is derived from tree.root_session_id, so every emitted
+    // event roots on the jobDefinitionId → the projection reads by definition (Group C).
+    expect(emitted.length).toBeGreaterThan(0)
+    expect(emitted.every((e) => e.envelope.rootSessionId === "job_test_1")).toBe(true)
+  })
+
+  test("a forbid overlap with an in-flight sibling → overlap_rejected, no second run (T009)", async () => {
+    let release!: () => void
+    const latch = new Promise<void>((resolve) => (release = resolve))
+    const { runner, ran } = fakeRunner({ disposition: "completed" }, latch)
+    let n = 0
+    const { deps } = buildDeps({
+      runner,
+      runFork: (effect) => void Effect.runPromise(effect),
+      newOccurrenceId: () => `occ_${n++}`,
+    })
+    const composition = buildExecutorComposition(deps)
+
+    const first = await composition.enqueueImmediate(enqInput())
+    expect(first.outcome).toBe("enqueued")
+    expect(composition.activeOccurrences()).toBe(1) // bounded in-flight
+
+    const second = await composition.enqueueImmediate(enqInput())
+    expect(second.outcome).toBe("overlap_rejected")
+    expect(ran).toHaveLength(1) // never an unbounded fan-out
+
+    release()
+    await new Promise((r) => setTimeout(r, 10))
+    expect(composition.activeOccurrences()).toBe(0)
+  })
+
+  test("a disarmed executor → executor_unavailable, never a fabricated occurrence (T009)", async () => {
+    const throwingDeps = new Proxy({} as ExecutorCompositionDeps, {
+      get() {
+        throw new Error("injected arming fault")
+      },
+    })
+    const composition = ensureExecutorComposition(throwingDeps)
+    expect(composition.state).toBe("disarmed")
+    const result = await composition.enqueueImmediate(enqInput())
+    expect(result.outcome).toBe("executor_unavailable")
+  })
+})

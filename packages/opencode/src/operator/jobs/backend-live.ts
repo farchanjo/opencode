@@ -34,9 +34,31 @@ export * as JobsBackendLive from "./backend-live"
 
 import { Effect } from "effect"
 import { OperatorJobPersistence } from "./persistence"
-import type { JobsError } from "@opencode-ai/protocol/jobs/commands"
+import type { JobsError, OverlapPolicy } from "@opencode-ai/protocol/jobs/commands"
+import type { OperatorMutationPlan } from "@/operator/application/handler"
 import type { JobsBackend } from "./jobs-port"
 import type { JobOccurrenceProjection } from "./occurrence-projection"
+
+/**
+ * Feature 018 / Group B (T008, T009) — the run-now enqueue seam. The operator
+ * backend loads the definition (typed `not_found`/`disabled`), then defers the
+ * enqueue into the `OperatorMutationPlan.effect` so `mutateAuthority` runs it EXACTLY
+ * ONCE after the contract/idempotency/CAS checks (no phantom write, no replay-rerun).
+ * The composition root binds this to the eager executor's `enqueueImmediate` seam.
+ */
+export interface RunNowEnqueueRequest {
+  readonly jobDefinitionId: string
+  readonly scheduleId: string
+  readonly overlapPolicy: OverlapPolicy
+}
+
+/** The honest run-now outcome (`runnow.cue #RunNowResult`); never a fabricated occurrence. */
+export type RunNowEnqueueResult =
+  | { readonly outcome: "enqueued"; readonly occurrenceId: string }
+  | { readonly outcome: "overlap_rejected"; readonly reason: string }
+  | { readonly outcome: "executor_unavailable"; readonly reason: string }
+
+export type RunNowEnqueuePort = (request: RunNowEnqueueRequest) => Promise<RunNowEnqueueResult>
 
 export interface LiveJobsBackendDeps {
   readonly persistence: OperatorJobPersistence.OperatorJobPersistence
@@ -46,6 +68,12 @@ export interface LiveJobsBackendDeps {
    * the real `job.*` durable events; when unset they stay the typed capability gap.
    */
   readonly occurrences?: JobOccurrenceProjection.JobOccurrenceProjection
+  /**
+   * Feature 018 / T008 — the eager executor's `enqueueImmediate` seam. When bound,
+   * `planRunNow` converts from the typed gap to an effectful mutation plan; when
+   * unset it stays the honest `unavailable` capability gap (never fabricated).
+   */
+  readonly runNow?: RunNowEnqueuePort
 }
 
 /** A persistence error is surfaced as a typed, honest `unavailable` — never a false read. */
@@ -60,6 +88,42 @@ const unavailable = (reason: string): JobsError => ({ type: "unavailable", reaso
 export function createLiveJobsBackend(deps: LiveJobsBackendDeps): JobsBackend {
   const persistence = deps.persistence
   const occurrences = deps.occurrences
+  const runNow = deps.runNow
+
+  /**
+   * Feature 018 / T008, T009 — convert `jobs.run-now` to an effectful mutation plan.
+   * Loads the definition at PLAN time (typed `not_found`; a disabled definition is a
+   * typed `invalid_argument` — never a fabricated occurrence), then defers the enqueue
+   * into `effect` so `mutateAuthority` runs it exactly once after the CAS/idempotency
+   * checks. `apply` is identity — run-now records no definition mutation, so a
+   * rejected enqueue (overlap/disarmed) commits nothing (no phantom write, FR7).
+   */
+  const planRunNow = (input: { readonly jobDefinitionId: string }): Effect.Effect<OperatorMutationPlan, JobsError> =>
+    Effect.gen(function* () {
+      const { definition } = yield* persistence.status({ jobDefinitionId: input.jobDefinitionId })
+      if (!definition.enabled) {
+        return yield* Effect.fail<JobsError>({ type: "invalid_argument", field: "jobDefinitionId", reason: "definition is disabled" })
+      }
+      const request: RunNowEnqueueRequest = {
+        jobDefinitionId: definition.jobDefinitionId,
+        scheduleId: definition.schedule.scheduleId,
+        overlapPolicy: definition.overlapPolicy,
+      }
+      const plan: OperatorMutationPlan = {
+        authority: OperatorJobPersistence.AUTHORITY,
+        // Identity: run-now mutates no definition record — the settled token rides
+        // the `jobs` authority the effect commits through, without rewriting the doc.
+        apply: (current) => current ?? { definitions: {} },
+        effect: async () => {
+          const outcome = await runNow!(request)
+          if (outcome.outcome === "enqueued") return { ok: true, value: { occurrenceId: outcome.occurrenceId } }
+          if (outcome.outcome === "overlap_rejected") return { ok: false, code: "conflict", message: outcome.reason }
+          return { ok: false, code: "unavailable", message: outcome.reason }
+        },
+      }
+      return plan
+    })
+
   return {
     list: persistence.list,
     status: persistence.status,
@@ -88,8 +152,11 @@ export function createLiveJobsBackend(deps: LiveJobsBackendDeps): JobsBackend {
     planDisable: persistence.planDisable,
     planDelete: persistence.planDelete,
     planReschedule: persistence.planReschedule,
-    // T011: run-now requires the Feature 002 executor seam, not reachable from the
-    // operator AppRuntime — a typed gap, never a fabricated occurrence.
-    planRunNow: () => Effect.fail(unavailable("run-now requires the Feature 002 executor seam, not reachable from the operator runtime")),
+    // Feature 018 / T008 — run-now converts to an effectful mutation plan once the
+    // eager executor's `enqueueImmediate` seam is bound; an unbound executor stays
+    // the honest typed gap (never a fabricated occurrence).
+    planRunNow: runNow
+      ? planRunNow
+      : () => Effect.fail(unavailable("run-now requires the Feature 002 executor seam, not reachable from the operator runtime")),
   }
 }

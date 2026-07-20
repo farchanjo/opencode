@@ -27,6 +27,11 @@ import { Effect } from "effect"
 import { AppRuntime } from "@/effect/app-runtime"
 import { EventV2Bridge } from "@/event-v2-bridge"
 import { Session } from "@/session/session"
+import { Config } from "@/config/config"
+import { createLiveConfigServiceLike } from "@/operator/adapters/outbound/config-live"
+import { createDurableOperatorStore } from "@/operator/adapters/outbound/config-service"
+import { OperatorJobPersistence } from "@/operator/jobs/persistence"
+import { ExecutorReconcile } from "./executor-reconcile"
 import { Events as JobEvents } from "@opencode-ai/schema/jobs/events"
 import { Schema } from "effect"
 import type {
@@ -41,8 +46,9 @@ import type {
   TaskProcessCoordinator,
   TriggerError,
 } from "./trigger-service"
-import type { ExecutorCompositionDeps, OccurrenceRunner } from "./executor-composition"
-import type { JobEventType } from "@opencode-ai/protocol/jobs/commands"
+import type { DueContextResolver, ExecutorCompositionDeps, OccurrenceRunner } from "./executor-composition"
+import type { ReconcileSource, RegistrationView } from "./bun-cron-adapter"
+import type { JobEventType, SchedulerError } from "@opencode-ai/protocol/jobs/commands"
 
 // =============================================================================
 // Occurrence `job.*` emitter over the single EventV2Bridge authority (C8)
@@ -231,31 +237,110 @@ function createLiveRunner(): OccurrenceRunner {
 // Composition dependency assembly
 // =============================================================================
 
+// =============================================================================
+// Live persisted-definition rehydration (Group C, T011) — reconcile/resolve over
+// the SAME operator `jobs` persistence, read-only, fail-open
+// =============================================================================
+
+/**
+ * Lazily build the operator jobs persistence over a READ-ONLY durable operator
+ * store bound to the ambient server `Config.Service`. The executor only READS
+ * persisted definitions (writes flow through the operator `mutateAuthority`), so a
+ * no-op process lock is safe — no Flock filesystem dependency. Memoized; any
+ * construction fault degrades to `null` so the reconcile/resolve seams stay
+ * honest-empty and the executor arms regardless (fail-open, FR2).
+ */
+let persistencePromise: Promise<OperatorJobPersistence.OperatorJobPersistence | null> | undefined
+
+function loadLiveJobsPersistence(): Promise<OperatorJobPersistence.OperatorJobPersistence | null> {
+  if (persistencePromise) return persistencePromise
+  persistencePromise = (async () => {
+    try {
+      const config = createLiveConfigServiceLike({
+        useConfig: (fn) =>
+          AppRuntime.runPromise(
+            Effect.gen(function* () {
+              const svc = yield* Config.Service
+              return yield* fn({
+                get: () => svc.get() as ReturnType<Parameters<typeof fn>[0]["get"]>,
+                getGlobal: () => svc.getGlobal() as ReturnType<Parameters<typeof fn>[0]["getGlobal"]>,
+                update: (patch) => svc.update(patch as never),
+                updateGlobal: (patch) => svc.updateGlobal(patch as never),
+              })
+            }),
+          ),
+      })
+      const store = createDurableOperatorStore({
+        config,
+        // Read-only executor rehydration: a process-local no-op lock is sufficient
+        // (the operator stack owns the Flock-guarded write path).
+        lock: {
+          withLock: (_key, fn) => fn(),
+          tryWithLock: async (_key, fn) => ({ acquired: true, value: await fn() }),
+        },
+      })
+      return OperatorJobPersistence.createOperatorJobPersistence({ config: store.config })
+    } catch {
+      return null
+    }
+  })()
+  return persistencePromise
+}
+
+/** TEST-ONLY: reset the memoized live jobs persistence so a fresh runtime can rebind. */
+export function __resetLiveJobsPersistenceForTests(): void {
+  persistencePromise = undefined
+}
+
 /**
  * Build the real production dependencies for the eager executor composition. The
- * reconcile sweep is honest-empty for now: persisted registration rehydration
- * rides the operator ConfigPort adapter (wired with the operator stack in Group
- * B/C), so the loop arms without a false replay of past execution. `resolveDueContext`
- * mirrors that honesty — a definition is resolvable once its persisted registration
- * is reachable.
+ * startup reconcile sweep and the due-context resolution ride the SAME operator
+ * `jobs` persistence (`ExecutorReconcile`) so enabled persisted definitions
+ * rehydrate at `arm()` and every occurrence event lands under the definition-keyed
+ * durable aggregate (Group C). The persistence load is lazy + fail-open, so a slow
+ * or unavailable config never blocks arming and never claims past execution.
  */
 export function createLiveExecutorCompositionDeps(): ExecutorCompositionDeps {
   const cron = requireBunCronRuntime()
+  const seams = createLiveReconcileSeams()
   return {
     cron,
     emitter: createLiveEmitter(),
     registry: createLiveRegistry(),
     coordinator: createLiveCoordinator(),
     runner: createLiveRunner(),
-    // Resolved from the persisted registration once reachable; null drops the
-    // due signal honestly (no claim of past execution) until then.
-    resolveDueContext: () => Effect.succeed(null),
-    // Honest-empty startup sweep: the loop arms; enabled definitions register when
-    // their persisted registration is reachable through the operator ConfigPort.
-    reconcileSource: undefined,
+    resolveDueContext: seams.resolveDueContext,
+    reconcileSource: seams.reconcileSource,
     runFork: (effect) => void AppRuntime.runFork(effect),
     clock: Date.now,
   }
+}
+
+/** Wrap the persistence bridge with the lazy fail-open loader (honest-empty when unavailable). */
+function createLiveReconcileSeams(): ExecutorReconcile.ExecutorReconcileSeams {
+  const reconcileSource: ReconcileSource = (input) =>
+    Effect.tryPromise({
+      try: () => loadLiveJobsPersistence(),
+      catch: (cause): SchedulerError => ({ type: "unavailable", reason: `jobs persistence unavailable: ${String(cause).slice(0, 120)}` }),
+    }).pipe(
+      Effect.flatMap((p) =>
+        p === null
+          ? Effect.succeed([] as readonly RegistrationView[])
+          : ExecutorReconcile.createExecutorReconcileSeams(p).reconcileSource(input),
+      ),
+    )
+
+  const resolveDueContext: DueContextResolver = (signal) =>
+    Effect.tryPromise({
+      try: () => loadLiveJobsPersistence(),
+      catch: (cause): TriggerError => unavailable(`jobs persistence unavailable: ${String(cause).slice(0, 120)}`),
+    }).pipe(
+      Effect.flatMap((p) =>
+        p === null ? Effect.succeed(null) : ExecutorReconcile.createExecutorReconcileSeams(p).resolveDueContext(signal),
+      ),
+    )
+
+  return { reconcileSource, resolveDueContext }
 }
 
 /** Bind the real `Bun.cron` runtime lazily (throws under a non-Bun runner → fail-open). */

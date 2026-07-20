@@ -56,6 +56,8 @@ import { LangLockPersistence } from "@/langlock/persistence"
 import { OutputSpoolStackWiring } from "./outputspool/stack-wiring"
 import { OutputSpoolBackendLive } from "./outputspool/backend-live"
 import { SpoolProcessWriter } from "@/outputspool/spool-process-writer"
+import { ExecutorComposition } from "@/jobs/executor-composition"
+import { ExecutorReconcile } from "@/jobs/executor-reconcile"
 import { createOperatorAuthorityResolver } from "./application/command-authority"
 import { SemanticStackWiring } from "./semantic/stack-wiring"
 import { SemanticBackendLive } from "./semantic/backend-live"
@@ -414,9 +416,25 @@ export async function createLiveOperatorStack(input: CreateLiveOperatorStackInpu
         Effect.mapError((cause) => ({ type: "unavailable", reason: String(cause) })),
       ),
   }
+  // Feature 018 / T008 — bind run-now to the eager executor's `enqueueImmediate`
+  // seam (armed at server start, or lazily here for CLI `op` contexts). A disarmed
+  // executor degrades run-now to a typed `unavailable`; never a fabricated occurrence.
+  const jobsRunNow: JobsBackendLive.RunNowEnqueuePort = (request) =>
+    ExecutorComposition.ensureExecutorComposition().enqueueImmediate({
+      jobDefinitionId: request.jobDefinitionId,
+      scheduleId: request.scheduleId,
+      overlapPolicy: request.overlapPolicy,
+      overlapCapabilities: ExecutorReconcile.IN_PROCESS_OVERLAP,
+      // Definition-keyed durable aggregate: a run-now occurrence roots on its
+      // definition, so its events land under the `jobDefinitionId` aggregate the
+      // occurrence projection reads (Group C).
+      rootSessionId: request.jobDefinitionId,
+      generation: 0,
+    })
   const jobsBackend = JobsBackendLive.createLiveJobsBackend({
     persistence: OperatorJobPersistence.createOperatorJobPersistence({ config: store.config }),
     occurrences: JobOccurrenceProjection.createJobOccurrenceProjection(jobOccurrenceSource),
+    runNow: jobsRunNow,
   })
   const jobsWiring = JobsStackWiring.createJobsDomainWiring({ backend: jobsBackend })
 
