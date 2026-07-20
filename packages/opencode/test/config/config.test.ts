@@ -1052,6 +1052,171 @@ it.instance("Feature 027 — OPENCODE_DISABLE_PROJECT_CONFIG skips the relocated
   ),
 )
 
+// Feature 028 — the GLOBAL config file resolution honors OPENCODE_CONFIG_DIR.
+// Feature 027 relocated the per-project profile store under the override; 028 aligns
+// the global config.json / opencode.json[c] seams so an isolated profile owns its own
+// global config instead of leaking back into ~/.config/opencode.
+describe("Feature 028 — global config honors OPENCODE_CONFIG_DIR", () => {
+  it.effect("global config.json read resolves under OPENCODE_CONFIG_DIR", () =>
+    Effect.gen(function* () {
+      const override = yield* tmpdirScoped()
+      const projectDir = yield* tmpdirScoped()
+      yield* writeConfigEffect(override, schemaConfig({ model: "override/model" }), "config.json")
+
+      yield* withProcessEnv(
+        "OPENCODE_CONFIG_DIR",
+        override,
+        Effect.gen(function* () {
+          yield* clearEffect(true)
+          const config = yield* Config.use.get().pipe(provideInstanceEffect(projectDir))
+          expect(config.model).toBe("override/model")
+        }),
+      )
+    }).pipe(Effect.provide(testInstanceStoreLayer), Effect.provide(LayerNode.compile(CrossSpawnSpawner.node))),
+  )
+
+  it.effect("updateGlobal writes config.json under OPENCODE_CONFIG_DIR", () =>
+    Effect.gen(function* () {
+      const override = yield* tmpdirScoped()
+      // Seed config.json so globalConfigFile() resolves the write target to it.
+      yield* writeConfigEffect(override, schemaConfig({ model: "base/model" }), "config.json")
+
+      yield* withProcessEnv(
+        "OPENCODE_CONFIG_DIR",
+        override,
+        Effect.gen(function* () {
+          yield* clearEffect(true)
+          yield* Config.use.updateGlobal({ model: "written/model" })
+
+          const written = yield* FSUtil.use.readJson(path.join(override, "config.json"))
+          expect(written).toMatchObject({ model: "written/model" })
+        }),
+      )
+    }).pipe(Effect.provide(testInstanceStoreLayer), Effect.provide(LayerNode.compile(CrossSpawnSpawner.node))),
+  )
+
+  it.effect("per-project profile operator config overrides global; global-only authority survives", () =>
+    Effect.gen(function* () {
+      const globalDir = yield* tmpdirScoped()
+      const projectDir = yield* tmpdirScoped()
+      // Global config carries two operator authorities; the profile store overrides one.
+      yield* writeConfigEffect(
+        globalDir,
+        schemaConfig({
+          operator: {
+            authorities: {
+              routing: { version: "cas_v1" },
+              telemetry: { version: "cas_v1" },
+            },
+          },
+        }),
+        "config.json",
+      )
+
+      // OPENCODE_CONFIG_DIR, not withGlobalConfigDir: this is what actually rides configRoot()
+      // in config.ts. Global.Path.config is left untouched, so if configRoot() ever reverted to
+      // the raw Global.Path.config, globalDir's config.json would never be read and both
+      // authorities below would be undefined.
+      yield* withProcessEnv(
+        "OPENCODE_CONFIG_DIR",
+        globalDir,
+        Effect.gen(function* () {
+          yield* clearEffect(true)
+          // project-profile.ts resolves this path through the same OPENCODE_CONFIG_DIR-aware
+          // configRoot(), so the profile store also lands under globalDir.
+          const profile = ProjectProfile.projectOperatorConfigPath(projectDir)
+          yield* FSUtil.use.writeWithDirs(
+            profile,
+            JSON.stringify({ operator: { authorities: { routing: { version: "cas_v2" } } } }),
+          )
+
+          const config = yield* Config.use.get().pipe(provideInstanceEffect(projectDir))
+          const authorities = config.operator?.authorities as Record<string, { version?: string }> | undefined
+          // Project-over-global: the profile config wins for the shared authority.
+          expect(authorities?.routing?.version).toBe("cas_v2")
+          // The global-only authority still applies as the fallback default.
+          expect(authorities?.telemetry?.version).toBe("cas_v1")
+        }),
+      )
+    }).pipe(Effect.provide(testInstanceStoreLayer), Effect.provide(LayerNode.compile(CrossSpawnSpawner.node))),
+  )
+
+  it.effect("project opencode.json overrides an OPENCODE_CONFIG_DIR opencode.json on overlapping keys", () =>
+    Effect.gen(function* () {
+      const override = yield* tmpdirScoped()
+      const projectDir = yield* tmpdirScoped()
+      // Feature 028 routes the override's opencode.json through the global loader (merged
+      // FIRST, as global config). Pre-028, the directories loop merged it AFTER project files
+      // and it would have won on overlapping keys — the wrong direction per the user's
+      // project-over-global precedence rule. This locks the corrected direction: the
+      // project-tree opencode.json must still win.
+      yield* writeConfigEffect(override, schemaConfig({ model: "override/model" }))
+      yield* writeConfigEffect(projectDir, schemaConfig({ model: "project/model" }))
+
+      yield* withProcessEnv(
+        "OPENCODE_CONFIG_DIR",
+        override,
+        Effect.gen(function* () {
+          yield* clearEffect(true)
+          const config = yield* Config.use.get().pipe(provideInstanceEffect(projectDir))
+          expect(config.model).toBe("project/model")
+        }),
+      )
+    }).pipe(Effect.provide(testInstanceStoreLayer), Effect.provide(LayerNode.compile(CrossSpawnSpawner.node))),
+  )
+
+  it.effect("no plugin array duplication from the config-root opencode.json double-load", () =>
+    Effect.gen(function* () {
+      const override = yield* tmpdirScoped()
+      const projectDir = yield* tmpdirScoped()
+      // An opencode.json with a plugin array in the config root would be loaded by BOTH the
+      // global loader and the directories loop; the loop is skipped for the config root so
+      // the array is not merged twice.
+      yield* writeConfigEffect(override, schemaConfig({ plugin: ["dup-plugin-1", "dup-plugin-2"] }))
+
+      yield* withProcessEnv(
+        "OPENCODE_CONFIG_DIR",
+        override,
+        Effect.gen(function* () {
+          yield* clearEffect(true)
+          const config = yield* Config.use.get().pipe(provideInstanceEffect(projectDir))
+          const plugins = config.plugin ?? []
+          expect(plugins.filter((p) => p === "dup-plugin-1").length).toBe(1)
+          expect(plugins.filter((p) => p === "dup-plugin-2").length).toBe(1)
+        }),
+      )
+    }).pipe(Effect.provide(testInstanceStoreLayer), Effect.provide(LayerNode.compile(CrossSpawnSpawner.node))),
+  )
+
+  it.effect("with no override, the global config resolves from Global.Path.config (unchanged)", () =>
+    withGlobalConfig({ config: { model: "default-root/model" }, name: "config.json" }, ({ dir }) =>
+      Effect.gen(function* () {
+        const config = yield* Config.use.get().pipe(provideInstanceEffect(dir))
+        expect(config.model).toBe("default-root/model")
+      }).pipe(Effect.provide(testInstanceStoreLayer), Effect.provide(LayerNode.compile(CrossSpawnSpawner.node))),
+    ),
+  )
+
+  it.effect("auth material is never relocated into OPENCODE_CONFIG_DIR", () =>
+    Effect.gen(function* () {
+      const override = yield* tmpdirScoped()
+      const projectDir = yield* tmpdirScoped()
+
+      yield* withProcessEnv(
+        "OPENCODE_CONFIG_DIR",
+        override,
+        Effect.gen(function* () {
+          yield* clearEffect(true)
+          yield* Config.use.get().pipe(provideInstanceEffect(projectDir))
+          // auth.json lives under Global.Path.data, out of the config root; this change
+          // touches only config-file resolution and never writes auth into the override.
+          expect(yield* FSUtil.use.existsSafe(path.join(override, "auth.json"))).toBe(false)
+        }),
+      )
+    }).pipe(Effect.provide(testInstanceStoreLayer), Effect.provide(LayerNode.compile(CrossSpawnSpawner.node))),
+  )
+})
+
 it.instance("gets config directories", () =>
   Effect.gen(function* () {
     const dirs = yield* Config.use.directories()
