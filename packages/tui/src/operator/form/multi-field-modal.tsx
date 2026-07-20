@@ -15,7 +15,7 @@ import { InputRenderable, TextAttributes, TextareaRenderable } from "@opentui/co
 import { batch, createEffect, For, onMount, Show, type JSX } from "solid-js"
 import { createStore, type SetStoreFunction } from "solid-js/store"
 import { listOperatorPaletteEntries, type OperatorPaletteEntry } from "@opencode-ai/core/operator"
-import type { OperatorSlashPort } from "../../context/operator-slash"
+import type { OperatorRequestScope, OperatorSlashPort } from "../../context/operator-slash"
 import type { DialogContext } from "../../ui/dialog"
 import { useTheme } from "../../context/theme"
 import { DialogPrompt } from "../../ui/dialog-prompt"
@@ -27,6 +27,9 @@ import {
   composePayload,
   prefillBindings,
   validateBindings,
+  DEFAULT_REQUEST_SCOPE,
+  isScopeFlexibleCommand,
+  requestScopePickerOptions,
   type BindingRow,
   type EditField,
   type EditFieldListDescriptor,
@@ -35,6 +38,31 @@ import { failureReason } from "./edit-modal"
 
 /** Outcomes that committed the mutation — the only ones that close the modal (FR20). */
 const SUCCESS_OUTCOMES = new Set(["success", "idempotent_replay"])
+
+/**
+ * The synthetic request-scope picker row (Feature 034). Its `key` is NOT a payload
+ * property — `composePayload`/`descriptor.compose` only read `descriptor.fields`, so
+ * this augmented row is ignored there. Its value rides `executeOperatorCommand`'s
+ * `requestedScope` into the port's scope resolver instead.
+ */
+const REQUEST_SCOPE_KEY = "__requestScope__"
+
+/**
+ * The augmented request-scope picker row for a scope-FLEXIBLE Configure verb, or
+ * `undefined` when the command targets a single scope (no picker, Feature 034). Rendered
+ * as the LAST field row (above Save) reusing the same `kind:"picker"` idiom as the
+ * payload fields; it never enters `composePayload`.
+ */
+function requestScopeField(entry: OperatorPaletteEntry): EditField | undefined {
+  if (!isScopeFlexibleCommand(entry.scopesAllowed)) return undefined
+  return {
+    key: REQUEST_SCOPE_KEY,
+    label: "Request scope",
+    kind: "picker",
+    required: false,
+    options: requestScopePickerOptions(entry.scopesAllowed),
+  }
+}
 
 /** The reactive form state (raw entries, bindings, cursor, error, busy, loaded). */
 type MultiFieldStore = {
@@ -59,7 +87,9 @@ export type MultiFieldState = readonly [MultiFieldStore, SetStoreFunction<MultiF
  */
 export function createMultiFieldState(descriptor: EditFieldListDescriptor): MultiFieldState {
   return createStore<MultiFieldStore>({
-    raw: Object.fromEntries(descriptor.fields.map((f) => [f.key, ""])),
+    // The request-scope row defaults to `project` (back-compat) — a harmless unused key
+    // for a single-scope command whose picker row is never rendered (Feature 034).
+    raw: { ...Object.fromEntries(descriptor.fields.map((f) => [f.key, ""])), [REQUEST_SCOPE_KEY]: DEFAULT_REQUEST_SCOPE },
     bindings: [],
     active: 0,
     error: undefined,
@@ -131,7 +161,10 @@ function isTextLike(field: EditField): boolean {
 /** The pre-filled, validated multi-field edit form (FR19). */
 export function MultiFieldForm(props: MultiFieldModalProps): JSX.Element {
   const { theme } = useTheme()
-  const fields = props.descriptor.fields
+  // A scope-flexible command appends the request-scope picker row (Feature 034); it rides
+  // `requestedScope`, never the composed payload, so `props.descriptor.fields` alone drives compose.
+  const scopeField = requestScopeField(props.entry)
+  const fields = scopeField ? [...props.descriptor.fields, scopeField] : props.descriptor.fields
   const saveIndex = fields.length
   const inputs: (InputRenderable | TextareaRenderable | undefined)[] = []
   // Hoisted by the factory so it survives the form's re-mount under a pushed sub-dialog.
@@ -156,6 +189,8 @@ export function MultiFieldForm(props: MultiFieldModalProps): JSX.Element {
 
   async function load() {
     const initial: Record<string, string> = Object.fromEntries(fields.map((f) => [f.key, ""]))
+    // The request-scope row is not part of the silent read; seed its back-compat default (Feature 034).
+    if (scopeField) initial[REQUEST_SCOPE_KEY] = DEFAULT_REQUEST_SCOPE
     if (props.descriptor.readId) await prefillFromRead(initial)
     batch(() => {
       setStore("raw", initial)
@@ -284,6 +319,9 @@ export function MultiFieldForm(props: MultiFieldModalProps): JSX.Element {
         dialog: props.dialog,
         toast: props.toast,
         payload: { ...props.basePayload, ...payload },
+        // Feature 034: forward the operator's chosen authority scope for a scope-flexible
+        // command; a single-scope command passes nothing → project-preferred (unchanged).
+        ...(scopeField ? { requestedScope: store.raw[REQUEST_SCOPE_KEY] as OperatorRequestScope } : {}),
         silent: true,
       })
       if (result.outcome && SUCCESS_OUTCOMES.has(result.outcome)) {
