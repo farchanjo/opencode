@@ -45,6 +45,11 @@ import path from "path"
 import { Effect } from "effect"
 import type {
   AdminError,
+  AdminReleaseInput,
+  DeleteInput,
+  FollowInput,
+  FollowOutput,
+  PurgeInput,
   ReadInput,
   ReadOutput,
   ReadPage,
@@ -57,12 +62,41 @@ import type {
 import type { GroupState } from "@opencode-ai/schema/outputspool/enums"
 import type { Paging } from "@opencode-ai/core/outputspool/paging"
 import { PageReader } from "@/outputspool/page-reader"
+import { SessionSpoolWriter } from "@/session/output-spool-writer"
 import type { ControlStore } from "@/outputspool/control-store"
 import type { OperatorMutationPlan } from "@/operator/application/handler"
 import type { OutputSpoolBackend } from "./outputspool-port"
 
 /** Resolves the config authority a scope/scopeId maps to (mirrors LangLockPersistence.authorityFor). */
 export type OutputPolicyAuthorityFor = (scope: "global" | "project", scopeId: string) => string
+
+/** The default page size a follower streams per `output.follow` step (bounded, C3). */
+const FOLLOW_PAGE_SIZE = 64 * 1024
+
+/** The store-scoped authority the admin edge records `release`/`delete`/`purge` outcomes under (never a config CAS version, FR9). */
+export const OUTPUT_ADMIN_AUTHORITY = "global:output-admin" as const
+
+/** An opaque follow cursor over a committed generation: `{ outputRef, offset }`, base64url(JSON) (C14). */
+interface FollowCursor {
+  readonly outputRef: string
+  readonly offset: number
+}
+
+const encodeFollowCursor = (cursor: FollowCursor): string =>
+  Buffer.from(JSON.stringify(cursor)).toString("base64url")
+
+const decodeFollowCursor = (raw: string): FollowCursor | null => {
+  try {
+    const parsed = JSON.parse(Buffer.from(raw, "base64url").toString("utf8")) as Record<string, unknown>
+    const outputRef = parsed.outputRef
+    const offset = parsed.offset
+    if (typeof outputRef !== "string" || outputRef.length === 0) return null
+    if (typeof offset !== "number" || !Number.isFinite(offset) || offset < 0) return null
+    return { outputRef, offset }
+  } catch {
+    return null
+  }
+}
 
 /** Reads one bounded UTF-8-safe page for a channel generation record; the live default binds `readPage` over the spool root. */
 export type ChannelPageReader = (
@@ -89,6 +123,19 @@ export interface LiveOutputSpoolBackendDeps {
   readonly retentionAuthorityFor?: OutputPolicyAuthorityFor
   /** Resolves the config authority `quota.set` commits under; when set, enables the policy plan. */
   readonly quotaAuthorityFor?: OutputPolicyAuthorityFor
+  /**
+   * Feature 017 / T013 (FR8) — when true (and a store is bound), `output.follow` binds its
+   * cursor-codec seam: a follower streams committed pages from the populated store under the
+   * Feature 005 backpressure/`eof` semantics, never blocking the writer. Unset keeps the gap.
+   */
+  readonly enableFollow?: boolean
+  /**
+   * Feature 017 / T014 (FR9) — when set (and a store is bound), `release`/`delete`/`purge`
+   * commit through this STORE-SCOPED authority via the `mutation_plan` contract; the live store
+   * op runs at plan-build time and `apply` records the control-store generation (never a
+   * fabricated config CAS version). Unset keeps the typed capability gap.
+   */
+  readonly adminAuthority?: string
   readonly now?: () => number
 }
 
@@ -128,6 +175,9 @@ const gapBackend: OutputSpoolBackend = {
   purge: () => Effect.fail(adminUnavailable(CONTROL_STORE_ONLY)),
   planSetRetention: () => Effect.fail(adminUnavailable(NOT_BOUND)),
   planSetQuota: () => Effect.fail(adminUnavailable(NOT_BOUND)),
+  planRelease: () => Effect.fail(adminUnavailable(CONTROL_STORE_ONLY)),
+  planDelete: () => Effect.fail(adminUnavailable(CONTROL_STORE_ONLY)),
+  planPurge: () => Effect.fail(adminUnavailable(CONTROL_STORE_ONLY)),
 }
 
 /** Project a channel-generation record onto the content-free `stat` read model (FR18). */
@@ -188,6 +238,94 @@ const readerMethods = (
     ),
 })
 
+/**
+ * Feature 017 / T013 (FR8) — the live `output.follow` cursor codec over the populated
+ * store. Decodes the opaque `{ outputRef, offset }` cursor, reads exactly one bounded page
+ * through `page-reader.ts` (an independent read-only handle, so a slow follower never blocks
+ * the writer), and re-encodes the cursor at the page's `next_offset`. `caught_up`/`eof` follow
+ * the Feature 005 backpressure/`eof` semantics. An invalid cursor degrades to a typed error.
+ */
+const followMethod = (
+  store: ControlStore.ControlStore,
+  pageReader: ChannelPageReader,
+): Pick<OutputSpoolBackend, "follow"> => ({
+  follow: (input: FollowInput): Effect.Effect<FollowOutput, SpoolReaderError> => {
+    const cursor = decodeFollowCursor(input.cursor)
+    if (!cursor) return Effect.fail<SpoolReaderError>({ type: "invalid_cursor", cursor: input.cursor })
+    return getRecord(store, cursor.outputRef).pipe(
+      Effect.flatMap((record) =>
+        Effect.tryPromise({
+          try: () => pageReader(record, cursor.offset, FOLLOW_PAGE_SIZE),
+          catch: (e) => readerUnavailable(String(e)),
+        }),
+      ),
+      Effect.map((page) => ({
+        page: toReadPage(page),
+        cursor: encodeFollowCursor({ outputRef: cursor.outputRef, offset: page.next_offset }),
+      })),
+    )
+  },
+})
+
+/**
+ * Feature 017 / T014 (FR9, ADR-0017) — the store-scoped admin edge. Each verb runs the REAL
+ * control-store op at plan-build time (a rejection fails BEFORE any op, so no phantom write),
+ * then returns a plan whose `apply` records the admin outcome — including the real control-store
+ * `generation`, NEVER a fabricated config CAS version — under the store-scoped authority; the
+ * dispatcher's `mutateAuthority` commits the record and emits the Feature 007 audit correlation.
+ */
+const adminMethods = (
+  deps: LiveOutputSpoolBackendDeps,
+  store: ControlStore.ControlStore,
+  authority: string,
+): Pick<OutputSpoolBackend, "planRelease" | "planDelete" | "planPurge"> => {
+  const now = deps.now ?? Date.now
+  const spoolRoot = deps.spoolRoot ?? ""
+
+  /** Read the record; a store outage/absent record fails BEFORE any op (typed, no write). */
+  const require = (outputRef: string): Effect.Effect<ControlStore.GenerationRecord, AdminError> =>
+    Effect.try({ try: () => store.get(outputRef), catch: (e) => adminUnavailable(String(e)) }).pipe(
+      Effect.flatMap((record) => (record ? Effect.succeed(record) : Effect.fail<AdminError>({ type: "not_found", outputRef }))),
+    )
+
+  /** Run one control-store admin op at plan time, then record the settled generation under the store-scoped authority. */
+  const runAdmin = (
+    outputRef: string,
+    action: "release" | "delete" | "purge",
+    op: (record: ControlStore.GenerationRecord) => void,
+  ): Effect.Effect<OperatorMutationPlan, AdminError> =>
+    require(outputRef).pipe(
+      Effect.flatMap((record) =>
+        Effect.try({ try: () => op(record), catch: (e) => adminUnavailable(String(e)) }).pipe(Effect.as(record)),
+      ),
+      Effect.map((record) => ({
+        authority,
+        apply: (current: unknown) => {
+          const map = current && typeof current === "object" && !Array.isArray(current) ? { ...(current as Record<string, unknown>) } : {}
+          // The settled version is the control-store generation, never a fabricated config CAS version (FR9).
+          map[outputRef] = { action, generation: record.generation, committedBytes: record.committed_bytes, updatedAtMs: now() }
+          return map
+        },
+      })),
+    )
+
+  return {
+    // release drops the reference edges so retention can reclaim; committed bytes are preserved.
+    planRelease: (input: AdminReleaseInput) =>
+      runAdmin(input.outputRef, "release", (record) => {
+        for (const edge of store.listEdges(record.output_ref)) store.removeEdge(record.output_ref, edge.kind, edge.holder_ref)
+      }),
+    // delete removes the control record (and its edges); the data file is swept by retention.
+    planDelete: (input: DeleteInput) => runAdmin(input.outputRef, "delete", (record) => store.deleteGeneration(record.output_ref)),
+    // purge removes the control record AND the on-disk channel bytes (the hard delete).
+    planPurge: (input: PurgeInput) =>
+      runAdmin(input.outputRef, "purge", (record) => {
+        SessionSpoolWriter.removeChannelData(spoolRoot, record.group_id, record.generation, record.channel)
+        store.deleteGeneration(record.output_ref)
+      }),
+  }
+}
+
 /** Build the config-backed policy plan methods (FR6, FR5); each apply is a pure transform of the persisted policy. */
 const policyMethods = (
   deps: LiveOutputSpoolBackendDeps,
@@ -225,13 +363,17 @@ const policyMethods = (
  * gap/deny defaults (FR6, FR14).
  */
 export const createLiveOutputSpoolBackend = (deps: LiveOutputSpoolBackendDeps = {}): OutputSpoolBackend => {
-  const reader =
-    deps.store !== undefined
-      ? readerMethods(deps.store, deps.pageReader ?? defaultPageReader(deps.spoolRoot ?? ""))
-      : {}
+  const pageReader = deps.pageReader ?? defaultPageReader(deps.spoolRoot ?? "")
+  const reader = deps.store !== undefined ? readerMethods(deps.store, pageReader) : {}
+  // Feature 017 / T013 — bind the live follow cursor codec when the store is populated + enabled.
+  const follow = deps.store !== undefined && deps.enableFollow ? followMethod(deps.store, pageReader) : {}
+  // Feature 017 / T014 — bind the store-scoped admin edge when the store + admin authority are bound.
+  const admin = deps.store !== undefined && deps.adminAuthority ? adminMethods(deps, deps.store, deps.adminAuthority) : {}
   return {
     ...gapBackend,
     ...reader,
+    ...follow,
+    ...admin,
     ...policyMethods(deps),
     ...deps.override,
   }

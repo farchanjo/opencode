@@ -88,6 +88,17 @@ export interface OutputSpoolBackend {
   readonly purge: (input: PurgeInput) => Effect.Effect<PurgeOutput, AdminError>
   readonly planSetRetention: (input: SetRetentionInput) => Effect.Effect<OperatorMutationPlan, AdminError>
   readonly planSetQuota: (input: SetQuotaInput) => Effect.Effect<OperatorMutationPlan, AdminError>
+  /**
+   * Feature 017 / T014 (FR9, ADR-0017) — the store-scoped admin edge. `release`/
+   * `delete`/`purge` are SQLite control-store ops, not config-CAS writes: the plan's
+   * `apply` records the admin outcome (the real control-store generation, NEVER a
+   * fabricated config CAS version) under a store-scoped authority, and the live store
+   * op runs at plan-build time so a rejection persists NOTHING (no phantom write). The
+   * dispatcher's `mutateAuthority` commits the record + emits the Feature 007 audit.
+   */
+  readonly planRelease: (input: AdminReleaseInput) => Effect.Effect<OperatorMutationPlan, AdminError>
+  readonly planDelete: (input: DeleteInput) => Effect.Effect<OperatorMutationPlan, AdminError>
+  readonly planPurge: (input: PurgeInput) => Effect.Effect<OperatorMutationPlan, AdminError>
 }
 
 /** The typed operator port; a thin pass-through over the injected backend (mirrors langlock-port). */

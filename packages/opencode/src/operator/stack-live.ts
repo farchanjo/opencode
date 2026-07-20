@@ -55,6 +55,7 @@ import { LangLockPersistence } from "@/langlock/persistence"
 import { OutputSpoolStackWiring } from "./outputspool/stack-wiring"
 import { OutputSpoolBackendLive } from "./outputspool/backend-live"
 import { ControlStore } from "@/outputspool/control-store"
+import { SessionSpoolWriter } from "@/session/output-spool-writer"
 import { SemanticStackWiring } from "./semantic/stack-wiring"
 import { SemanticBackendLive } from "./semantic/backend-live"
 import { McpStackWiring } from "./mcp/stack-wiring"
@@ -425,8 +426,19 @@ export async function createLiveOperatorStack(input: CreateLiveOperatorStackInpu
       scope === "global" ? "global:output.retention" : `output.retention/${scopeId || "project"}`,
     quotaAuthorityFor: (scope, scopeId) =>
       scope === "global" ? "global:output.quota" : `output.quota/${scopeId || "project"}`,
+    // Feature 017 / T013, T014 — the store is now populated by the production writer below,
+    // so `follow` binds its cursor codec and `release`/`delete`/`purge` commit through the
+    // store-scoped admin authority (FR8, FR9). Both stay typed gaps when the store is unbound.
+    enableFollow: outputControlStore !== undefined,
+    adminAuthority: OutputSpoolBackendLive.OUTPUT_ADMIN_AUTHORITY,
   })
   const outputSpoolWiring = OutputSpoolStackWiring.createOutputSpoolDomainWiring({ backend: outputSpoolBackend })
+  // Feature 017 / T011 (FR6, FR10) — subscribe the PRODUCTION writer at the session
+  // message-part seam so a session's output actually populates the control store the
+  // operator reads. Fails open (a spool write never breaks the session loop) and bounded.
+  const outputSpoolWriterUnsubscribe = outputControlStore
+    ? SessionSpoolWriter.subscribeSessionSpoolWriter({ store: outputControlStore, spoolRoot })
+    : undefined
 
   // === Feature 006 / 014 — semantic domain port composition =================
   // The typed 30 `semantic.*` operator ports. Feature 014 (T009) wires the
@@ -644,6 +656,7 @@ export async function createLiveOperatorStack(input: CreateLiveOperatorStackInpu
     dispose: () => {
       lifecycleWiring.dispose()
       jobsWiring.dispose()
+      outputSpoolWriterUnsubscribe?.()
       outputSpoolWiring.dispose()
       semanticWiring.dispose()
       mcpWiring.dispose()

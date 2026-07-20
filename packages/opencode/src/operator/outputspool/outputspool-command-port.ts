@@ -216,12 +216,15 @@ function outputInvoke(deps: OutputSpoolCommandDeps): DomainInvoke {
         return run(id, principalId, outputRef, port.export({ outputRef, scope: "project", expectedVersion, principal }), adminToFailure, (o) => query(o))
       case "output.share":
         return run(id, principalId, outputRef, port.share({ outputRef, scope: "project", expectedVersion, principal }), adminToFailure, (o) => query(o))
+      // Feature 017 / T014 (FR9) — the store-scoped admin edge commits through the
+      // `mutation_plan` contract: `mutateAuthority` owns the single committed record +
+      // the audit correlation; a rejection (not_found/store outage) persists NOTHING.
       case "output.release":
-        return run(id, principalId, outputRef, port.release({ outputRef, scope: "project", principal }), adminToFailure, (o) => query(o))
+        return runPlan(id, principalId, outputRef, port.planRelease({ outputRef, scope: "project", principal }))
       case "output.delete":
-        return run(id, principalId, outputRef, port.delete({ outputRef, scope: "project", expectedVersion, principal }), adminToFailure, (o) => query(o))
+        return runPlan(id, principalId, outputRef, port.planDelete({ outputRef, scope: "project", expectedVersion, principal }))
       case "output.purge":
-        return run(id, principalId, outputRef, port.purge({ outputRef, scope: "project", expectedVersion, principal }), adminToFailure, (o) => query(o))
+        return runPlan(id, principalId, outputRef, port.planPurge({ outputRef, scope: "project", expectedVersion, principal }))
       case "output.retention.set": {
         const scopeId = firstString(payload, ["scopeId", "scope_id"]) ?? ctx.request.scope.ref ?? ""
         const scope = (firstString(payload, ["scope"]) ?? ctx.request.scope.kind) === "global" ? "global" : "project"
