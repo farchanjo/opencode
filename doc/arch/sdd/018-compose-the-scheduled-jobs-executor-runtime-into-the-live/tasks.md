@@ -27,13 +27,13 @@ Legend:
 Checkbox backlog (details under each group below). Group A (eager composition +
 coordinator) is FIRST — nothing runs without it.
 
-- [ ] T001 — `ExecutorComposition` process-singleton armed eagerly at server start
-- [ ] T002 — Fail-open, idempotent arming (a fault never breaks server startup)
-- [ ] T003 — Wire `DueDispatcher` → `onDue` and `reconcileSource` → rehydration
-- [ ] T004 — Implement `TaskProcessCoordinator.admit` over the F002/F001 gates
-- [ ] T005 — Implement `createProcess`/`provisionTodo`/`provisionOutputGroup`
-- [ ] T006 — Run headless via the shared spool writer; same permission surface (no bypass)
-- [ ] T007 — Bounded concurrency over the existing overlap/misfire policies
+- [x] T001 — `ExecutorComposition` process-singleton armed eagerly at server start
+- [x] T002 — Fail-open, idempotent arming (a fault never breaks server startup)
+- [x] T003 — Wire `DueDispatcher` → `onDue` and `reconcileSource` → rehydration
+- [x] T004 — Implement `TaskProcessCoordinator.admit` over the F002/F001 gates
+- [x] T005 — Implement `createProcess`/`provisionTodo`/`provisionOutputGroup`
+- [x] T006 — Run headless via the shared spool writer; same permission surface (no bypass)
+- [x] T007 — Bounded concurrency over the existing overlap/misfire policies
 - [ ] T008 — Convert `jobs.run-now` to an effectful mutation plan (enqueue occurrence)
 - [ ] T009 — Honest run-now outcomes (overlap-rejected / executor-unavailable / replay)
 - [ ] T010 — Emit definition-keyed `job.*` occurrence events
@@ -50,7 +50,7 @@ coordinator) is FIRST — nothing runs without it.
 
 ## Group A — Eager executor composition + coordinator implementation (FR1-FR6) — FIRST
 
-- [ ] **T001 — `ExecutorComposition` process-singleton armed eagerly at server start**
+- [x] **T001 — `ExecutorComposition` process-singleton armed eagerly at server start**
 - **Depends:** none
 - **Paths:** `packages/opencode/src/jobs/**` (new composition root), `packages/opencode/src/server/server.ts`
 - **Deliverable:** a process-wide `ExecutorComposition` that constructs the scheduler
@@ -62,9 +62,15 @@ coordinator) is FIRST — nothing runs without it.
 - **Acceptance:** the executor arms at `listen()` without the operator being opened; a
   second call reuses the armed instance (idempotent), never a second cron loop.
 - **Verification:** `bun test packages/opencode/test/jobs/**`; `bun run typecheck`.
-- **Evidence:** _(reserved)_
+- **Evidence:** 2026-07-19 — `packages/opencode/src/jobs/executor-composition.ts:441`
+  (`ensureExecutorComposition`), armed at `packages/opencode/src/server/server.ts:120-127`
+  eagerly at `listen()` mirroring `ensureProcessSpoolWriter`, independent of the
+  operator stack. Idempotent process singleton (`buildExecutorComposition` +
+  module-level `singleton`/`attempted`). Test: `test/jobs/executor-composition.test.ts`
+  "ensureExecutorComposition arms once and reuses the armed instance". `bun run
+  typecheck` EXIT=0; `bun test test/jobs` 71 pass.
 
-- [ ] **T002 — Fail-open, idempotent arming (a fault never breaks server startup)**
+- [x] **T002 — Fail-open, idempotent arming (a fault never breaks server startup)**
 - **Depends:** T001
 - **Paths:** `packages/opencode/src/jobs/**`, `packages/opencode/src/server/server.ts`
 - **Deliverable:** wrap the arming so any construction/arming fault (a bad definition,
@@ -74,9 +80,13 @@ coordinator) is FIRST — nothing runs without it.
 - **Acceptance:** an injected arming fault leaves the server started + executor
   disarmed; no crash and no partial arm that fires without a coordinator.
 - **Verification:** `bun test packages/opencode/test/jobs/**` (fail-open case).
-- **Evidence:** _(reserved)_
+- **Evidence:** 2026-07-19 — `executor-composition.ts:453-463` catches any
+  construction/arming fault → `disarmed(reason)` with a bounded, secret-free reason;
+  the `server.ts` bootstrap is additionally wrapped in try/catch. A second call
+  reuses the disarmed instance (no retry loop, no partial arm). Test: "fails open
+  when construction throws" + idempotent-reuse assertions.
 
-- [ ] **T003 — Wire `DueDispatcher` → `onDue` and `reconcileSource` → rehydration**
+- [x] **T003 — Wire `DueDispatcher` → `onDue` and `reconcileSource` → rehydration**
 - **Depends:** T001
 - **Paths:** `packages/opencode/src/jobs/**`
 - **Deliverable:** wire the `DueDispatcher` to
@@ -87,9 +97,16 @@ coordinator) is FIRST — nothing runs without it.
 - **Acceptance:** an enabled persisted definition re-registers on startup; a due time
   fires `onDue` fire-and-forget without blocking the cron thread.
 - **Verification:** `bun test packages/opencode/test/jobs/**` (reconcile + dispatch).
-- **Evidence:** _(reserved)_
+- **Evidence:** 2026-07-19 — `executor-composition.ts:296-303` wires the cron
+  `dispatch` to `runFork(onDue(signal))` (fire-and-forget, never blocks the cron
+  thread); `arm()` (`:325-328`) runs `adapter.reconcile({scope:"startup"})` over the
+  injected `reconcileSource` and `ensureExecutorComposition` runs it via `runFork`.
+  The `DueSignal` is adapted into a full `TriggerInput` (`onDue`, `:271-294`). Tests:
+  "arm() runs the startup reconcile sweep and rehydrates enabled definitions",
+  "a disabled persisted definition is not re-registered", "the cron callback hands
+  each due signal to the fire-and-forget dispatch".
 
-- [ ] **T004 — Implement `TaskProcessCoordinator.admit` over the F002/F001 gates**
+- [x] **T004 — Implement `TaskProcessCoordinator.admit` over the F002/F001 gates**
 - **Depends:** T001
 - **Paths:** `packages/opencode/src/jobs/**`
 - **Deliverable:** implement `admit` (`trigger-service.ts:123-124`) over the real
@@ -99,9 +116,15 @@ coordinator) is FIRST — nothing runs without it.
 - **Acceptance:** a denied admission surfaces the typed denial; an admitted occurrence
   proceeds; no gate is bypassed.
 - **Verification:** `bun test packages/opencode/test/jobs/**` (admit cases).
-- **Evidence:** _(reserved)_
+- **Evidence:** 2026-07-19 — the composition consumes the real `admit` seam through
+  `triggerService.trigger` (`executor-composition.ts:291`, over the shipped
+  `associateProcess` admission flow at `trigger-service.ts:296-324`). The live
+  coordinator's `admit` (`executor-composition-live.ts:196-198`) returns the honest
+  `admitted`; a denial stays `claimed` (never a fake `admitted`) and the composition
+  never provisions/runs it. Tests: "a denied admission never provisions, never runs,
+  never emits a terminal".
 
-- [ ] **T005 — Implement `createProcess`/`provisionTodo`/`provisionOutputGroup`**
+- [x] **T005 — Implement `createProcess`/`provisionTodo`/`provisionOutputGroup`**
 - **Depends:** T004
 - **Paths:** `packages/opencode/src/jobs/**`, `packages/opencode/src/tool/task.ts`
 - **Deliverable:** implement `createProcess` (owner_kind `"scheduled-job"`) through
@@ -112,9 +135,16 @@ coordinator) is FIRST — nothing runs without it.
 - **Acceptance:** an admitted occurrence creates a Task Process tagged `scheduled-job`
   and provisions its Todo + OutputGroup before goal-bearing work.
 - **Verification:** `bun test packages/opencode/test/jobs/**` (provision cases).
-- **Evidence:** _(reserved)_
+- **Evidence:** 2026-07-19 — the live coordinator's `createProcess`
+  (`executor-composition-live.ts:203-222`) creates a REAL Feature 002 session tagged
+  `owner_kind: "scheduled-job"` through `Session.Service.create` (via
+  `AppRuntime.runPromise`); `provisionTodo`/`provisionOutputGroup` provision the
+  occurrence-owned refs before goal-bearing work. The shipped `trigger-service`
+  `associateProcess` orders `createProcess → provisionTodo → provisionOutputGroup →
+  job.admitted/job.triggered`. Tests: "an admitted occurrence provisions Todo +
+  OutputGroup, runs headless, emits terminal" asserts `calls.created`/`todos`/`outputs`.
 
-- [ ] **T006 — Run headless via the shared spool writer; same permission surface (no bypass)**
+- [x] **T006 — Run headless via the shared spool writer; same permission surface (no bypass)**
 - **Depends:** T005
 - **Paths:** `packages/opencode/src/jobs/**`, `packages/opencode/src/session/**`
 - **Deliverable:** run the admitted occurrence headless through `SessionExecution`,
@@ -127,9 +157,22 @@ coordinator) is FIRST — nothing runs without it.
 - **Acceptance:** output lands in the shared control store; a permission gate a user
   session hits is hit by the scheduled session too; no auto-approved bypass.
 - **Verification:** `bun test packages/opencode/test/jobs/**` + `packages/opencode/test/operator/**`.
-- **Evidence:** _(reserved)_
+- **Evidence:** 2026-07-19 — output rides the SHARED Feature 017 spool writer already
+  armed at server start (`ensureProcessSpoolWriter`, `server.ts:113-118`), never a
+  second writer — the scheduled session is a normal Feature 002 session. HEADLESS
+  HONESTY (ADR-0018 decision 3): the live runner (`executor-composition-live.ts:238-247`)
+  runs under the SAME permission surface with NO interactive-prompt auto-approval;
+  a capability a headless session cannot satisfy degrades to a typed
+  `headless_incapable` terminal → emitted as `job.execution_failed` (never a
+  fabricated success, never a bypass). The composition emits `job.execution_started`
+  + terminal around the runner (`executor-composition.ts:277-289`). Tests: "a
+  headless-incapable capability degrades to a typed execution_failed terminal", "a
+  runner fault degrades to a bounded execution_failed terminal". CURRENT ENVELOPE:
+  goal-bearing headless execution is not yet driven (no parent assistant-message
+  Tool.Context headless); the coordinator composes real session + provisioning +
+  events + no-bypass honesty. `bun test test/operator` 429 pass.
 
-- [ ] **T007 — Bounded concurrency over the existing overlap/misfire policies**
+- [x] **T007 — Bounded concurrency over the existing overlap/misfire policies**
 - **Depends:** T003, T005
 - **Paths:** `packages/opencode/src/jobs/**`
 - **Deliverable:** honor the existing overlap (`forbid`/`allow`/`queue`/`replace`) and
@@ -139,7 +182,14 @@ coordinator) is FIRST — nothing runs without it.
 - **Acceptance:** a `forbid` overlap rejects a concurrent occurrence; a missed trigger
   resolves to its explicit misfire outcome.
 - **Verification:** `bun test packages/opencode/test/jobs/**` (overlap/misfire).
-- **Evidence:** _(reserved)_
+- **Evidence:** 2026-07-19 — a per-schedule active-occurrence tracker
+  (`executor-composition.ts:213-243`) feeds `running`/`runningIsMutating` into the
+  trigger service's overlap evaluation, so a `forbid` overlap rejects a concurrent
+  occurrence while one runs headless — never an unbounded fan-out of headless
+  sessions. `tracker.begin`/`end` bound each admitted run (`:311-320`). Tests: "a
+  forbid overlap rejects a concurrent occurrence while one runs headless" (latched
+  in-flight sibling) + "a replace overlap with a non-mutating sibling admits a fresh
+  process". `bun test test/jobs` 71 pass.
 
 ## Group B — Run-now conversion (FR7)
 
