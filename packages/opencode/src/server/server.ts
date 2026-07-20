@@ -117,6 +117,20 @@ export async function listen(opts: ListenOptions): Promise<Listener> {
     // Spool bootstrap must never break server startup.
   }
 
+  // Feature 018 (ADR-0018): arm the scheduled-jobs executor composition eagerly at
+  // server start — independent of the operator stack, mirroring the Feature 017
+  // ensureProcessSpoolWriter eager seam — so an enabled scheduled definition fires
+  // its due occurrences into real headless sessions from process start even if the
+  // operator is never opened. Fail-open (FR1, FR2): any construction/arming fault is
+  // caught so it never breaks server startup; the executor stays disarmed and the
+  // schedule/run-now verbs stay at their typed gap.
+  try {
+    const { ExecutorComposition } = await import("@/jobs/executor-composition")
+    ExecutorComposition.ensureExecutorComposition()
+  } catch {
+    // Executor-composition bootstrap must never break server startup.
+  }
+
   const { tryCreateOperatorHttpFetch } = await import("@/operator/http/mount")
   const { setOperatorRequestIpResolver, resolveOperatorClientIp } = await import("@/operator/http/client-ip")
   const mount = tryCreateOperatorHttpFetch({
