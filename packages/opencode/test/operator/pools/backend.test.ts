@@ -129,14 +129,16 @@ describe("T008 — command adapter dispatches to the real backend and audits (FR
     if (result.kind === "failure") expect(result.code).toBe("invalid_argument")
   })
 
-  test("pools.set returns a routing-authority mutation_plan (no phantom success audit)", async () => {
+  test("pools.set returns a scoped routing-authority mutation_plan (no phantom success audit)", async () => {
     const d = dispatcher()
+    // The request helper carries scope.kind "global", so pools.set now commits to the
+    // GLOBAL routing document (Feature 033) instead of the old hardwired project authority.
     const result = await d.invoke({
       request: request("pools.set", { bindings: [{ role: "worker", models: ["gpt-5"] }], expectedVersion: INITIAL_CONFIG_VERSION }),
       descriptor: descriptor("pools.set"),
     })
     expect(result.kind).toBe("mutation_plan")
-    if (result.kind === "mutation_plan") expect(result.authority).toBe("routing")
+    if (result.kind === "mutation_plan") expect(result.authority).toBe("global:routing")
     expect(d.events).toEqual([])
   })
 })
