@@ -195,6 +195,23 @@ Acceptance criteria live as prioritized scenarios in each feature `spec.md`.
   honoring bounded concurrency, no privilege bypass, and the single
   `mutateAuthority` CAS commit — the Feature 007 parity invariant is preserved and
   no catalog id or version is added.
+- **Semantic binding generation lifecycle and activation** — the Feature 019
+  completion of the shipped-but-uncomposed semantic binding lifecycle (Feature 006
+  FR32, reused verbatim by Feature 009) and the remaining operator residuals: the
+  config-backed reranker cutover/rollback are routed through the registry over a
+  per-slot binding version archive (current plus superseded, so a rollback has a real
+  target), the embedding cutover physically builds and validates a blue/green Milvus
+  generation before the atomic all-collections CAS alias swap (never a config-only
+  flip), the reindex/reconcile live-doc source and enumerate seam diff real state, the
+  MCP interactive-OAuth auth/subscription/badge edges are completed (delegated for the
+  interactive TUI, honest gap for headless), and a real, eager, fail-open OTLP export
+  pipeline finally sends telemetry. The activation lifecycle — staged → { reranker path
+  (no Milvus) | embedding path: building → validated → live under one CAS } → active,
+  with rollback resolving an archived prior or a typed no_archived_prior rejection, and
+  every unreachable dependency degrading to a typed capability gap — is modeled in
+  [binding-generation-lifecycle statechart](../statecharts/binding-generation-lifecycle.md),
+  honoring the cardinal honesty rule and the Feature 007 parity invariant with no
+  catalog id or version added.
 
 ## Phase 2 deferred (explicit)
 
