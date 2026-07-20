@@ -499,6 +499,37 @@ specScopeGlobs = [
   "packages/opencode/.gitignore",             # git-ignore the runtime-generated config.json (FR18)
   "packages/tui/src/operator/form/**",        # multi-field edit modal + descriptor (FR19-FR22)
   "packages/tui/src/operator/status.ts",      # detail view tree renderer, distinct from the compact strip (FR23)
+
+  # Feature 018 implement-phase paths: Compose the scheduled-jobs executor runtime
+  #   into the live runtime. Arm the shipped-but-idle Feature 002/003 scheduler +
+  #   cron + trigger service eagerly and fail-open at server start (FR1-FR3),
+  #   implement the TaskProcessCoordinator over the real Feature 002 execution
+  #   seams (FR4-FR6), convert jobs.run-now to an effectful mutation plan (FR7),
+  #   emit definition-keyed occurrence events (FR8), expose the live
+  #   SessionRunCoordinator through a narrow interrupt registry (FR9-FR10), and
+  #   flip the palette availability to truth (FR11). Feature 007 stays the sole
+  #   command-registration authority — no catalog id, no version bump, no new
+  #   dispatch path or flag (FR12). Most of the surface is ALREADY in scope and is
+  #   NOT re-added (traceability only):
+  #   packages/opencode/src/jobs/** (Feature 003) — scheduler engine, cron adapter,
+  #     trigger service, and the composition root + coordinator impl (FR1-FR8);
+  #   packages/opencode/src/operator/** (Feature 007) — run-now conversion,
+  #     occurrence-projection, and the lifecycle stack-wiring interrupt consult
+  #     (FR7-FR10);
+  #   packages/opencode/src/server/server.ts (repository-health block above) —
+  #     the eager executor-composition bootstrap at listen() (FR1, FR2);
+  #   packages/opencode/src/event-v2-bridge.ts (Feature 001) — definition-keyed
+  #     job.* occurrence events (FR8);
+  #   packages/opencode/src/session/** (Feature 017 block above) — the opencode
+  #     session execution seam the coordinator runs through (FR5);
+  #   packages/core/src/operator/** (Feature 007) — palette.ts availability flip (FR11);
+  #   packages/{opencode/test/operator,opencode/test/jobs,core/test/jobs}/** — tests.
+  # Genuinely new implement paths (narrow interrupt registry + TaskTool seam):
+  "packages/core/src/session/interrupt-registry.ts",  # process-singleton narrow interrupt registry (FR9)
+  "packages/core/src/session/run-coordinator.ts",     # narrow interrupt-key export for the registry (FR9)
+  "packages/core/src/session/execution/**",           # execution layer registers the active root run at run start (FR9)
+  "packages/opencode/src/tool/task.ts",               # TaskProcessCoordinator wires onto the TaskTool execution surface (FR4)
+  "packages/core/test/session/**",                    # interrupt-registry + execution-hook tests (FR9)
 ]
 
 # Waivers for intentional near-empty files (warnings only; errors are never
