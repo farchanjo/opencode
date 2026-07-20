@@ -35,8 +35,14 @@ import type { SmartBackend } from "./smart-port"
 
 const decodeRouting = Schema.decodeUnknownExit(RoutingConfig.Info)
 
+function parseRouting(payload: unknown): RoutingConfig.Info | null {
+  const exit = decodeRouting(payload, { errors: "all" })
+  return Exit.isSuccess(exit) ? (exit.value as RoutingConfig.Info) : null
+}
+
 // The routing Config.Service authority keys per scope (mirrors config-adapter's
-// private AUTHORITY map; surfaced here only as the summary's authority label).
+// private AUTHORITY map; the SSOT `command-authority.ts` imports as `SMART_AUTHORITY`
+// for the mutation preflight, so the preflight and the committed authority read one map).
 export const AUTHORITY: Record<RoutingConfigScope, string> = {
   global: "global:routing",
   project: "routing",
@@ -50,9 +56,21 @@ export interface LiveSmartBackendDeps {
 
 const unavailable = (reason: string): SmartError => ({ type: "unavailable", reason })
 
-/** The scope a mutation writes: the effective override authority, or global when unconfigured. */
-function scopeForOrigin(origin: EffectiveRoutingConfig["origin"]): RoutingConfigScope {
-  return origin === "project" ? "project" : "global"
+/**
+ * The scope a smart mutation WRITES: derived from the REQUEST scope, never the
+ * effective-config origin. This mirrors the mutation preflight
+ * (`command-authority.ts` — `SMART_AUTHORITY[norm(scope.scopeKind)]`, where `norm`
+ * maps everything but "global" to "project") so the preflight CAS-token authority
+ * and the committed authority never diverge — even on a fresh project whose config
+ * resolves via global/default. Before this fix the write scope came from the
+ * effective ORIGIN, so a first smart.on on a fresh project silently persisted to
+ * `global:routing` (preflight expected project `routing`, version null) and the
+ * SECOND save hard-failed `invalid_argument` ("mutations require version"). The
+ * write authority now follows the request scope, so the two never diverge (Feature
+ * 025, mirroring the Feature 024 routing.configure fix).
+ */
+function scopeForRequest(scopeKind: string): RoutingConfigScope {
+  return scopeKind === "global" ? "global" : "project"
 }
 
 /** The read state a summary and a mutation share: effective config + write scope + CAS token. */
@@ -66,13 +84,15 @@ export function createLiveSmartBackend(deps: LiveSmartBackendDeps): SmartBackend
   const now = deps.now ?? Date.now
   const routing: RoutingConfigPort = createConfigAdapter({ config: deps.config, now })
 
-  const readState = (): Effect.Effect<SmartState, SmartError> =>
+  const readState = (requestScopeKind: string): Effect.Effect<SmartState, SmartError> =>
     Effect.gen(function* () {
+      // Read the effective config (project > global > default) for the summary +
+      // merge base only — the WRITE TARGET authority comes from the REQUEST scope.
       const effective = yield* Effect.tryPromise({
         try: () => routing.resolveEffective(),
         catch: (cause) => unavailable(String(cause)),
       })
-      const scope = scopeForOrigin(effective.origin)
+      const scope = scopeForRequest(requestScopeKind)
       const entry = yield* Effect.tryPromise({
         try: () => routing.get(scope),
         catch: (cause) => unavailable(String(cause)),
@@ -93,7 +113,8 @@ export function createLiveSmartBackend(deps: LiveSmartBackendDeps): SmartBackend
     }
   }
 
-  const resolve = (): Effect.Effect<SmartSummary, SmartError> => readState().pipe(Effect.map(toSummary))
+  const resolve = (requestScopeKind: string): Effect.Effect<SmartSummary, SmartError> =>
+    readState(requestScopeKind).pipe(Effect.map(toSummary))
 
   /**
    * Validate the patched routing config at plan time and hand the dispatcher an
@@ -101,26 +122,38 @@ export function createLiveSmartBackend(deps: LiveSmartBackendDeps): SmartBackend
    * scoped routing authority (`routing` / `global:routing`) and emits the Feature
    * 007 audit correlation. The backend never self-commits, so a rejected mutation
    * never leaves a persisted write behind.
+   *
+   * The commit-time `apply` folds the activation transform into the FRESH on-disk
+   * payload `mutateAuthority` threads in (`current`) — never a plan-time snapshot —
+   * so `models.role_pools` (pools.set), `enforcement.budget` (budget.*) and every
+   * sibling activation/routing.configure field are preserved rather than clobbered.
+   * When the authority is empty (create-if-absent) it falls back to the plan-validated
+   * document.
    */
   const planMutate = (
     _input: SmartMutationInput,
+    requestScopeKind: string,
     patch: (activation: RoutingConfig.Activation) => RoutingConfig.Activation,
   ): Effect.Effect<OperatorMutationPlan, SmartError> =>
     Effect.gen(function* () {
-      const state = yield* readState()
+      const state = yield* readState(requestScopeKind)
       const nextConfig: RoutingConfig.Info = { ...state.effective.config, activation: patch(state.effective.config.activation) }
       const decoded = decodeRouting(nextConfig, { errors: "all" })
       if (Exit.isFailure(decoded)) {
         return yield* Effect.fail<SmartError>({ type: "invalid_argument", field: "activation", reason: "routing configuration failed schema validation" })
       }
-      const payload = decoded.value as RoutingConfig.Info
-      return { authority: AUTHORITY[state.scope], apply: () => payload }
+      const validated = decoded.value as RoutingConfig.Info
+      const apply = (current: unknown): RoutingConfig.Info => {
+        const base = parseRouting(current)
+        return base !== null ? { ...base, activation: patch(base.activation) } : validated
+      }
+      return { authority: AUTHORITY[state.scope], apply }
     })
 
   return {
     resolve,
-    planOn: (input) => planMutate(input, (activation) => ({ ...activation, enabled: true })),
-    planOff: (input) => planMutate(input, (activation) => ({ ...activation, enabled: false })),
-    planAuto: (input) => planMutate(input, (activation) => ({ ...activation, mode: "auto" })),
+    planOn: (input, requestScopeKind) => planMutate(input, requestScopeKind, (activation) => ({ ...activation, enabled: true })),
+    planOff: (input, requestScopeKind) => planMutate(input, requestScopeKind, (activation) => ({ ...activation, enabled: false })),
+    planAuto: (input, requestScopeKind) => planMutate(input, requestScopeKind, (activation) => ({ ...activation, mode: "auto" })),
   }
 }

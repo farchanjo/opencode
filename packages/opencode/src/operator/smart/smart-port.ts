@@ -53,10 +53,16 @@ export interface SmartAuditSink {
  * `planOn`/`planOff`/`planAuto` VALIDATE and return an `OperatorMutationPlan`
  * (routing authority + pure transform) the dispatcher commits via `mutateAuthority`
  * — the backend never self-commits.
+ *
+ * Every method takes the dispatcher-resolved `requestScopeKind`
+ * (`ctx.request.scope.kind` — "global" / "project" / "session"). The write authority
+ * is derived from THIS scope — the SAME resolution the mutation preflight uses
+ * (`command-authority.ts`) — so the preflight CAS token and the committed authority
+ * can never diverge on a fresh project (Feature 025).
  */
 export interface SmartBackend {
-  readonly resolve: () => Effect.Effect<SmartSummary, SmartError>
-  readonly planOn: (input: SmartMutationInput) => Effect.Effect<OperatorMutationPlan, SmartError>
-  readonly planOff: (input: SmartMutationInput) => Effect.Effect<OperatorMutationPlan, SmartError>
-  readonly planAuto: (input: SmartMutationInput) => Effect.Effect<OperatorMutationPlan, SmartError>
+  readonly resolve: (requestScopeKind: string) => Effect.Effect<SmartSummary, SmartError>
+  readonly planOn: (input: SmartMutationInput, requestScopeKind: string) => Effect.Effect<OperatorMutationPlan, SmartError>
+  readonly planOff: (input: SmartMutationInput, requestScopeKind: string) => Effect.Effect<OperatorMutationPlan, SmartError>
+  readonly planAuto: (input: SmartMutationInput, requestScopeKind: string) => Effect.Effect<OperatorMutationPlan, SmartError>
 }

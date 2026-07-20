@@ -192,7 +192,14 @@ function budgetInvoke(deps: BudgetCommandDeps): DomainInvoke {
     const payload = asRecord(ctx.request.payload)
     const principal = toBudgetOperator(ctx.request.principal)
     const principalId = principal.id
-    const scope = (firstString(payload, ["scope"]) ?? ctx.request.scope.kind) as BudgetScope
+    // The scope a budget read/mutation targets follows the REQUEST scope — the SAME
+    // input the mutation preflight normalizes (`BUDGET_AUTHORITY[norm(scope.kind)]`,
+    // mapping everything but "global" to "project") — never a payload-supplied scope
+    // the preflight never sees. This keeps the preflight CAS token and the committed
+    // authority in lockstep on a fresh project, so a first budget.set persists to the
+    // PROJECT `routing` doc and the second save threads the bumped version instead of
+    // hard-failing "mutations require version" (Feature 025).
+    const scope: BudgetScope = ctx.request.scope.kind === "global" ? "global" : "project"
     const target = firstString(payload, ["scopeId", "scope_id"]) ?? ctx.request.scope.ref ?? scope
 
     switch (id) {

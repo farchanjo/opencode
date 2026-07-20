@@ -163,16 +163,21 @@ function smartInvoke(deps: SmartCommandDeps): DomainInvoke {
     const principalId = principal.id
     const target = ctx.request.scope.ref ?? ""
     const input = { expectedVersion: resolveExpectedVersion(payload, ctx.request), principal }
+    // Thread the dispatcher-resolved REQUEST scope so the backend writes the SAME
+    // authority the mutation preflight reported (project → "routing", global →
+    // "global:routing") — never the effective-config origin. This keeps the CAS token
+    // and the committed authority in lockstep on a fresh project (Feature 025).
+    const requestScopeKind = ctx.request.scope.kind
 
     switch (id) {
       case "smart.status":
-        return run(id, principalId, target, backend.resolve(), (summary) => query(summary))
+        return run(id, principalId, target, backend.resolve(requestScopeKind), (summary) => query(summary))
       case "smart.on":
-        return runPlan(id, principalId, target, backend.planOn(input))
+        return runPlan(id, principalId, target, backend.planOn(input, requestScopeKind))
       case "smart.off":
-        return runPlan(id, principalId, target, backend.planOff(input))
+        return runPlan(id, principalId, target, backend.planOff(input, requestScopeKind))
       case "smart.auto":
-        return runPlan(id, principalId, target, backend.planAuto(input))
+        return runPlan(id, principalId, target, backend.planAuto(input, requestScopeKind))
       default:
         return Promise.resolve(fail("not_implemented", `smart command ${id} is not implemented`))
     }

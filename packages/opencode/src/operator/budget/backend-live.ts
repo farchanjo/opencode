@@ -69,6 +69,11 @@ export const AUTHORITY: Record<RoutingConfigScope, string> = {
 
 const decodeRouting = Schema.decodeUnknownExit(RoutingConfig.Info)
 
+function parseRouting(payload: unknown): RoutingConfig.Info | null {
+  const exit = decodeRouting(payload, { errors: "all" })
+  return Exit.isSuccess(exit) ? (exit.value as RoutingConfig.Info) : null
+}
+
 const unavailable = (reason: string): BudgetError => ({ type: "unavailable", reason })
 
 const reasonOf = (error: unknown): string => (error instanceof Error ? error.message : String(error))
@@ -151,14 +156,30 @@ export function createLiveBudgetBackend(deps: LiveBudgetBackendDeps): BudgetBack
   const readScoped = (scope: BudgetScope): Effect.Effect<RoutingConfigEntry, BudgetError> =>
     Effect.tryPromise({ try: () => adapter.get(toRoutingScope(scope)), catch: (e) => unavailable(reasonOf(e)) })
 
-  /** Validate a transformed routing config and wrap it as an `OperatorMutationPlan`. */
-  const planWrite = (scope: BudgetScope, next: RoutingConfig.Info): Effect.Effect<OperatorMutationPlan, BudgetError> => {
-    const decoded = decodeRouting(next, { errors: "all" })
+  /**
+   * Validate the transform over the plan-time base and wrap it as an
+   * `OperatorMutationPlan`. The commit-time `apply` re-runs the SAME budget-only
+   * transform over the FRESH on-disk payload `mutateAuthority` threads in (`current`)
+   * — never the plan-time snapshot — so `models.role_pools` (pools.set),
+   * `activation` (smart.*) and any routing.configure field are preserved rather than
+   * clobbered. When the authority is empty (create-if-absent) it falls back to the
+   * plan-validated document.
+   */
+  const planWrite = (
+    scope: BudgetScope,
+    transform: (base: RoutingConfig.Info) => RoutingConfig.Info,
+    planBase: RoutingConfig.Info,
+  ): Effect.Effect<OperatorMutationPlan, BudgetError> => {
+    const decoded = decodeRouting(transform(planBase), { errors: "all" })
     if (Exit.isFailure(decoded)) {
       return Effect.fail<BudgetError>({ type: "invalid_argument", field: "limits", reason: "routing configuration failed schema validation" })
     }
-    const payload = decoded.value as RoutingConfig.Info
-    return Effect.succeed({ authority: AUTHORITY[toRoutingScope(scope)], apply: () => payload })
+    const validated = decoded.value as RoutingConfig.Info
+    const apply = (current: unknown): RoutingConfig.Info => {
+      const base = parseRouting(current)
+      return base !== null ? transform(base) : validated
+    }
+    return Effect.succeed({ authority: AUTHORITY[toRoutingScope(scope)], apply })
   }
 
   const resolve = (input: BudgetStatusInput): Effect.Effect<BudgetSummary, BudgetError> =>
@@ -183,13 +204,13 @@ export function createLiveBudgetBackend(deps: LiveBudgetBackendDeps): BudgetBack
         return yield* Effect.fail<BudgetError>({ type: "invalid_argument", field: check.field ?? "limits", reason: check.reason ?? "invalid budget limits" })
       }
       const base = yield* baseConfig(input.scope)
-      return yield* planWrite(input.scope, applyLimits(base, input.limits))
+      return yield* planWrite(input.scope, (current) => applyLimits(current, input.limits), base)
     })
 
   const planReset = (input: BudgetResetInput): Effect.Effect<OperatorMutationPlan, BudgetError> =>
     Effect.gen(function* () {
       const base = yield* baseConfig(input.scope)
-      return yield* planWrite(input.scope, resetBudget(base))
+      return yield* planWrite(input.scope, resetBudget, base)
     })
 
   const validate = (input: BudgetValidateInput): Effect.Effect<BudgetValidateOutput, BudgetError> =>
