@@ -1,5 +1,6 @@
 import path from "path"
 import { Global } from "@opencode-ai/core/global"
+import { Flag } from "@opencode-ai/core/flag/flag"
 import { Filesystem } from "@/util/filesystem"
 
 /**
@@ -12,14 +13,25 @@ import { Filesystem } from "@/util/filesystem"
  *
  *   <Global.Path.config>/profiles/<ENCODED_ABSPATH>/config.json
  *
- * The profile directory is anchored on `Global.Path.config` — the same root that holds
- * the global `config.json` — so it inherits whatever that root resolves to (including an
- * `OPENCODE_CONFIG_DIR` override, which relocates the global config root). This is the
- * canonical home for ALL opencode-persisted project data (operator config, memory files,
- * and any future project-scoped persistence); reuse `projectProfileDir` for those.
+ * The profile directory is anchored on the operative config root: an explicit
+ * `OPENCODE_CONFIG_DIR` override when set, otherwise the default global config dir
+ * (`Global.Path.config`). Honoring the override is what lets an isolated profile
+ * (e.g. `~/.opencodedev`) own its own `profiles/<key>/` tree instead of leaking back
+ * into `~/.config/opencode`. This is the canonical home for ALL opencode-persisted
+ * project data (operator config, memory files, and any future project-scoped
+ * persistence); reuse `projectProfileDir` for those.
  */
 
 const PROFILES_DIR = "profiles"
+
+/**
+ * The operative config root: the `OPENCODE_CONFIG_DIR` override when set, else the
+ * default global config dir. Mirrors `Global.make()` (core/global.ts) so the profile
+ * store lives under the same root a caller selected for the global config.
+ */
+function configRoot(): string {
+  return Flag.OPENCODE_CONFIG_DIR ?? Global.Path.config
+}
 
 /**
  * Encode an absolute project path into a readable, reversible-ish profile key.
@@ -52,7 +64,7 @@ export function encodeProjectPathKey(absPath: string): string {
  * stable regardless of symlinks or relative input.
  */
 export function projectProfileDir(dir: string): string {
-  return path.join(Global.Path.config, PROFILES_DIR, encodeProjectPathKey(Filesystem.resolve(dir)))
+  return path.join(configRoot(), PROFILES_DIR, encodeProjectPathKey(Filesystem.resolve(dir)))
 }
 
 /** The relocated project operator config file: `<projectProfileDir>/config.json`. */
