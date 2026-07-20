@@ -284,10 +284,40 @@ None required beyond this plan. The lifecycle-completion ValueObjects
 - [x] Real eager fail-open OTLP export + bounded queue/retry/redaction + live validation (FR11-FR13)
 - [x] Availability flip + typed gaps for still-absent verbs (FR14, FR16)
 - [x] specScopeGlobs already cover the surface; 019 block added only if implement finds a new path
-- [ ] `tasks.md` generated and filled
-- [ ] `speckit analyze` clean of new Critical/High/Medium blockers
-- [ ] `speckit validate --json` green (0 new findings on Feature 019 artifacts)
+- [x] `tasks.md` generated and filled
+- [x] `speckit analyze` clean of new Critical/High/Medium blockers
+- [x] `speckit validate --json` green (0 new findings on Feature 019 artifacts)
 
 ## Implementation notes (recorded during implement)
 
-- _(reserved — filled during implement with date + file:line + test results)_
+- **2026-07-20 — Group E T018 availability flip (`palette.ts`).** The flip is split by the
+  shipped `#BackendReadiness` truth (`semantic-lifecycle/enums-remainder.cue`, `"live" |
+  "honest_unavailable"`). `semantic.reranker.cutover`/`rollback` are UNCONDITIONALLY composed
+  (config-backed registry, no Milvus — Group A), so they join the static
+  `OPERATOR_PERSISTING_VERBS` set. The Milvus-conditional embedding + index verbs, the
+  interactive-conditional `mcp.auth.start`/`finish`, and the capability-gated resource
+  subscribe/unsubscribe are a NEW `CONDITIONAL_PERSISTING_VERBS` map keyed to a per-dependency
+  readiness flag on the optional `ListPaletteOptions.readiness` (`OperatorBackendReadiness`:
+  `milvusConfigured`/`interactiveSurface`/`subscriptionCapable`). With NO readiness (the default
+  projection the TUI renders — an unconfigured Milvus, a headless surface, an absent capability)
+  they stay `honest_unavailable` per FR14, keeping the `semantic` + `mcp` domain badges honestly
+  `Partial`; a caller that knows the dependency is composed passes the flag to read the live
+  truth. Parity pinned: no new catalog id, catalog version stays 1.3.0, no new dispatch path.
+- **2026-07-20 — Group B residual (honest, still open).** The `createMilvusIndexPort`
+  (`operator/semantic/milvus-binding.ts`) live-doc reconcile/reindex path is composed and tested
+  against an INJECTED `LiveDocSource` + `context` (Group B `feature019-milvus-port.test.ts`). The
+  `stack-live.ts` RUNTIME composition of that source is NOT yet wired: it needs (a) an
+  agent/skill→`AgentDoc`/`SkillDoc` sanitized content-hash projection layer alongside the shipped
+  `ToolProjection` (only `tools` has a projection today), and (b) a bound openai-compatible
+  embedding transport (`EmbeddingsHttpPort`) resolved from the registry's ACTIVE embedding provider
+  (base URL + model + dimension) with the credential via the SecretRef resolver. Until both land,
+  `semantic.index.reindex`/`reconcile` resolve the honest `milvus_unavailable`/not-composed typed
+  gap at runtime even with a configured endpoint — FR16-correct (no fabricated vectors, no
+  synthesized state), never a crash. This is the one remaining bounded follow-up; the milvus-binding
+  seam, the two new `MilvusPort` methods, the embedding cutover/rollback build-then-swap, and the
+  reconcile diff engine are all shipped and green.
+- **2026-07-20 — Gates.** `bun test` green across `packages/opencode` (operator+semantic+routing+
+  jobs 939 pass / 5 env-gated skip; mcp 156 pass), `packages/core` (operator 141 pass, session 6
+  pass), `packages/tui` (full 502 pass / 1 skip). `bun run typecheck` 30/30. `speckit validate
+  --json` `ok:true` (4 pre-existing waived hygiene warnings, 0 new on 019). `speckit analyze`
+  consistent across 19 features, 0 ADR overlap.

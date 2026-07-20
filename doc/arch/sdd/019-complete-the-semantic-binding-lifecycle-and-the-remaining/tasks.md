@@ -43,13 +43,13 @@ it needs no Milvus and unblocks the archive the embedding rollback also reads.
 - [x] T015 — Redaction defaults enforced on every exported signal
 - [x] T016 — Pull-based re-arm on server start / `telemetry.*` dispatch; disabled → no fiber
 - [x] T017 — Env-gated live validation (Milvus endpoint + OTLP collector)
-- [ ] T018 — Palette availability flip to the composed truth
-- [ ] T019 — Group A tests (registry routing, archive, gates)
-- [ ] T020 — Group B tests (Milvus port, generation build, reconcile, live Milvus)
-- [ ] T021 — Group C tests (auth delegation, subscription, badges)
-- [ ] T022 — Group D tests (export sends, disabled no-op, redaction, drop policy)
-- [ ] T023 — Availability + parity tests (Feature 007 harness)
-- [ ] T024 — Guard scope + doc sync + `speckit analyze` + `validate --json` green
+- [x] T018 — Palette availability flip to the composed truth
+- [x] T019 — Group A tests (registry routing, archive, gates)
+- [x] T020 — Group B tests (Milvus port, generation build, reconcile, live Milvus)
+- [x] T021 — Group C tests (auth delegation, subscription, badges)
+- [x] T022 — Group D tests (export sends, disabled no-op, redaction, drop policy)
+- [x] T023 — Availability + parity tests (Feature 007 harness)
+- [x] T024 — Guard scope + doc sync + `speckit analyze` + `validate --json` green
 
 ---
 
@@ -476,7 +476,7 @@ it needs no Milvus and unblocks the archive the embedding rollback also reads.
 
 ## Group E — Availability flip + parity (FR14-FR16)
 
-- [ ] **T018 — Palette availability flip to the composed truth**
+- [x] **T018 — Palette availability flip to the composed truth**
 - **Depends:** T003, T007, T012, T016
 - **Paths:** `packages/core/src/operator/palette.ts`
 - **Deliverable:** update the palette per-verb classification so each completed verb
@@ -487,32 +487,87 @@ it needs no Milvus and unblocks the archive the embedding rollback also reads.
 - **Acceptance:** the completed verbs no longer read `unavailable`; still-gapped verbs stay honest;
   no verb advertises a capability it lacks.
 - **Verification:** `bun test packages/core/test/operator/**` (palette).
-- **Evidence:** _(reserved)_
+- **Evidence:** 2026-07-20 — `palette.ts` splits the flip by the `#BackendReadiness` truth
+  (`enums-remainder.cue`, `"live" | "honest_unavailable"`). (1) `semantic.reranker.cutover`/
+  `rollback` are UNCONDITIONALLY composed (config-backed registry, no Milvus — T001-T003), so
+  they join `OPERATOR_PERSISTING_VERBS` (`palette.ts:145-152`) and flip to `persists_today` in
+  the default projection. (2) The Milvus-conditional embedding + index verbs
+  (`semantic.embedding.reindex`/`cutover`/`rollback`, `semantic.index.reindex`/`reconcile`), the
+  interactive-conditional `mcp.auth.start`/`finish`, and the capability-gated
+  `mcp.resource.admin.subscribe`/`unsubscribe` are a NEW `CONDITIONAL_PERSISTING_VERBS` map keyed
+  to a `#BackendReadiness` flag (`milvusConfigured`/`interactiveSurface`/`subscriptionCapable`):
+  with readiness present they read the composed `persists_today`, and with NO readiness (the
+  default the TUI renders — an unconfigured Milvus, a headless surface, an absent capability) they
+  stay `honest_unavailable` per FR14. This keeps the `semantic` + `mcp` domain badges honestly
+  `Partial` by default and keeps every conditional verb OUT of the static persisting set (Feature
+  014/017 parity: a gapped verb never leaks in). `telemetry.*` already reads `persists_today`
+  (telemetry is a persisting domain); its export is now a real transport (T013-T016), no palette
+  change needed. `ListPaletteOptions.readiness` + `OperatorBackendReadiness` are re-exported from
+  `packages/core/src/operator/index.ts`. Parity pinned: no new catalog id, catalog version stays
+  1.3.0, no new dispatch path. Tests: `feature019-availability.test.ts` (15) green;
+  `feature014-availability.test.ts` updated (reranker cutover/rollback moved out of `SEMANTIC_GATED`);
+  `bun test packages/core/test/operator/` 141 pass; `packages/tui` full 502 pass / 1 skip;
+  `bun run typecheck` 30/30.
 
 ## Group F — Tests + guard scope + doc sync (FR15)
 
-- [ ] **T019 — Group A tests (registry routing, archive, gates)** — **Depends:** T001-T003 —
+- [x] **T019 — Group A tests (registry routing, archive, gates)** — **Depends:** T001-T003 —
   **Paths:** `packages/opencode/test/{semantic,operator}/**` — reranker cutover routes config-backed
   (no Milvus), invalidates cache/eval with `reEmbedded:false`; archive round-trip; not_validated /
-  no_archived_prior / cas_conflict gates. **Evidence:** _(reserved)_
-- [ ] **T020 — Group B tests (Milvus port, generation build, reconcile, live Milvus)** —
+  no_archived_prior / cas_conflict gates. **Evidence:** 2026-07-20 — `feature019-reranker-lifecycle.test.ts`
+  (13: routing, archive round-trip, history multi-entry, `not_validated`/`no_archived_prior`/
+  `confirmation_required` gates) + `feature019-reranker-dispatch.test.ts` (3: config-backed dispatch,
+  audited rejection, no phantom write) green under `bun test test/operator/` (939 pass / 5 skip in the
+  full operator+semantic+routing+jobs sweep).
+- [x] **T020 — Group B tests (Milvus port, generation build, reconcile, live Milvus)** —
   **Depends:** T004-T009, T017 — **Paths:** `packages/opencode/test/semantic/**` — live port
   methods; build+validate before swap; atomic all-collections swap; unconfigured →
   `milvus_unavailable`; reconcile diffs real state, never re-pins; env-gated live Milvus.
-  **Evidence:** _(reserved)_
-- [ ] **T021 — Group C tests (auth delegation, subscription, badges)** — **Depends:** T010-T012 —
+  **Evidence:** 2026-07-20 — `feature019-milvus-port.test.ts` (9: enumerate content-free,
+  `invalid_filters`, build+swap isolation, unbound gap, reconcile diff over INJECTED
+  source/context, content-free counts + version-unchanged, full rebuild, unbound-source gap) +
+  `feature019-embedding-lifecycle.test.ts` (9: reindex builds a validated generation, cutover
+  swaps only after build+validate, cardinal-honesty refusal, all-collections swap, CAS-contention
+  aborts, unconfigured floor, rollback restores archived prior/generation) +
+  `feature019-milvus-live.test.ts` (1, env-gated `skipIf` — SKIPPED in CI) green.
+  **RESIDUAL (honest):** the `createMilvusIndexPort` seam is tested with an INJECTED `LiveDocSource`/
+  `context`; the `stack-live.ts` RUNTIME composition of that source (an agent/skill→`AgentDoc`/`SkillDoc`
+  sanitized projection layer + a bound openai-compatible embedding transport resolved from the
+  configured provider) is NOT yet wired, so `semantic.index.reindex`/`reconcile` still resolve the
+  honest `milvus_unavailable`/not-composed typed gap at runtime even with a Milvus endpoint configured
+  (FR16-honest — no fabricated vectors). Closing it is a bounded follow-up (author the agent/skill
+  projections + bind the embedding client from the registry's active provider via the SecretRef
+  resolver); the milvus-binding + injected-double coverage that Group B owns is complete and green.
+- [x] **T021 — Group C tests (auth delegation, subscription, badges)** — **Depends:** T010-T012 —
   **Paths:** `packages/opencode/test/{operator,mcp}/**` — auth delegation (TUI) vs headless gap;
   subscription over the machine + `capability_absent`; truthful badges; live-list same-instance.
-  **Evidence:** _(reserved)_
-- [ ] **T022 — Group D tests (export sends, disabled no-op, redaction, drop policy)** —
+  **Evidence:** 2026-07-20 — `mcp-service-backend.test.ts` T010 (5: interactive delegation, headless
+  gap, `not_found`, state mismatch → conflict, no-secret envelope), T011 (5: capable sub/unsub once,
+  `capability_absent` no-phantom, no-client unavailable, unbound gap), T012 (4: truthful experimental/
+  extension, unset → Disabled, absent → no `enabled`) + `packages/tui/test/operator/controls.test.ts`
+  T012 (3) green under `bun test test/mcp/` (156 pass) + tui operator (178 pass).
+- [x] **T022 — Group D tests (export sends, disabled no-op, redaction, drop policy)** —
   **Depends:** T013-T017 — **Paths:** `packages/opencode/test/{routing,telemetry,operator}/**` —
   enabled → real transport sends a signal (fake transport); disabled → no fiber/network; slow
-  collector never blocks; redaction enforced; retry within budget then drop. **Evidence:** _(reserved)_
-- [ ] **T023 — Availability + parity tests (Feature 007 harness)** — **Depends:** T018 —
+  collector never blocks; redaction enforced; retry within budget then drop. **Evidence:** 2026-07-20 —
+  `test/routing/telemetry-export.test.ts` (T013 armed/idempotent/disabled-disarmed; T014 flush ships
+  content-free instruments, timer-driven non-blocking, drop policy, failing-transport isolation; T015
+  hostile-attribute redaction; T016 re-arm/disarm) + `otlp-transport.test.ts` (encoding per kind,
+  retry-within-budget, give-up, 4xx-no-retry, network-throw, empty-batch, probe) +
+  `telemetry-live.test.ts` (1, env-gated — SKIPPED) + existing `test/telemetry/redaction.test.ts` green
+  under `bun test test/routing/` in the full sweep.
+- [x] **T023 — Availability + parity tests (Feature 007 harness)** — **Depends:** T018 —
   **Paths:** `packages/core/test/operator/**`, `packages/tui/test/operator/**` — palette flip
   truthful; reuse the Feature 007 parity harness to assert each verb rides the same command id /
-  loopback with no new dispatch path, no new catalog id, no version bump. **Evidence:** _(reserved)_
-- [ ] **T024 — Guard scope + doc sync + `speckit analyze` + `validate --json` green** —
+  loopback with no new dispatch path, no new catalog id, no version bump. **Evidence:** 2026-07-20 —
+  `packages/core/test/operator/feature019-availability.test.ts` (15 cases): reranker cutover/rollback
+  flip UNCONDITIONALLY (persists_today with/without readiness); the Milvus/interactive/capability
+  verbs stay `honest_unavailable` by default and flip only under their own `#BackendReadiness` flag
+  (per-dependency isolation asserted); semantic + mcp badges stay `Partial` by default; parity —
+  catalog version 1.3.0 unchanged, entry count unchanged under any readiness, every persisting verb
+  rides a real catalog id (no new dispatch path). The existing tui `structured-parity.test.ts` +
+  `parity.test.ts` (loopback/command-id parity) stay green (`packages/tui` full 502 pass / 1 skip).
+- [x] **T024 — Guard scope + doc sync + `speckit analyze` + `validate --json` green** —
   **Depends:** T001-T023 — **Paths:** `doc/arch/speckit.toml`, `doc/arch/sdd/019-*/**`,
   `doc/arch/adr/0019-*.md`, `doc/arch/schemas/semantic-lifecycle/**`,
   `doc/arch/statecharts/binding-generation-lifecycle.md`, `doc/arch/functional/product-overview.md`
@@ -521,4 +576,56 @@ it needs no Milvus and unblocks the archive the embedding rollback also reads.
   statechart in sync with the shipped shapes; `speckit analyze` clean and `speckit validate --json`
   green (0 new findings on Feature 019 artifacts). **Acceptance:** `speckit analyze` reports no new
   Critical/High/Medium; `speckit validate --json` is `ok:true` with 0 new findings.
-  **Verification:** `speckit analyze`; `speckit validate --json`. **Evidence:** _(reserved)_
+  **Verification:** `speckit analyze`; `speckit validate --json`. **Evidence:** 2026-07-20 — Guard:
+  the T018 edit touched `packages/core/src/operator/palette.ts` + `packages/core/src/operator/index.ts`
+  (already in scope under the Feature 007 `packages/core/src/operator/**` glob) and the new/updated
+  tests under `packages/{core}/test/operator/**` (in scope) — every write committed through the guard
+  with no denial; no genuinely-new path, so NO 019-specific guard block was added. Doc sync: the
+  palette flip reads the shipped `#BackendReadiness` (`enums-remainder.cue`) verbatim — no schema
+  shape changed. `speckit validate --json` = `ok:true`, `waivedCount:4` (all pre-existing
+  hygiene.empty-file warnings unrelated to 019 — desktop CSS, a test fixture, two `.gitignore`s);
+  0 new findings on Feature 019 artifacts. `speckit analyze` = `analyzed 19 feature(s): consistent;
+  0 ADR overlap(s)` (only pre-existing info-level H1/slug drift; no new Critical/High/Medium).
+  `speckit status` = phase implement / implemented.
+
+## Fix-round — 2026-07-20 — pools bindings editor dead-end (FR22)
+
+- **Defect:** On the operator Pools screen → Set, the bindings editor was unusable: the
+  "+ Add binding" action opened a bare "Role" prompt, but submitting a role (e.g.
+  `worker`) did NOTHING — no row appeared and the operator could not create a pool binding
+  end-to-end (keyboard-only). Reported (translated): "on the model pool screen I cannot
+  create the pool and cannot do anything."
+- **Root cause (two compounding faults):**
+  1. `packages/tui/src/operator/form/multi-field-modal.tsx:343,397` called
+     `DialogPrompt.show`, whose helper (`packages/tui/src/ui/dialog-prompt.tsx:117-126`)
+     uses `dialog.replace` — a stack-RESET primitive that runs every level's `onClose` and
+     collapses the whole dialog stack to a single orphaned prompt
+     (`packages/tui/src/ui/dialog.tsx:150-165`). It thereby destroyed the `BindingsEditor`
+     and `MultiFieldForm` beneath, and never popped the prompt after confirm — the visible
+     dead-end.
+  2. Even a push-based prompt would have lost the entry: the dialog renders only its top
+     level (`dialog.tsx:242`), so pushing any sub-dialog UNMOUNTS the form and re-mounts it
+     on pop (empirically confirmed: a pushed-under component's mount count goes 1→2 across
+     push/pop). `MultiFieldForm`'s bindings/raw lived in a component-local `createStore`, so
+     the re-mount discarded every entered binding and re-ran the read.
+- **Fix (scope: `packages/tui/src/operator/form/**`):**
+  - Added `promptText` — a push/pop back-stack prompt that keeps the editors beneath live
+    and pops exactly one level on confirm/cancel; both sub-editors now use it.
+  - Hoisted the form store into `openMultiFieldModal` via `createMultiFieldState` (created
+    once, passed as `props.state`), so text fields AND bindings survive the form's re-mount;
+    `onMount` now reads/pre-fills only once (`store.loaded` guard), and picker/bindings
+    pushes snapshot live text inputs first so they re-seed on pop.
+  - Added `validateBindings` (field-list.ts) mirroring `pools/backend-live.ts` — an empty
+    model pool or a duplicate role is now an IN-MODAL per-field error, never a doomed
+    dispatch; `submit` runs it before compose/dispatch for the `bindings_list` verb.
+- **Tests:** `packages/tui/test/operator/multi-field.test.ts` — `validateBindings`
+  (empty-models / duplicate-role / blank-role-ignored / empty-list-ok) + hoisted-state
+  survival. New `packages/tui/test/operator/pools-bindings-flow.test.tsx` — a real
+  DialogProvider + mockInput end-to-end: add binding → Role `worker` → add model
+  `anthropic/claude` → esc back → Save dispatches byte-exact `{bindings:[{role,models}]}`
+  ONCE and closes the modal; and an empty-models Save blocks in-modal with no dispatch. The
+  stack-length assertions fail against the old `replace` path (it collapses to one level),
+  so they are a genuine regression guard.
+- **Verification:** `bun test` (packages/tui) = 509 pass / 1 skip / 0 fail; `bun run
+  typecheck` clean; `oxlint` 0 warnings / 0 errors on the four touched files;
+  `speckit validate --json` stays `ok:true`.
