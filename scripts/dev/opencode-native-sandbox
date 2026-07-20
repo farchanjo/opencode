@@ -1,0 +1,179 @@
+#!/usr/bin/env bash
+# Feature 010 native FFI isolation wrapper.
+# Clean XDG/HOME/config profile under .dev/opencode-native — never touches
+# production ~/.config/opencode, ~/.local/share/opencode, or the operator sandbox.
+# Runs local packages/opencode source only.
+set -euo pipefail
+
+SCRIPT_PATH="${BASH_SOURCE[0]:-$0}"
+while [ -L "$SCRIPT_PATH" ]; do
+  link_dir="$(cd -P "$(dirname "$SCRIPT_PATH")" && pwd)"
+  SCRIPT_PATH="$(readlink "$SCRIPT_PATH")"
+  case "$SCRIPT_PATH" in
+    /*) ;;
+    *) SCRIPT_PATH="$link_dir/$SCRIPT_PATH" ;;
+  esac
+done
+SCRIPT_DIR="$(cd -P "$(dirname "$SCRIPT_PATH")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+
+SANDBOX_ROOT="${OPENCODE_NATIVE_SANDBOX_ROOT:-$REPO_ROOT/.dev/opencode-native}"
+CLI_ENTRY="$REPO_ROOT/packages/opencode/src/index.ts"
+NATIVE_PORT="${OPENCODE_NATIVE_PORT:-14097}"
+NATIVE_BIND="${OPENCODE_NATIVE_BIND:-127.0.0.1}"
+
+BUN_BIN="$(command -v bun || true)"
+if [ -z "$BUN_BIN" ]; then
+  echo "opencode-native-sandbox: bun not found on PATH before HOME isolation" >&2
+  exit 127
+fi
+TRUSTED_PATH="$PATH"
+REAL_HOME="${HOME:-}"
+
+log() {
+  local ts
+  ts="$(date -u +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date)"
+  printf '%s %s\n' "$ts" "$*" >>"$SANDBOX_ROOT/logs/wrapper.log" 2>/dev/null || true
+}
+
+die() {
+  echo "opencode-native-sandbox: $*" >&2
+  log "ERROR: $*"
+  exit 1
+}
+
+mkdir -p \
+  "$SANDBOX_ROOT/config" \
+  "$SANDBOX_ROOT/data" \
+  "$SANDBOX_ROOT/cache/opencode" \
+  "$SANDBOX_ROOT/state" \
+  "$SANDBOX_ROOT/tmp" \
+  "$SANDBOX_ROOT/home" \
+  "$SANDBOX_ROOT/managed" \
+  "$SANDBOX_ROOT/logs" \
+  "$SANDBOX_ROOT/state/locks"
+
+if [ ! -f "$SANDBOX_ROOT/cache/opencode/version" ]; then
+  printf '14\n' >"$SANDBOX_ROOT/cache/opencode/version"
+fi
+
+if [ ! -f "$SANDBOX_ROOT/config/opencode.json" ]; then
+  cat >"$SANDBOX_ROOT/config/opencode.json" <<'EOF'
+{
+  "$schema": "https://opencode.ai/config.json",
+  "experimental": {
+    "native_tools": true,
+    "native_pty": true,
+    "operator_control_plane": true
+  }
+}
+EOF
+fi
+
+# Refuse production config paths
+case "$SANDBOX_ROOT" in
+  "$REAL_HOME/.config"*|"$REAL_HOME/.local"*|"$REAL_HOME/Library"*)
+    die "sandbox root must not sit under production home config/data: $SANDBOX_ROOT"
+    ;;
+esac
+
+# Isolation env BEFORE any bun/core import
+export PATH="$TRUSTED_PATH"
+export OPENCODE_CONFIG_DIR="$SANDBOX_ROOT/config"
+export OPENCODE_CONFIG="$SANDBOX_ROOT/config/opencode.json"
+export OPENCODE_DISABLE_PROJECT_CONFIG=1
+export OPENCODE_OPERATOR_CONTROL_PLANE=1
+export XDG_CONFIG_HOME="$SANDBOX_ROOT/config"
+export XDG_DATA_HOME="$SANDBOX_ROOT/data"
+export XDG_CACHE_HOME="$SANDBOX_ROOT/cache"
+export XDG_STATE_HOME="$SANDBOX_ROOT/state"
+export TMPDIR="$SANDBOX_ROOT/tmp"
+export TMP="$SANDBOX_ROOT/tmp"
+export TEMP="$SANDBOX_ROOT/tmp"
+export HOME="$SANDBOX_ROOT/home"
+export OPENCODE_TEST_HOME="$SANDBOX_ROOT/home"
+export OPENCODE_TEST_MANAGED_CONFIG_DIR="$SANDBOX_ROOT/managed"
+# Point loader at the built dylibs when present (loader also checks bundled path).
+if [ -z "${OPENCODE_NATIVE_LIB_DIR:-}" ]; then
+  _uname_s="$(uname -s 2>/dev/null || echo unknown)"
+  _uname_m="$(uname -m 2>/dev/null || echo unknown)"
+  case "$_uname_s" in
+    Darwin) _plat=darwin ;;
+    Linux) _plat=linux ;;
+    *) _plat=unknown ;;
+  esac
+  case "$_uname_m" in
+    arm64|aarch64) _arch=arm64 ;;
+    x86_64|amd64) _arch=x64 ;;
+    *) _arch="$_uname_m" ;;
+  esac
+  _candidate="$REPO_ROOT/packages/core/native/${_plat}-${_arch}"
+  if [ -d "$_candidate" ]; then
+    export OPENCODE_NATIVE_LIB_DIR="$_candidate"
+  fi
+  unset _uname_s _uname_m _plat _arch _candidate
+fi
+
+args=("$@")
+if [ "${#args[@]}" -gt 0 ] && [ "${args[0]}" = "--" ]; then
+  args=("${args[@]:1}")
+fi
+if [ "${#args[@]}" -gt 0 ] && [ "${args[0]}" = "opencode" ]; then
+  args=("${args[@]:1}")
+fi
+
+if [ "${#args[@]}" -gt 0 ] && { [ "${args[0]}" = "-h" ] || [ "${args[0]}" = "--help" ] || [ "${args[0]}" = "help" ]; }; then
+  printf '%s\n' \
+    "Usage: opencode-native-sandbox [--] [opencode] [command] [args...]" \
+    "" \
+    "With no command args, starts the TUI (same as root package.json dev:native)." \
+    "" \
+    "Isolation (does NOT touch production profile):" \
+    "  sandbox root : $SANDBOX_ROOT" \
+    "  config       : $SANDBOX_ROOT/config/opencode.json" \
+    "  native flags : experimental.native_tools + native_pty + operator_control_plane = true" \
+    "  env          : OPENCODE_OPERATOR_CONTROL_PLANE=1" \
+    "  project cfg  : disabled (OPENCODE_DISABLE_PROJECT_CONFIG=1)" \
+    "" \
+    "Examples:" \
+    "  bun run dev:native" \
+    "  $0" \
+    "  $0 -- serve --port $NATIVE_PORT --hostname $NATIVE_BIND" \
+    "  $0 -- models" \
+    "" \
+    "First-time: add a provider/model into the sandbox config if you need a full agent." \
+    "  edit $SANDBOX_ROOT/config/opencode.json" \
+    "" \
+    "Rebuild dylibs: bun run build:native (from repo root)" >&2
+  exit 0
+fi
+
+if [ ! -f "$CLI_ENTRY" ]; then
+  die "local CLI entry not found: $CLI_ENTRY"
+fi
+
+# Inject loopback serve defaults when serving
+if [ "${#args[@]}" -gt 0 ] && { [ "${args[0]}" = "serve" ] || [ "${args[0]}" = "web" ]; }; then
+  has_port=0
+  has_host=0
+  for a in "${args[@]}"; do
+    case "$a" in
+      --port|--port=*) has_port=1 ;;
+      --hostname|--hostname=*) has_host=1 ;;
+    esac
+  done
+  if [ "$has_port" -eq 0 ]; then
+    args+=(--port "$NATIVE_PORT")
+  fi
+  if [ "$has_host" -eq 0 ]; then
+    args+=(--hostname "$NATIVE_BIND")
+  fi
+fi
+
+log "repo=$REPO_ROOT sandbox=$SANDBOX_ROOT config=$OPENCODE_CONFIG native_lib=${OPENCODE_NATIVE_LIB_DIR:-bundled} exec=${args[*]:-<tui>}"
+
+cd "$REPO_ROOT/packages/opencode"
+if [ "${#args[@]}" -eq 0 ]; then
+  exec "$BUN_BIN" run --conditions=browser "$CLI_ENTRY"
+fi
+exec "$BUN_BIN" run --conditions=browser "$CLI_ENTRY" "${args[@]}"

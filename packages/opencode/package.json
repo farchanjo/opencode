@@ -13,6 +13,7 @@
     "profile:test": "bun run script/profile-test-files.ts",
     "build": "bun run script/build.ts",
     "dev": "bun run --conditions=browser ./src/index.ts",
+    "dev:native": "bash ../../scripts/dev/opencode-native-sandbox",
     "dev:temporary": "bun run --conditions=browser ./src/temporary.ts"
   },
   "bin": {
