@@ -34,10 +34,10 @@ the user's burning pain on every screen.
 - [x] T004 — `pools.set` bindings-list editor
 - [x] T005 — `routing.configure` structured sub-form + advanced-JSON fallback
 - [x] T006 — Detail view tree renderer (distinct from the compact status strip)
-- [ ] T007 — MCP `liveServerPort` over `MCP.Service.status()`/`clients()`
-- [ ] T008 — Convert config-backed MCP mutations to the `mutation_plan` contract
-- [ ] T009 — Live-service MCP action plans (`connect`/`disconnect`/`reconnect`)
-- [ ] T010 — MCP auth headless verdict (`start`/`finish` gap; `remove` convert)
+- [x] T007 — MCP `liveServerPort` over `MCP.Service.status()`/`clients()`
+- [x] T008 — Convert config-backed MCP mutations to the `mutation_plan` contract
+- [x] T009 — Live-service MCP action plans (`connect`/`disconnect`/`reconnect`)
+- [x] T010 — MCP auth headless verdict (`start`/`finish` gap; `remove` convert)
 - [ ] T011 — OutputSpool production writer at the session message-part seam
 - [ ] T012 — `output.stat`/`read` reflect the populated control store
 - [ ] T013 — `output.follow` cursor-codec seam
@@ -186,7 +186,7 @@ the user's burning pain on every screen.
 
 ## Group B — MCP live reads (FR1, FR2)
 
-- [ ] **T007 — MCP `liveServerPort` over `MCP.Service.status()`/`clients()`**
+- [x] **T007 — MCP `liveServerPort` over `MCP.Service.status()`/`clients()`**
 - **Depends:** none
 - **Paths:** `packages/opencode/src/operator/mcp/backend-live.ts`, `operator/stack-live.ts`
 - **Deliverable:** add a `liveServerPort` to `createMcpServiceOverride`
@@ -200,13 +200,22 @@ the user's burning pain on every screen.
   capabilities-present; no SSOT-only field is fabricated; an unbound service degrades
   to `mcp_unavailable`.
 - **Verification:** `bun test packages/opencode/test/operator/**`.
-- **Evidence:** _(implement)_
+- **Evidence:** 2026-07-19 — `mcp-port.ts` new `McpLiveServerReader`/`LiveServerRead`
+  (content-free: `serverId`, `connectionStatus`, `transportPresent`, `capabilitiesPresent`);
+  `backend-live.ts:liveServerReader` projects `MCP.Service.status()` + `clients()`
+  (`McpLiveServerSource`) and degrades to typed `mcp_unavailable` via `guardedLiveRead`.
+  `mcp-command-port.ts` routes `mcp.server.list`/`status`/`capabilities` to `port.liveServer`
+  when bound. Wired in `stack-live.ts` (`mcpLiveServers` over `svc.status()`/`svc.clients()`,
+  `client.transport != null` / `getServerCapabilities() != null`). Tests
+  `test/operator/mcp-service-backend.test.ts` "T007" block: list/status projection, no SSOT
+  field (`version`/`auditId`/`trustProfile`/timestamps absent), unbound → `mcp_unavailable`
+  no-leak. `bun test test/operator/` 394 pass / 2 skip; `bun run typecheck` clean.
 
 ---
 
 ## Group C — MCP mutations (FR3, FR4, FR5)
 
-- [ ] **T008 — Convert config-backed MCP mutations to the `mutation_plan` contract**
+- [x] **T008 — Convert config-backed MCP mutations to the `mutation_plan` contract**
 - **Depends:** none
 - **Paths:** `packages/opencode/src/operator/mcp/**`, `operator/application/handler.ts`
 - **Deliverable:** convert the config-backed MCP verbs (`server.add`/`update`/`delete`,
@@ -220,9 +229,21 @@ the user's burning pain on every screen.
   stale CAS yields `version_conflict` with no phantom write; no self-committed `query`
   is rejected after a write.
 - **Verification:** `bun test packages/opencode/test/operator/**`.
-- **Evidence:** _(implement)_
+- **Evidence:** 2026-07-19 — `mcp-port.ts` new `McpMutationBackend`/`McpMutationError` +
+  input types; `backend-live.ts:createMcpMutations` returns validated `OperatorMutationPlan`s
+  over the `store.config` authority `"global:mcp"` — `planServerAdd`/`update`/`delete`/
+  `disable`, `planLoggingSet`, `planExperimentalToggle`, `planExtensionToggle`,
+  `planResourcePolicySet` (pure `apply` transforms `{servers}` doc; `requireServer` reads
+  current → typed `not_found`, so a rejection is BEFORE any plan). `mcp-command-port.ts`
+  new `planRunner`/`mutationInvoke` (routed first) audits only on failure; the FR5 phantom
+  trap (`kind:"query"` for a `mutates` descriptor) is eliminated. **FIXED the latent port
+  bug**: `mcp-command-port.ts:151` default `"streamable_http"` → `"streamable-http"` (the
+  only valid `TransportKind` streamable member), pinned by the transportKind-validity test.
+  Wired in `stack-live.ts` (`mutations: { config: store.config, ... }`). Tests "T008" blocks:
+  add/logging/experimental round-trip via `dispatchRequest → mutateAuthority`, re-read of
+  `config.get("global:mcp")`; invalid transportKind + absent-server `not_found` write NOTHING.
 
-- [ ] **T009 — Live-service MCP action plans (`connect`/`disconnect`/`reconnect`)**
+- [x] **T009 — Live-service MCP action plans (`connect`/`disconnect`/`reconnect`)**
 - **Depends:** T008
 - **Paths:** `packages/opencode/src/operator/mcp/**`
 - **Deliverable:** dispatch the live-service MCP actions as `OperatorMutationPlan`s
@@ -233,9 +254,17 @@ the user's burning pain on every screen.
 - **Acceptance:** `mcp.server.reconnect` reflects the live resulting `Status`; an
   unbound service degrades to `mcp_unavailable`.
 - **Verification:** `bun test packages/opencode/test/operator/**`.
-- **Evidence:** _(implement)_
+- **Evidence:** 2026-07-19 — `backend-live.ts:createMcpMutations` `planConnect`/`planDisconnect`/
+  `planReconnect` run the live `McpLiveActions` op (`liveActionPlan`) then record the resulting
+  status under the store-scoped authority `"global:mcp-connections"`; a `not_found` outcome
+  or unbound service fails BEFORE any plan (no phantom write). `stack-live.ts:mcpLiveActions`
+  binds `MCP.Service.connect`/`disconnect` (reconnect = disconnect ▸ connect), reads back
+  `svc.status()`, maps `MCP.NotFoundError` → `not_found`. Note (design): `apply` is a pure sync
+  transform, so the live op executes at plan time and `apply` records the resulting `Status` —
+  a rejection returns a typed failure (no config write). Tests "T009" block: connect/disconnect
+  record status; `missing` → no write; no-actions → typed `unavailable`.
 
-- [ ] **T010 — MCP auth headless verdict (`start`/`finish` gap; `remove` convert)**
+- [x] **T010 — MCP auth headless verdict (`start`/`finish` gap; `remove` convert)**
 - **Depends:** T008
 - **Paths:** `packages/opencode/src/operator/mcp/**`, `packages/opencode/src/mcp/index.ts` (read-only)
 - **Deliverable:** confirm the `McpAuth` API surface. `auth.start`/`finish` stay typed
@@ -247,7 +276,17 @@ the user's burning pain on every screen.
   commits through `mutateAuthority` or is documented as a gap with the reason — never
   a fabricated success.
 - **Verification:** `bun test packages/opencode/test/operator/**`.
-- **Evidence:** _(implement — record the confirmed `McpAuth` surface + the auth split)_
+- **Evidence:** 2026-07-19 — **Confirmed `McpAuth` surface** (`packages/opencode/src/mcp/auth.ts:45`):
+  `McpAuth.Service` exposes `remove(mcpName): Effect<void>` (a real local credential clear),
+  and `MCP.Service.removeAuth(mcpName)` (`mcp/index.ts:965`) wraps it (clears the auth entry,
+  cancels pending OAuth, deletes stored transports). **Auth split (ADR-0017 verdict):**
+  `auth.remove` CONVERTS — `backend-live.ts:createMcpMutations.planAuthRemove` runs the injected
+  `McpAuthClear` (`stack-live.ts:mcpAuthClear` over `svc.removeAuth`) then records the outcome
+  under the store-scoped authority `"global:mcp-auth"`; unbound → typed `mcp_unavailable`, no
+  fabricated success. `auth.start`/`finish` STAY typed gaps (interactive OAuth cannot run
+  headless through the operator loopback — the live flow needs a browser redirect + callback
+  server; `liveAuthPort.start`/`finish` remain `Effect.fail`). Tests "T010" block: `auth.remove`
+  clears + records; `auth.start` → typed `unavailable`.
 
 ---
 
