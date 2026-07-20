@@ -37,6 +37,7 @@ import { Global } from "@opencode-ai/core/global"
 import { ProjectV2 } from "@opencode-ai/core/project"
 import { Filesystem } from "@/util/filesystem"
 import { ConfigPlugin } from "@/config/plugin"
+import { ProjectProfile } from "@/config/project-profile"
 import { ConfigPluginV1 } from "@opencode-ai/core/v1/config/plugin"
 import { AccountTest } from "../fake/account"
 import { AuthTest } from "../fake/auth"
@@ -358,15 +359,15 @@ it.instance(
 it.instance("updates config and preserves empty shell sentinel", () =>
   Effect.gen(function* () {
     const test = yield* TestInstance
-    yield* writeConfigEffect(
-      test.directory,
-      { $schema: "https://opencode.ai/config.json", shell: "bash" },
-      "config.json",
+    const profileConfig = ProjectProfile.projectOperatorConfigPath(test.directory)
+    yield* FSUtil.use.writeWithDirs(
+      profileConfig,
+      JSON.stringify({ $schema: "https://opencode.ai/config.json", shell: "bash" }),
     )
 
     yield* Config.Service.use((svc) => svc.update(ConfigParse.schema(ConfigV1.Info, { shell: "" }, "test:config")))
 
-    const writtenConfig = yield* FSUtil.use.readJson(path.join(test.directory, "config.json"))
+    const writtenConfig = yield* FSUtil.use.readJson(profileConfig)
     expect(writtenConfig).toMatchObject({ shell: "" })
   }),
 )
@@ -383,8 +384,9 @@ it.instance(
       const baseline = yield* Config.use.get()
       expect((baseline.operator?.authorities as Record<string, unknown> | undefined)?.routing).toBeUndefined()
 
-      // Config.update writes <dir>/config.json — the SAME file the loader scope-merges
-      // via loadOperatorNamespace (FR2). A project-scoped operator CAS record persists.
+      // Config.update writes the per-project profile config.json (Feature 027) — the SAME
+      // file the loader scope-merges via loadOperatorNamespace (FR2). A project-scoped
+      // operator CAS record persists, out of the working tree.
       const record = { version: "cas_v1", payload: { role_pools: { build: ["anthropic/claude-opus"] } } }
       yield* Config.Service.use((svc) =>
         svc.update(ConfigParse.schema(ConfigV1.Info, { operator: { authorities: { routing: record } } }, "test:op")),
@@ -397,11 +399,11 @@ it.instance(
       expect(authorities?.routing?.version).toBe("cas_v1")
 
       // FR4 (restart-equivalent): the namespace persisted to disk at the loader's read
-      // target, so a fresh load re-reads it. The raw file proves the write landed at
-      // <dir>/config.json — the write target IS the read target, closing the orphaned
-      // false-success this alignment fixes. Removing loadOperatorNamespace makes the
-      // FR3 re-read above regress to `undefined` (the load-bearing negative).
-      const raw = yield* FSUtil.use.readJson(path.join(test.directory, "config.json"))
+      // target, so a fresh load re-reads it. The raw file proves the write landed at the
+      // per-project profile config (Feature 027) — the write target IS the read target,
+      // closing the orphaned false-success this alignment fixes. Removing
+      // loadOperatorNamespace makes the FR3 re-read above regress to `undefined`.
+      const raw = yield* FSUtil.use.readJson(ProjectProfile.projectOperatorConfigPath(test.directory))
       expect((raw as { operator: { authorities: { routing: { version: string } } } }).operator.authorities.routing.version).toBe(
         "cas_v1",
       )
@@ -976,9 +978,78 @@ it.instance("updates config and writes to file", () =>
       svc.update(ConfigParse.schema(ConfigV1.Info, { model: "updated/model" }, "test:config")),
     )
 
-    const writtenConfig = yield* FSUtil.use.readJson(path.join(test.directory, "config.json"))
+    // Feature 027: the write lands in the per-project profile store, NOT the working tree.
+    const writtenConfig = yield* FSUtil.use.readJson(ProjectProfile.projectOperatorConfigPath(test.directory))
     expect(writtenConfig).toMatchObject({ model: "updated/model" })
+    expect(yield* FSUtil.use.existsSafe(path.join(test.directory, "config.json"))).toBe(false)
   }),
+)
+
+it.instance("Feature 027 — project operator config persists under <config>/profiles/<key>, out of the tree", () =>
+  Effect.gen(function* () {
+    const test = yield* TestInstance
+    const record = { version: "cas_v1", payload: { role_pools: { build: ["anthropic/claude-opus"] } } }
+
+    yield* Config.Service.use((svc) =>
+      svc.update(ConfigParse.schema(ConfigV1.Info, { operator: { authorities: { routing: record } } }, "test:op")),
+    )
+
+    // The write target is <Global.Path.config>/profiles/<encoded-abs-path>/config.json.
+    const expected = path.join(
+      Global.Path.config,
+      "profiles",
+      ProjectProfile.encodeProjectPathKey(Filesystem.resolve(test.directory)),
+      "config.json",
+    )
+    expect(ProjectProfile.projectOperatorConfigPath(test.directory)).toBe(expected)
+    expect(yield* FSUtil.use.existsSafe(expected)).toBe(true)
+    // The working tree is left clean — no config.json is written into the project dir.
+    expect(yield* FSUtil.use.existsSafe(path.join(test.directory, "config.json"))).toBe(false)
+
+    // Round-trip: the relocated namespace is read back on load.
+    const roundtrip = yield* Config.use.get()
+    const authorities = roundtrip.operator?.authorities as Record<string, { version?: string }> | undefined
+    expect(authorities?.routing?.version).toBe("cas_v1")
+  }),
+)
+
+it.instance("Feature 027 — legacy in-tree operator config is read through, then relocated on write", () =>
+  Effect.gen(function* () {
+    const test = yield* TestInstance
+    const legacy = path.join(test.directory, "config.json")
+    const record = { version: "cas_v1", payload: { role_pools: { build: ["anthropic/claude-opus"] } } }
+    yield* FSUtil.use.writeWithDirs(legacy, JSON.stringify({ operator: { authorities: { routing: record } } }))
+
+    // Read-through: with the profile store empty, the loader recovers the legacy namespace.
+    const loaded = yield* Config.use.get()
+    const loadedAuthorities = loaded.operator?.authorities as Record<string, { version?: string }> | undefined
+    expect(loadedAuthorities?.routing?.version).toBe("cas_v1")
+
+    // A subsequent write persists to the profile store; the legacy file is NEVER deleted.
+    yield* Config.Service.use((svc) =>
+      svc.update(ConfigParse.schema(ConfigV1.Info, { operator: { authorities: { routing: record } } }, "test:op")),
+    )
+    expect(yield* FSUtil.use.existsSafe(ProjectProfile.projectOperatorConfigPath(test.directory))).toBe(true)
+    expect(yield* FSUtil.use.existsSafe(legacy)).toBe(true)
+  }),
+)
+
+it.instance("Feature 027 — OPENCODE_DISABLE_PROJECT_CONFIG skips the relocated operator namespace", () =>
+  withProcessEnv(
+    "OPENCODE_DISABLE_PROJECT_CONFIG",
+    "true",
+    Effect.gen(function* () {
+      const test = yield* TestInstance
+      const record = { version: "cas_v1", payload: { role_pools: {} } }
+      yield* FSUtil.use.writeWithDirs(
+        ProjectProfile.projectOperatorConfigPath(test.directory),
+        JSON.stringify({ operator: { authorities: { routing: record } } }),
+      )
+
+      const config = yield* Config.use.get()
+      expect((config.operator?.authorities as Record<string, unknown> | undefined)?.routing).toBeUndefined()
+    }),
+  ),
 )
 
 it.instance("gets config directories", () =>
