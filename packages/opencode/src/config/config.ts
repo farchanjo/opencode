@@ -138,14 +138,21 @@ export class Service extends Context.Service<Service, Interface>()("@opencode/Co
 export const use = serviceUse(Service)
 
 /**
- * Feature 028: the operative config root for the GLOBAL config file resolution.
+ * Feature 028/030: the operative config root for the GLOBAL config WRITE target.
  *
  * The raw `Global.Path.config` is the fixed XDG dir (`~/.config/opencode`) and does
- * NOT honor `OPENCODE_CONFIG_DIR`. Mirroring `Global.make()` (core/global.ts) and the
- * per-project profile store (Feature 027), every global-config seam anchors here so an
- * isolated profile (e.g. `~/.opencodedev`) owns its own global `config.json` /
- * `opencode.json[c]` instead of leaking back into `~/.config/opencode`. When the
- * override is unset, `configRoot() === Global.Path.config`, so behavior is unchanged.
+ * NOT honor `OPENCODE_CONFIG_DIR`. `configRoot()` mirrors `Global.make()` (core/global.ts)
+ * and the per-project profile store (Feature 027): when `OPENCODE_CONFIG_DIR` is set it
+ * points there, so an isolated profile (e.g. `~/.opencodedev`) captures global config
+ * WRITES without mutating the real global dir; when unset it is `Global.Path.config`.
+ *
+ * Feature 030 (correction to 028): the global config READ is NO LONGER anchored solely
+ * here — that replaced the base and stopped the real global config from loading whenever
+ * the override was set. The read now LAYERS: `Global.Path.config` is always the base and
+ * the profile at `configRoot()` layers on top as an override (see `loadGlobalBase` /
+ * `loadGlobalProfile`, merged as two distinct sources in `loadInstanceState` so plugin
+ * arrays accumulate instead of one replacing the other). The WRITE target stays on
+ * `configRoot()` so the profile captures changes.
  *
  * Scope: this governs the config-file resolution only. Auth material (`auth.json`)
  * lives under `Global.Path.data`, never under the config root, and is untouched.
@@ -304,24 +311,18 @@ const layer = Layer.effect(
       }
     })
 
-    const loadGlobal = Effect.fnUntraced(function* (env?: Record<string, string>) {
+    // Feature 030: load ONE global config directory — its `config.json` / `opencode.json[c]`
+    // plus the legacy TOML migration — and return the merged Info for that single directory.
+    // `loadGlobalBase` and `loadGlobalProfile` each wrap one call of these: the fixed base
+    // and, when set, the profile override. They stay two distinct merge sources (see
+    // loadInstanceState) instead of being collapsed into one Info here.
+    const loadGlobalDir = Effect.fnUntraced(function* (dir: string, env?: Record<string, string>) {
       let result: Info = {}
-      // Seed the default global config with the schema for editor completion, but avoid writing when the user
-      // explicitly routes config through env-provided paths or content.
-      if (!Flag.OPENCODE_CONFIG && !Flag.OPENCODE_CONFIG_DIR && !Flag.OPENCODE_CONFIG_CONTENT) {
-        const file = globalConfigFile()
-        if (!existsSync(file)) {
-          yield* fs
-            .writeWithDirs(file, JSON.stringify({ $schema: "https://opencode.ai/config.json" }, null, 2))
-            .pipe(Effect.catch(() => Effect.void))
-        }
-      }
-      const root = configRoot()
-      result = mergeConfig(result, yield* loadFile(path.join(root, "config.json"), env))
-      result = mergeConfig(result, yield* loadFile(path.join(root, "opencode.json"), env))
-      result = mergeConfig(result, yield* loadFile(path.join(root, "opencode.jsonc"), env))
+      result = mergeConfig(result, yield* loadFile(path.join(dir, "config.json"), env))
+      result = mergeConfig(result, yield* loadFile(path.join(dir, "opencode.json"), env))
+      result = mergeConfig(result, yield* loadFile(path.join(dir, "opencode.jsonc"), env))
 
-      const legacy = path.join(root, "config")
+      const legacy = path.join(dir, "config")
       if (existsSync(legacy)) {
         yield* Effect.promise(() =>
           import(pathToFileURL(legacy).href, { with: { type: "toml" } })
@@ -330,7 +331,7 @@ const layer = Layer.effect(
               if (provider && model) result.model = `${provider}/${model}`
               result["$schema"] = "https://opencode.ai/config.json"
               result = mergeConfig(result, rest)
-              await fsNode.writeFile(path.join(root, "config.json"), JSON.stringify(result, null, 2))
+              await fsNode.writeFile(path.join(dir, "config.json"), JSON.stringify(result, null, 2))
               await fsNode.unlink(legacy)
             })
             .catch(() => {}),
@@ -340,8 +341,39 @@ const layer = Layer.effect(
       return result
     })
 
-    const [cachedGlobal, invalidateGlobal] = yield* Effect.cachedInvalidateWithTTL(
-      loadGlobal().pipe(
+    // Feature 030 (correction to 028): the fixed XDG dir (`Global.Path.config`) is ALWAYS
+    // the base global source; the seeding of a default config file (for editor completion)
+    // is base-only and skipped whenever the user routes config through env-provided paths
+    // or content (OPENCODE_CONFIG / OPENCODE_CONFIG_DIR / OPENCODE_CONFIG_CONTENT).
+    const loadGlobalBase = Effect.fnUntraced(function* (env?: Record<string, string>) {
+      if (!Flag.OPENCODE_CONFIG && !Flag.OPENCODE_CONFIG_DIR && !Flag.OPENCODE_CONFIG_CONTENT) {
+        const file = globalConfigFile()
+        if (!existsSync(file)) {
+          yield* fs
+            .writeWithDirs(file, JSON.stringify({ $schema: "https://opencode.ai/config.json" }, null, 2))
+            .pipe(Effect.catch(() => Effect.void))
+        }
+      }
+      return yield* loadGlobalDir(Global.Path.config, env)
+    })
+
+    // Feature 030 fix (adversarial review): the profile override at `configRoot()` layers
+    // ON TOP of the base as a DISTINCT config source, never collapsed into base via
+    // mergeConfigConcatArrays. Collapsing them (the original 030 shape) special-cased only
+    // `instructions` to concat — every other array field, including `plugin`, was replaced
+    // wholesale by remeda's mergeDeep, so a base-declared `plugin` array vanished whenever
+    // the profile also declared one. Keeping base and profile as two separate merge()
+    // sources in loadInstanceState lets the existing plugin-origin accumulation
+    // (mergePluginOrigins/deduplicatePluginOrigins) combine plugins from BOTH layers, with
+    // each plugin correctly attributed to the source it actually came from.
+    const loadGlobalProfile = Effect.fnUntraced(function* (env?: Record<string, string>) {
+      const root = configRoot()
+      if (root === Global.Path.config) return undefined
+      return yield* loadGlobalDir(root, env)
+    })
+
+    const [cachedGlobalBase, invalidateGlobalBase] = yield* Effect.cachedInvalidateWithTTL(
+      loadGlobalBase().pipe(
         Effect.tapError((error) =>
           Effect.logError("failed to load global config, using defaults", { error: String(error) }),
         ),
@@ -350,8 +382,32 @@ const layer = Layer.effect(
       Duration.infinity,
     )
 
+    const [cachedGlobalProfile, invalidateGlobalProfile] = yield* Effect.cachedInvalidateWithTTL(
+      loadGlobalProfile().pipe(
+        Effect.tapError((error) =>
+          Effect.logError("failed to load profile global config, using defaults", { error: String(error) }),
+        ),
+        Effect.orElseSucceed((): Info | undefined => undefined),
+      ),
+      Duration.infinity,
+    )
+
+    const getGlobalBase = Effect.fn("Config.getGlobalBase")(function* () {
+      return yield* cachedGlobalBase
+    })
+
+    const getGlobalProfile = Effect.fn("Config.getGlobalProfile")(function* () {
+      return yield* cachedGlobalProfile
+    })
+
+    // Public API surface (HTTP `GET /global/config`, `op` CLI, upgrade check): still the
+    // single collapsed view of the global config, base and profile merged with the profile
+    // winning on scalars/objects. Unlike the instance-state effective config below, this
+    // surface has no plugin-provenance concept, so there is no separate-sources need here.
     const getGlobal = Effect.fn("Config.getGlobal")(function* () {
-      return yield* cachedGlobal
+      const base = yield* getGlobalBase()
+      const profile = yield* getGlobalProfile()
+      return profile ? mergeConfigConcatArrays(base, profile) : base
     })
 
     const ensureGitignore = Effect.fn("Config.ensureGitignore")(function* (dir: string) {
@@ -457,8 +513,20 @@ const layer = Layer.effect(
           }
         }
 
-        const global = Object.keys(authEnv).length ? yield* loadGlobal(authEnv) : yield* getGlobal()
-        yield* merge(configRoot(), global, "global")
+        // Feature 030 fix (adversarial review): base and profile are merged as TWO
+        // SEPARATE sources — base always first, profile only when it actually differs
+        // from the base dir — so mergePluginOrigins accumulates plugins from both layers
+        // (instead of the profile's `plugin` array replacing the base's wholesale) and each
+        // plugin is attributed to the source it actually came from, not the profile path.
+        const hasAuthEnv = Object.keys(authEnv).length > 0
+        const baseGlobal = hasAuthEnv ? yield* loadGlobalBase(authEnv) : yield* getGlobalBase()
+        yield* merge(Global.Path.config, baseGlobal, "global")
+
+        const root = configRoot()
+        if (root !== Global.Path.config) {
+          const profileGlobal = hasAuthEnv ? yield* loadGlobalDir(root, authEnv) : yield* getGlobalProfile()
+          if (profileGlobal) yield* merge(root, profileGlobal, "global")
+        }
 
         if (Flag.OPENCODE_CONFIG) {
           yield* merge(Flag.OPENCODE_CONFIG, yield* loadFile(Flag.OPENCODE_CONFIG, authEnv))
@@ -510,9 +578,10 @@ const layer = Layer.effect(
 
         const deps: Fiber.Fiber<void>[] = []
 
-        const root = configRoot()
+        // `root` was already resolved above for the base/profile global merge; reused here
+        // (configRoot() is stable for the lifetime of this instance-state load).
         for (const dir of directories) {
-          // Feature 028: the global loader (loadGlobal) now reads opencode.json/opencode.jsonc from
+          // Feature 028: the global loader (loadGlobalBase/loadGlobalProfile) now reads opencode.json/opencode.jsonc from
           // the operative config root (`OPENCODE_CONFIG_DIR` when set). Skip re-loading those same two
           // files here for that directory so they do not load twice — a double-load would re-run the
           // merge/plugin-origin pass on identical content. The rest of the loop body (gitignore, npm
@@ -734,7 +803,8 @@ const layer = Layer.effect(
     })
 
     const invalidate = Effect.fn("Config.invalidate")(function* () {
-      yield* invalidateGlobal
+      yield* invalidateGlobalBase
+      yield* invalidateGlobalProfile
     })
 
     const updateGlobal = Effect.fn("Config.updateGlobal")(function* (config: Info) {
