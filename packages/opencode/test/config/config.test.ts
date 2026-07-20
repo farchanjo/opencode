@@ -1690,6 +1690,212 @@ describe("Feature 032 — operator profile writes never copy the inherited base 
   )
 })
 
+// Feature 035 — a GLOBAL-scope operator mutation must persist its authority AND its
+// project-scoped bookkeeping (idempotency/rollback/audit-outbox) coherently: the global
+// authority (`global:routing`) belongs ONLY on the global config document, and the
+// per-project profile file must NEVER carry a `global:*` authority key. Post-Feature-030
+// the effective (layered) config `config.get()` merges the global doc's operator namespace
+// under the project profile, so the project-scoped bookkeeping stores — which all read
+// `config.get()` and REPLACE-write the profile (Feature 032) — snapshotted the layered-in
+// `global:routing` verbatim into the per-project profile. That copy also went STALE: a
+// second global save bumps only the global doc, while the shadowing project copy freezes at
+// the old CAS version. This proves the double-write is closed while the global CAS and the
+// project bookkeeping round-trip intact. Same class as Feature 032, now on the global path.
+describe("Feature 035 — a global operator write never persists a global:* authority into the per-project profile", () => {
+  const rolePools = (models: string[]) => ({
+    activation: { enabled: true, mode: "never", strict_gates: true },
+    models: { decision_model: { pool: ["architect"] }, role_pools: { architect: models }, fallback: { floor_role: "architect" } },
+  })
+  const OK_RESULT = { ok: true as const, id: "pools.set", kind: "operator.admin_result" as const, outcome: "success" as const }
+  const hasGlobalAuthority = (authorities: Record<string, unknown> | undefined) =>
+    Object.keys(authorities ?? {}).some((k) => k === "global" || k.startsWith("global:"))
+
+  it.effect(
+    "the global authority lands on the global doc; project bookkeeping never leaks or freezes a global:* copy",
+    () =>
+      Effect.gen(function* () {
+        const base = yield* tmpdirScoped()
+        const profile = yield* tmpdirScoped()
+        const projectDir = yield* tmpdirScoped()
+
+        yield* withGlobalConfigDir(
+          base,
+          withProcessEnv(
+            "OPENCODE_CONFIG_DIR",
+            profile,
+            Effect.gen(function* () {
+              yield* clearEffect(true)
+
+              // A durable operator store over the REAL Config.Service — each op re-enters the
+              // runtime with the same project instance, exactly as the live CLI/TUI stack does.
+              const run = <A, E>(eff: Effect.Effect<A, E, any>): Promise<A> =>
+                Effect.runPromise(
+                  eff.pipe(
+                    provideInstanceEffect(projectDir),
+                    Effect.provide(testInstanceStoreLayer),
+                    Effect.provide(LayerNode.compile(CrossSpawnSpawner.node)),
+                    Effect.scoped,
+                    Effect.provide(layer),
+                  ) as unknown as Effect.Effect<A, E>,
+                )
+              const configLike: ConfigServiceLike = {
+                get: () => run(Config.Service.use((svc) => svc.get())) as Promise<Record<string, unknown>>,
+                getGlobal: () => run(Config.Service.use((svc) => svc.getGlobal())) as Promise<Record<string, unknown>>,
+                update: (patch, options) => run(Config.Service.use((svc) => svc.update(patch as never, options))),
+                updateGlobal: (patch) =>
+                  run(Config.Service.use((svc) => svc.updateGlobal(patch as never))).then((r) => ({ changed: r.changed })),
+              }
+              const store = createDurableOperatorStore({ config: configLike, lock: createProcessMutexLockPort() })
+              const profileFile = ProjectProfile.projectOperatorConfigPath(projectDir)
+              const profileAuthorities = () =>
+                Effect.gen(function* () {
+                  const raw = JSON.parse(yield* FSUtil.use.readFileString(profileFile)) as {
+                    operator?: { authorities?: Record<string, { version?: string }>; idempotency?: Record<string, unknown> }
+                  }
+                  return raw.operator ?? {}
+                })
+
+              // 1) GLOBAL-scope mutation → global:routing at cas_v1 (lands on the global doc).
+              const v1 = yield* Effect.promise(() =>
+                store.config.compareAndSet({
+                  authority: "global:routing",
+                  expectedVersion: null,
+                  payload: rolePools(["gpt-5"]),
+                  nowMs: 1_700_000_100_000,
+                }),
+              )
+              expect(v1.ok).toBe(true)
+              if (!v1.ok) return
+
+              // Sanity — the LEAK VECTOR is real: the layered effective config that the
+              // project-scoped bookkeeping store reads now carries global:routing in its
+              // operator namespace (Feature 030 layering merges the global doc under the profile).
+              const layered = yield* Effect.promise(() => configLike.get())
+              expect(((layered.operator as { authorities?: Record<string, unknown> })?.authorities ?? {})["global:routing"]).toBeDefined()
+
+              // 2) The mutation pipeline's PROJECT-scoped bookkeeping (idempotency.put in
+              // `finalize`, rollback.set on cutover) — each reads that layered config and
+              // REPLACE-writes the per-project profile. This is the exact double-write.
+              const key = { principalRef: "operator:local:-", commandId: "pools.set", idempotencyKey: "idem-global-1" }
+              yield* Effect.promise(() =>
+                store.idempotency.put({ ...key, result: OK_RESULT, requestHash: "req-hash-1", createdAtMs: 1_700_000_100_001 }),
+              )
+              yield* Effect.promise(() =>
+                store.rollback.set({ domain: "routing", previousBinding: "none", previousPayload: null, activatedAtMs: 1_700_000_100_001, available: true }),
+              )
+
+              // THE guarantee: the per-project profile owns ONLY project authorities — never global:*.
+              const prof1 = yield* profileAuthorities()
+              expect(hasGlobalAuthority(prof1.authorities)).toBe(false)
+              // The bookkeeping the profile legitimately owns IS persisted.
+              expect(Object.keys(prof1.idempotency ?? {}).length).toBeGreaterThan(0)
+
+              // The global authority lives on the global doc at cas_v1 — and reads back.
+              const g1 = yield* Effect.promise(() => store.config.get("global:routing"))
+              expect(g1?.version).toBe(v1.version)
+
+              // 3) SECOND global save → cas_v2 on the global doc. The stale-copy regression:
+              // the profile must STILL carry no global:* (never a frozen cas_v1 copy).
+              const v2 = yield* Effect.promise(() =>
+                store.config.compareAndSet({
+                  authority: "global:routing",
+                  expectedVersion: v1.version,
+                  payload: rolePools(["gpt-5", "claude-x"]),
+                  nowMs: 1_700_000_100_002,
+                }),
+              )
+              expect(v2.ok).toBe(true)
+              if (!v2.ok) return
+              expect(v2.version).not.toBe(v1.version)
+              yield* Effect.promise(() =>
+                store.idempotency.put({
+                  ...key,
+                  idempotencyKey: "idem-global-2",
+                  result: OK_RESULT,
+                  requestHash: "req-hash-2",
+                  createdAtMs: 1_700_000_100_003,
+                }),
+              )
+
+              const prof2 = yield* profileAuthorities()
+              expect(hasGlobalAuthority(prof2.authorities)).toBe(false)
+              // The global doc advanced to cas_v2 (no frozen copy shadows it).
+              const g2 = yield* Effect.promise(() => store.config.get("global:routing"))
+              expect(g2?.version).toBe(v2.version)
+
+              // 4) Idempotency dedup still works: re-issuing the SAME global command key
+              // replays the stored result (no double-apply) — the record was NOT dropped.
+              const replay = yield* Effect.promise(() =>
+                store.idempotency.claim!(key, 1_700_000_100_004, "req-hash-1"),
+              )
+              expect(replay.status).toBe("replay")
+            }),
+          ),
+        )
+      }).pipe(Effect.provide(testInstanceStoreLayer), Effect.provide(LayerNode.compile(CrossSpawnSpawner.node))),
+  )
+
+  it.effect(
+    "back-compat: a project-scope mutation still writes only the project routing authority (global:routing absent)",
+    () =>
+      Effect.gen(function* () {
+        const base = yield* tmpdirScoped()
+        const profile = yield* tmpdirScoped()
+        const projectDir = yield* tmpdirScoped()
+
+        yield* withGlobalConfigDir(
+          base,
+          withProcessEnv(
+            "OPENCODE_CONFIG_DIR",
+            profile,
+            Effect.gen(function* () {
+              yield* clearEffect(true)
+
+              const run = <A, E>(eff: Effect.Effect<A, E, any>): Promise<A> =>
+                Effect.runPromise(
+                  eff.pipe(
+                    provideInstanceEffect(projectDir),
+                    Effect.provide(testInstanceStoreLayer),
+                    Effect.provide(LayerNode.compile(CrossSpawnSpawner.node)),
+                    Effect.scoped,
+                    Effect.provide(layer),
+                  ) as unknown as Effect.Effect<A, E>,
+                )
+              const configLike: ConfigServiceLike = {
+                get: () => run(Config.Service.use((svc) => svc.get())) as Promise<Record<string, unknown>>,
+                getGlobal: () => run(Config.Service.use((svc) => svc.getGlobal())) as Promise<Record<string, unknown>>,
+                update: (patch, options) => run(Config.Service.use((svc) => svc.update(patch as never, options))),
+                updateGlobal: (patch) =>
+                  run(Config.Service.use((svc) => svc.updateGlobal(patch as never))).then((r) => ({ changed: r.changed })),
+              }
+              const store = createDurableOperatorStore({ config: configLike, lock: createProcessMutexLockPort() })
+
+              const cas = yield* Effect.promise(() =>
+                store.config.compareAndSet({
+                  authority: "routing",
+                  expectedVersion: null,
+                  payload: rolePools(["claude-x"]),
+                  nowMs: 1_700_000_200_000,
+                }),
+              )
+              expect(cas.ok).toBe(true)
+              if (!cas.ok) return
+
+              const raw = JSON.parse(yield* FSUtil.use.readFileString(ProjectProfile.projectOperatorConfigPath(projectDir))) as {
+                operator?: { authorities?: Record<string, { version?: string }> }
+              }
+              const authorities = raw.operator?.authorities ?? {}
+              expect(hasGlobalAuthority(authorities)).toBe(false)
+              expect(authorities.routing?.version).toBe(cas.version)
+              // No global doc was written.
+              expect(yield* Effect.promise(() => store.config.get("global:routing"))).toBe(null)
+            }),
+          ),
+        )
+      }).pipe(Effect.provide(testInstanceStoreLayer), Effect.provide(LayerNode.compile(CrossSpawnSpawner.node))),
+  )
+})
+
 it.instance("gets config directories", () =>
   Effect.gen(function* () {
     const dirs = yield* Config.use.directories()
