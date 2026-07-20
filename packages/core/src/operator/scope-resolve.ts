@@ -11,6 +11,14 @@ export type OperatorScopeContext = {
   readonly projectId?: string | null
   readonly sessionId?: string | null
   readonly rootTreeRef?: string | null
+  /**
+   * Explicit operator-selected authority scope (Feature 034). When present it OVERRIDES
+   * the ambient-project preference: the scope resolves to EXACTLY this kind (provided the
+   * descriptor allows it), so an operator can request `global` even while a project is
+   * bound to the working directory. Absent (the default) → the resolver keeps its
+   * project-preferred behavior, byte-for-byte back-compatible.
+   */
+  readonly requestedKind?: ScopeKind | null
 }
 
 export type ScopeResolveInput = {
@@ -66,6 +74,13 @@ export function resolveOperatorScope(input: ScopeResolveInput): ScopeResolveResu
   const projectId = input.ctx.projectId ?? null
   const sessionId = input.ctx.sessionId ?? null
   const rootTreeRef = input.ctx.rootTreeRef ?? null
+
+  // Feature 034 — an EXPLICIT requested kind overrides the ambient-project preference:
+  // resolve to EXACTLY the requested kind when the descriptor allows it, else forbid.
+  const requestedKind = input.ctx.requestedKind ?? null
+  if (requestedKind) {
+    return resolveExplicitScope(requestedKind, allowed, { projectId, sessionId, rootTreeRef })
+  }
 
   const sessionOnly =
     allowed.includes("session") && !allowed.includes("project") && !allowed.includes("global") && !allowed.includes("root-tree")
@@ -129,6 +144,48 @@ export function resolveOperatorScope(input: ScopeResolveInput): ScopeResolveResu
     code: "forbidden_scope",
     message: "no allowed scope can be resolved from runtime context",
     details: { allowed: allowed.join(",") },
+  }
+}
+
+/**
+ * Resolve an EXPLICIT operator-requested scope kind (Feature 034). The requested kind
+ * must be in the descriptor's `scopesAllowed` (else `forbidden_scope`), and the ref
+ * required by the kind must be present (else `forbidden_scope`, mirroring the ambient
+ * path's missing-context errors). `global` never carries a ref; the other kinds resolve
+ * their bound ref. This intentionally OVERRIDES the project preference — that is the
+ * whole point of the selector.
+ */
+function resolveExplicitScope(
+  requestedKind: ScopeKind,
+  allowed: readonly ScopeKind[],
+  refs: { readonly projectId: string | null; readonly sessionId: string | null; readonly rootTreeRef: string | null },
+): ScopeResolveResult {
+  if (!allowed.includes(requestedKind)) {
+    return {
+      ok: false,
+      code: "forbidden_scope",
+      message: `requested ${requestedKind} scope is not allowed for this command`,
+      details: { requested: requestedKind, allowed: allowed.join(",") },
+    }
+  }
+  switch (requestedKind) {
+    case "global":
+      return { ok: true, scope: { kind: "global", ref: null } }
+    case "project":
+      if (!refs.projectId) {
+        return { ok: false, code: "forbidden_scope", message: "project scope required; projectId missing", details: { required: "project" } }
+      }
+      return { ok: true, scope: { kind: "project", ref: refs.projectId } }
+    case "session":
+      if (!refs.sessionId) {
+        return { ok: false, code: "forbidden_scope", message: "session scope required; sessionId missing", details: { required: "session" } }
+      }
+      return { ok: true, scope: { kind: "session", ref: refs.sessionId } }
+    case "root-tree":
+      if (!refs.rootTreeRef) {
+        return { ok: false, code: "forbidden_scope", message: "root-tree scope required; rootTreeRef missing", details: { required: "root-tree" } }
+      }
+      return { ok: true, scope: { kind: "root-tree", ref: refs.rootTreeRef } }
   }
 }
 
