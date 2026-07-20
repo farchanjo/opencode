@@ -1057,20 +1057,33 @@ it.instance("Feature 027 — OPENCODE_DISABLE_PROJECT_CONFIG skips the relocated
 // the global config.json / opencode.json[c] seams so an isolated profile owns its own
 // global config instead of leaking back into ~/.config/opencode.
 describe("Feature 028 — global config honors OPENCODE_CONFIG_DIR", () => {
-  it.effect("global config.json read resolves under OPENCODE_CONFIG_DIR", () =>
+  // Feature 030 adapted this from the 028 REPLACE assertion to the LAYERED model: the
+  // profile's config.json must still win as an override (028 behavior preserved), but the
+  // base global config.json now ALSO loads and its base-only keys survive.
+  it.effect("global config.json read layers OPENCODE_CONFIG_DIR over the base (profile overrides, base survives)", () =>
     Effect.gen(function* () {
+      const base = yield* tmpdirScoped()
       const override = yield* tmpdirScoped()
       const projectDir = yield* tmpdirScoped()
+      // BASE (~/.config/opencode): a base-only key plus a shared key the profile overrides.
+      yield* writeConfigEffect(base, schemaConfig({ model: "base/model", username: "base-user" }), "config.json")
+      // PROFILE (OPENCODE_CONFIG_DIR): overrides the shared key only.
       yield* writeConfigEffect(override, schemaConfig({ model: "override/model" }), "config.json")
 
-      yield* withProcessEnv(
-        "OPENCODE_CONFIG_DIR",
-        override,
-        Effect.gen(function* () {
-          yield* clearEffect(true)
-          const config = yield* Config.use.get().pipe(provideInstanceEffect(projectDir))
-          expect(config.model).toBe("override/model")
-        }),
+      yield* withGlobalConfigDir(
+        base,
+        withProcessEnv(
+          "OPENCODE_CONFIG_DIR",
+          override,
+          Effect.gen(function* () {
+            yield* clearEffect(true)
+            const config = yield* Config.use.get().pipe(provideInstanceEffect(projectDir))
+            // Profile overrides the shared key (Feature 028 behavior preserved) ...
+            expect(config.model).toBe("override/model")
+            // ... but the base-only key now ALSO survives (Feature 030 regression fix).
+            expect(config.username).toBe("base-user")
+          }),
+        ),
       )
     }).pipe(Effect.provide(testInstanceStoreLayer), Effect.provide(LayerNode.compile(CrossSpawnSpawner.node))),
   )
@@ -1212,6 +1225,174 @@ describe("Feature 028 — global config honors OPENCODE_CONFIG_DIR", () => {
           // touches only config-file resolution and never writes auth into the override.
           expect(yield* FSUtil.use.existsSafe(path.join(override, "auth.json"))).toBe(false)
         }),
+      )
+    }).pipe(Effect.provide(testInstanceStoreLayer), Effect.provide(LayerNode.compile(CrossSpawnSpawner.node))),
+  )
+})
+
+// Feature 030 — correct Feature 028 so OPENCODE_CONFIG_DIR LAYERS over the base global config
+// instead of REPLACING it. 028 anchored the global READ solely on configRoot(), so setting
+// OPENCODE_CONFIG_DIR to an isolated profile stopped the user's real ~/.config/opencode global
+// config from loading at all — a live break. The read now always loads the base, then layers
+// the profile on top: project > profile > global-real, base never dropped.
+describe("Feature 030 — OPENCODE_CONFIG_DIR layers over the base global config", () => {
+  it.effect("base global config survives while the profile layers on top (the 028 regression)", () =>
+    Effect.gen(function* () {
+      const base = yield* tmpdirScoped()
+      const profile = yield* tmpdirScoped()
+      const projectDir = yield* tmpdirScoped()
+      // BASE (~/.config/opencode): the user's REAL global config — an mcp server the profile
+      // never declares, plus a shared `model` the profile overrides. Post-028 this base stopped
+      // loading whenever OPENCODE_CONFIG_DIR was set; that is the break this feature fixes.
+      yield* writeConfigEffect(
+        base,
+        schemaConfig({
+          model: "base/model",
+          mcp: { baseServer: { type: "local", command: ["base-cmd"] } },
+        }),
+        "opencode.json",
+      )
+      // PROFILE (OPENCODE_CONFIG_DIR): overrides the shared key and adds its own mcp server.
+      yield* writeConfigEffect(
+        profile,
+        schemaConfig({
+          model: "profile/model",
+          mcp: { profileServer: { type: "local", command: ["profile-cmd"] } },
+        }),
+        "opencode.json",
+      )
+
+      yield* withGlobalConfigDir(
+        base,
+        withProcessEnv(
+          "OPENCODE_CONFIG_DIR",
+          profile,
+          Effect.gen(function* () {
+            yield* clearEffect(true)
+            const config = yield* Config.use.get().pipe(provideInstanceEffect(projectDir))
+            // Profile wins on the shared scalar (profile > global-real).
+            expect(config.model).toBe("profile/model")
+            // The base-only mcp server SURVIVES — THE regression this feature closes.
+            expect(config.mcp?.["baseServer"]).toBeDefined()
+            // The profile's own mcp server is deep-merged in too, not replacing the base object.
+            expect(config.mcp?.["profileServer"]).toBeDefined()
+          }),
+        ),
+      )
+    }).pipe(Effect.provide(testInstanceStoreLayer), Effect.provide(LayerNode.compile(CrossSpawnSpawner.node))),
+  )
+
+  it.effect("precedence — project profile overrides profile-global, which overrides global-real", () =>
+    Effect.gen(function* () {
+      const base = yield* tmpdirScoped()
+      const profile = yield* tmpdirScoped()
+      const projectDir = yield* tmpdirScoped()
+      // global-real (base): a shared authority + a base-only authority that must survive.
+      yield* writeConfigEffect(
+        base,
+        schemaConfig({
+          operator: { authorities: { routing: { version: "cas_v1" }, baseOnly: { version: "cas_v1" } } },
+        }),
+        "config.json",
+      )
+      // profile-global (OPENCODE_CONFIG_DIR): overrides the shared authority + adds its own.
+      yield* writeConfigEffect(
+        profile,
+        schemaConfig({
+          operator: { authorities: { routing: { version: "cas_v2" }, profileOnly: { version: "cas_v1" } } },
+        }),
+        "config.json",
+      )
+
+      yield* withGlobalConfigDir(
+        base,
+        withProcessEnv(
+          "OPENCODE_CONFIG_DIR",
+          profile,
+          Effect.gen(function* () {
+            yield* clearEffect(true)
+            // The per-project profile store (Feature 027) resolves under configRoot() (= profile).
+            const projectProfile = ProjectProfile.projectOperatorConfigPath(projectDir)
+            yield* FSUtil.use.writeWithDirs(
+              projectProfile,
+              JSON.stringify({ operator: { authorities: { routing: { version: "cas_v3" } } } }),
+            )
+
+            const config = yield* Config.use.get().pipe(provideInstanceEffect(projectDir))
+            const authorities = config.operator?.authorities as Record<string, { version?: string }> | undefined
+            // project > profile > global-real on the shared authority.
+            expect(authorities?.routing?.version).toBe("cas_v3")
+            // The profile-only authority layers in ...
+            expect(authorities?.profileOnly?.version).toBe("cas_v1")
+            // ... and the base-only authority survives the whole stack.
+            expect(authorities?.baseOnly?.version).toBe("cas_v1")
+          }),
+        ),
+      )
+    }).pipe(Effect.provide(testInstanceStoreLayer), Effect.provide(LayerNode.compile(CrossSpawnSpawner.node))),
+  )
+
+  it.effect("base and profile plugin arrays both survive the layered global merge", () =>
+    Effect.gen(function* () {
+      const base = yield* tmpdirScoped()
+      const profile = yield* tmpdirScoped()
+      const projectDir = yield* tmpdirScoped()
+      // BASE (~/.config/opencode): declares its own plugin. Adversarial review found that
+      // mergeConfigConcatArrays (the original 030 shape) special-cased only `instructions`
+      // to concat — every other array, including `plugin`, was replaced wholesale by
+      // remeda's mergeDeep whenever the profile also declared a `plugin` array, so the
+      // base plugin silently vanished from the effective config.
+      yield* writeConfigEffect(
+        base,
+        schemaConfig({
+          plugin: ["base-plugin@1.0.0"],
+          mcp: { baseServer: { type: "local", command: ["base-cmd"] } },
+        }),
+        "opencode.json",
+      )
+      // PROFILE (OPENCODE_CONFIG_DIR): declares its own, different plugin.
+      yield* writeConfigEffect(
+        profile,
+        schemaConfig({
+          plugin: ["profile-plugin@1.0.0"],
+        }),
+        "opencode.json",
+      )
+
+      yield* withGlobalConfigDir(
+        base,
+        withProcessEnv(
+          "OPENCODE_CONFIG_DIR",
+          profile,
+          Effect.gen(function* () {
+            yield* clearEffect(true)
+            const config = yield* Config.use.get().pipe(provideInstanceEffect(projectDir))
+            const plugins = (config.plugin ?? []).map((item) => ConfigPlugin.pluginSpecifier(item))
+
+            // Both layers' plugins survive — the base plugin no longer disappears when the
+            // profile also declares its own `plugin` array (the MEDIUM defect this closes).
+            expect(plugins).toContain("base-plugin@1.0.0")
+            expect(plugins).toContain("profile-plugin@1.0.0")
+
+            // Provenance: each plugin is attributed to the config directory it actually came
+            // from — base to `Global.Path.config` (here `base`), not the profile's dir (the
+            // LOW provenance smell this also closes).
+            const origins = config.plugin_origins ?? []
+            const baseOrigin = origins.find(
+              (item) => ConfigPlugin.pluginSpecifier(item.spec) === "base-plugin@1.0.0",
+            )
+            const profileOrigin = origins.find(
+              (item) => ConfigPlugin.pluginSpecifier(item.spec) === "profile-plugin@1.0.0",
+            )
+            expect(baseOrigin?.source).toBe(base)
+            expect(profileOrigin?.source).toBe(profile)
+            expect(baseOrigin?.scope).toBe("global")
+            expect(profileOrigin?.scope).toBe("global")
+
+            // The base-only mcp server survives too, consistent with the existing 030 coverage.
+            expect(config.mcp?.["baseServer"]).toBeDefined()
+          }),
+        ),
       )
     }).pipe(Effect.provide(testInstanceStoreLayer), Effect.provide(LayerNode.compile(CrossSpawnSpawner.node))),
   )
