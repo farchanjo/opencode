@@ -6,11 +6,12 @@ import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { Effect, Layer } from "effect"
 import { FSUtil } from "@opencode-ai/core/fs-util"
 import { Global } from "@opencode-ai/core/global"
+import { CrossSpawnSpawner } from "@opencode-ai/core/cross-spawn-spawner"
 import { Config } from "@/config/config"
 import { ConfigPlugin } from "@/config/plugin"
 import { CurrentWorkingDirectory } from "@/config/tui-cwd"
 import { TuiConfig } from "../../src/config/tui"
-import { TestInstance } from "../fixture/fixture"
+import { TestInstance, tmpdirScoped } from "../fixture/fixture"
 import { testEffect } from "../lib/effect"
 
 const it = testEffect(LayerNode.compile(LayerNode.group([Config.node, FSUtil.node])))
@@ -139,6 +140,114 @@ it.instance("loads tui config with the same precedence order as server config pa
       expect(config.diff_style).toBe("stacked")
     }),
   ),
+)
+
+// Feature 031 — OPENCODE_CONFIG_DIR (profile) tui config must sit as a MIDDLE layer:
+// above the base Global.Path.config, below project `.opencode` dirs. Before this fix
+// the profile was merged inside the highest project-discovery tier, so it wrongly won
+// over a project `.opencode` tui config. These tests are designed to FAIL under the old
+// (profile-highest) merge order and pass under the corrected
+// base < profile < OPENCODE_TUI_CONFIG < project files < project `.opencode` order.
+
+it.instance("base tui config survives when an OPENCODE_CONFIG_DIR profile layer is present", () =>
+  withCleanState(
+    Effect.gen(function* () {
+      const fs = yield* FSUtil.Service
+      const test = yield* TestInstance
+      const profile = yield* tmpdirScoped()
+      yield* fs.writeJson(path.join(Global.Path.config, "tui.json"), { theme: "base", diff_style: "auto" })
+      yield* fs.writeJson(path.join(profile, "tui.json"), { theme: "profile" })
+
+      yield* withEnv(
+        "OPENCODE_CONFIG_DIR",
+        profile,
+        Effect.gen(function* () {
+          const config = yield* getTuiConfig(test.directory)
+          // Profile overrides the shared key...
+          expect(config.theme).toBe("profile")
+          // ...but the base-only key still survives (base is never dropped).
+          expect(config.diff_style).toBe("auto")
+        }),
+      )
+    }),
+  ).pipe(Effect.provide(LayerNode.compile(CrossSpawnSpawner.node))),
+)
+
+it.instance("a project .opencode tui config overrides the OPENCODE_CONFIG_DIR profile tui on a shared key", () =>
+  withCleanState(
+    Effect.gen(function* () {
+      const fs = yield* FSUtil.Service
+      const test = yield* TestInstance
+      const profile = yield* tmpdirScoped()
+      yield* fs.writeJson(path.join(profile, "tui.json"), { theme: "profile", diff_style: "stacked" })
+      yield* fs.writeWithDirs(
+        path.join(test.directory, ".opencode", "tui.json"),
+        JSON.stringify({ theme: "project" }, null, 2),
+      )
+
+      yield* withEnv(
+        "OPENCODE_CONFIG_DIR",
+        profile,
+        Effect.gen(function* () {
+          const config = yield* getTuiConfig(test.directory)
+          // Project `.opencode` wins on the shared key (project > profile — the
+          // corrected direction). Under the pre-031 bug, OPENCODE_CONFIG_DIR was
+          // appended last in the directories list and merged after the project
+          // `.opencode` dir, so `theme` would have resolved to "profile" instead.
+          expect(config.theme).toBe("project")
+          // The profile's non-overridden key still survives underneath the project layer.
+          expect(config.diff_style).toBe("stacked")
+        }),
+      )
+    }),
+  ).pipe(Effect.provide(LayerNode.compile(CrossSpawnSpawner.node))),
+)
+
+it.instance("with OPENCODE_CONFIG_DIR unset, tui config resolves from base + project only (unchanged)", () =>
+  withCleanState(
+    Effect.gen(function* () {
+      const fs = yield* FSUtil.Service
+      const test = yield* TestInstance
+      yield* fs.writeJson(path.join(Global.Path.config, "tui.json"), { theme: "base", diff_style: "auto" })
+      yield* fs.writeWithDirs(
+        path.join(test.directory, ".opencode", "tui.json"),
+        JSON.stringify({ theme: "project" }, null, 2),
+      )
+
+      // No OPENCODE_CONFIG_DIR set: configRoot() === Global.Path.config, so no profile
+      // layer runs — the read must be byte-for-byte the base + project result.
+      const config = yield* getTuiConfig(test.directory)
+      expect(config.theme).toBe("project")
+      expect(config.diff_style).toBe("auto")
+    }),
+  ),
+)
+
+it.instance("loads the OPENCODE_CONFIG_DIR profile tui file exactly once (no double-merge)", () =>
+  withCleanState(
+    Effect.gen(function* () {
+      const fs = yield* FSUtil.Service
+      const test = yield* TestInstance
+      const profile = yield* tmpdirScoped()
+      yield* fs.writeJson(path.join(profile, "tui.json"), {
+        plugin: [["profile-plugin@1.0.0", { source: "profile" }], "profile-only@1.0.0"],
+      })
+
+      yield* withEnv(
+        "OPENCODE_CONFIG_DIR",
+        profile,
+        Effect.gen(function* () {
+          const config = yield* getTuiConfig(test.directory)
+          const origins = yield* getTuiPluginOrigins(test.directory)
+          const plugins = (config.plugin ?? []).map((item) => ConfigPlugin.pluginSpecifier(item))
+          // A double-load (the profile once as its own layer, once again inside the
+          // project-discovery loop) would duplicate every entry.
+          expect(plugins).toEqual(["profile-plugin@1.0.0", "profile-only@1.0.0"])
+          expect(origins.length).toBe(2)
+        }),
+      )
+    }),
+  ).pipe(Effect.provide(LayerNode.compile(CrossSpawnSpawner.node))),
 )
 
 it.instance("resolves attention config defaults and overrides", () =>
