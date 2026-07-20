@@ -46,12 +46,12 @@ the user's burning pain on every screen.
 - [x] T016 — Milvus registry binding when an endpoint is configured
 - [x] T017 — Palette availability flip (MCP/output → persists_today/partial)
 - [x] T018 — Keep deferred edges typed gaps + git-ignore `config.json`
-- [ ] T019 — TUI editing tests (multi-field modal + detail tree)
-- [ ] T020 — MCP tests (reads + `mutation_plan` + no-phantom-write + live action)
-- [ ] T021 — OutputSpool tests (writer + reads + admin edge)
-- [ ] T022 — Jobs + Milvus tests
-- [ ] T023 — Availability + parity tests (FR17)
-- [ ] T024 — Guard scope + doc sync + `speckit analyze` + `validate --json` green
+- [x] T019 — TUI editing tests (multi-field modal + detail tree)
+- [x] T020 — MCP tests (reads + `mutation_plan` + no-phantom-write + live action)
+- [x] T021 — OutputSpool tests (writer + reads + admin edge)
+- [x] T022 — Jobs + Milvus tests
+- [x] T023 — Availability + parity tests (FR17)
+- [x] T024 — Guard scope + doc sync + `speckit analyze` + `validate --json` green
 
 ---
 
@@ -406,7 +406,7 @@ the user's burning pain on every screen.
 
 ## Group F — Jobs occurrence projection (FR11, FR12)
 
-- [ ] **T015 — Jobs occurrence projection over `EventV2Bridge` + bounded watch**
+- [x] **T015 — Jobs occurrence projection over `EventV2Bridge` + bounded watch**
 - **Depends:** none
 - **Paths:** `packages/opencode/src/operator/jobs/backend-live.ts`
 - **Deliverable:** project the durable `job.*` occurrence events for `jobs.history`/
@@ -441,7 +441,7 @@ the user's burning pain on every screen.
 
 ## Group G — Milvus registry binding (FR13, FR14)
 
-- [ ] **T016 — Milvus registry binding when an endpoint is configured**
+- [x] **T016 — Milvus registry binding when an endpoint is configured**
 - **Depends:** none
 - **Paths:** `packages/opencode/src/operator/semantic/backend-live.ts`, `operator/stack-live.ts`
 - **Deliverable:** bind an `override.index`/`override.provider` over
@@ -479,7 +479,7 @@ the user's burning pain on every screen.
 
 ## Group H — Availability flip + deferred gaps + repo health (FR15, FR16, FR18)
 
-- [ ] **T017 — Palette availability flip (MCP/output → persists_today/partial)**
+- [x] **T017 — Palette availability flip (MCP/output → persists_today/partial)**
 - **Depends:** T007, T008, T012, T014
 - **Paths:** `packages/core/src/operator/palette.ts`
 - **Deliverable:** update `OPERATOR_PERSISTING_DOMAINS`/`OPERATOR_PERSISTING_VERBS`/
@@ -508,7 +508,7 @@ the user's burning pain on every screen.
   `screen-controls.test.ts` (mcp toggles real), tui `entity.test.ts` (mcp actions real). core 118
   pass / tui 175 pass / 0 fail; typecheck clean.
 
-- [ ] **T018 — Keep deferred edges typed gaps + git-ignore `config.json`**
+- [x] **T018 — Keep deferred edges typed gaps + git-ignore `config.json`**
 - **Depends:** none
 - **Paths:** `packages/opencode/src/operator/**`, `packages/opencode/.gitignore`
 - **Deliverable:** confirm `jobs.run-now` (Feature 002 executor composition —
@@ -536,7 +536,7 @@ the user's burning pain on every screen.
 
 ## Group I — Tests + guard scope + doc sync (FR17)
 
-- [ ] **T019 — TUI editing tests (multi-field modal + detail tree)**
+- [x] **T019 — TUI editing tests (multi-field modal + detail tree)**
 - **Depends:** T001, T002, T003, T004, T005, T006
 - **Paths:** `packages/tui/test/operator/**`
 - **Deliverable:** test the multi-field modal render/pre-fill/validation per covered
@@ -546,9 +546,20 @@ the user's burning pain on every screen.
   (FR19-FR23).
 - **Acceptance:** all TUI editing behaviors pass; the compact strip is unchanged.
 - **Verification:** `bun test packages/tui/test/operator/**`.
-- **Evidence:** _(implement)_
+- **Evidence:** 2026-07-19 — the coverage landed alongside each Group A task (T001-T006
+  evidence above) rather than as a separate end-of-phase pass: `packages/tui/test/operator/
+  multi-field.test.ts` carries the T001-T005 blocks (field-list resolution, per-field
+  validation/enum pickers, byte-exact compose + single-dispatch spy + in-modal error,
+  bindings-list editor add/remove/compose, routing structured+advanced-JSON) and
+  `packages/tui/test/operator/status.test.ts` carries the T006 detail-tree block
+  (`telemetry.test` target expansion vs the compact `{2}` strip, depth collapse, row-budget
+  `… N more` truncation, compact-strip non-regression). `modal.test.ts` (Feature 015 modal
+  contract: title/in-modal error/busy/Save-Cancel/esc) stays green, unchanged. This task
+  closes as a verification pass, not new authorship: `cd packages/tui && bun test
+  test/operator/` → 175 pass / 0 fail across 13 files (1646 `expect()` calls), re-confirmed
+  2026-07-19.
 
-- [ ] **T020 — MCP tests (reads + `mutation_plan` + no-phantom-write + live action)**
+- [x] **T020 — MCP tests (reads + `mutation_plan` + no-phantom-write + live action)**
 - **Depends:** T007, T008, T009, T010
 - **Paths:** `packages/opencode/test/operator/**`
 - **Deliverable:** test the live server reads over a `MCP.Service` double (no
@@ -556,9 +567,23 @@ the user's burning pain on every screen.
   no-phantom-write case; the live-action plan; and the auth verdict split (FR1-FR5).
 - **Acceptance:** all MCP behaviors pass; no phantom write on a stale CAS.
 - **Verification:** `bun test packages/opencode/test/operator/**`.
-- **Evidence:** _(implement)_
+- **Evidence:** 2026-07-19 — `packages/opencode/test/operator/mcp-service-backend.test.ts`
+  carries the full block set: `describe("T007 — mcp.server.list/status/capabilities project
+  the live host (no fabricated SSOT field)")`, `describe("T008 mcp service backend — faithful
+  live reads via the DomainInvoke")` + `describe("T008 — config-backed mcp mutations commit
+  through mutateAuthority + round-trip")` + `describe("T008 — no phantom write: a rejected
+  config-backed mutation persists NOTHING (FR5)")`, `describe("T009 — live-service action
+  plans (connect/disconnect/reconnect)")`, `describe("T010 — auth split: remove converts to a
+  mutation, start/finish stay typed gaps")`. The fix-round's stale-CAS/no-phantom-write and
+  preflight-authority-resolution regressions are covered separately by
+  `packages/opencode/test/operator/feature017-fixround.test.ts` (FR-1/FR-2 blocks: a 2nd
+  `mcp.server.connect` without the right CAS token does not re-run the live op; two
+  consecutive `mcp.server.add` calls succeed through the real dispatcher with the
+  preflight-threaded CAS token). Verification: `cd packages/opencode && bun test
+  test/operator/` → 429 pass / 2 skip / 0 fail across 42 files (2655 `expect()` calls),
+  re-confirmed 2026-07-19.
 
-- [ ] **T021 — OutputSpool tests (writer + reads + admin edge)**
+- [x] **T021 — OutputSpool tests (writer + reads + admin edge)**
 - **Depends:** T011, T012, T013, T014
 - **Paths:** `packages/opencode/test/outputspool/**`, `packages/opencode/test/operator/**`
 - **Deliverable:** test the writer subscribed at a message-part seam populating a real
@@ -568,9 +593,26 @@ the user's burning pain on every screen.
 - **Acceptance:** all OutputSpool behaviors pass; content-free events; no phantom
   config write on the admin edge.
 - **Verification:** `bun test packages/opencode/test/outputspool/** packages/opencode/test/operator/**`.
-- **Evidence:** _(implement)_
+- **Evidence:** 2026-07-19 — `packages/opencode/test/operator/outputspool/
+  feature017-outputspool-writer.test.ts` carries the full block set: `describe("T011 —
+  production writer: message part → channel generation rows (FR6)")` (part→row mapping,
+  suffix-only append, reasoning/skip routing, tool-result seal, stale-generation fencing,
+  store-throw isolation), `describe("T012 — output.stat/read reflect the
+  writer-populated store end-to-end (FR7)")`, `describe("T013 — output.follow streams
+  committed pages over the cursor codec (FR8)")` (bounded page streaming, catch-up `eof`,
+  invalid-cursor `invalid_argument`, disabled-seam `unavailable`), `describe("T014 —
+  release/delete/purge commit through the store-scoped admin authority (FR9)")`
+  (delete/release act on the real store, missing-ref no-phantom-write, unbound-authority
+  gap). The Feature 014 gap-assertion suite
+  (`packages/opencode/test/operator/outputspool/feature014-outputspool-wire.test.ts`) stays
+  green as a non-regression check. The fix-round's eager-writer independence (FR-3: a
+  session output is spooled with no operator stack ever created) is covered separately by
+  `packages/opencode/test/operator/feature017-fixround.test.ts`. Verification: `cd
+  packages/opencode && bun test test/outputspool/` → 90 pass / 0 fail across 15 files (231
+  `expect()` calls); `bun test test/operator/` → 429 pass / 2 skip / 0 fail (see T020);
+  both re-confirmed 2026-07-19.
 
-- [ ] **T022 — Jobs + Milvus tests**
+- [x] **T022 — Jobs + Milvus tests**
 - **Depends:** T015, T016
 - **Paths:** `packages/opencode/test/operator/**`
 - **Deliverable:** test the occurrence projection over an `EventV2Bridge` double + the
@@ -578,9 +620,17 @@ the user's burning pain on every screen.
   `milvus_unavailable` gate when not (FR11-FR14).
 - **Acceptance:** all jobs + Milvus behaviors pass; bounded watch; honest gate.
 - **Verification:** `bun test packages/opencode/test/operator/**`.
-- **Evidence:** _(implement)_
+- **Evidence:** 2026-07-19 — `packages/opencode/test/operator/feature017-jobs-milvus.test.ts`
+  carries both blocks: `describe("T015 — jobs occurrence projection over a fake EventV2
+  aggregate")` (history fold + foreign-definition filter, bounded limit, notification
+  projection, `showOccurrences` cap, bounded filtered watch via `Stream.runCollect`,
+  unbound-bridge typed gap, `show()` routes through the projection) and `describe("T016 —
+  Milvus registry binding")` (probe path when configured, maintenance verbs stay a typed
+  gap, unreachable-endpoint degradation, probe-outage → typed gap with no secret leak,
+  unconfigured degradation identity). Verification: `cd packages/opencode && bun test
+  test/operator/` → 429 pass / 2 skip / 0 fail (see T020), re-confirmed 2026-07-19.
 
-- [ ] **T023 — Availability + parity tests (FR17)**
+- [x] **T023 — Availability + parity tests (FR17)**
 - **Depends:** T017
 - **Paths:** `packages/core/test/operator/**`, `packages/tui/test/operator/parity.test.ts`
 - **Deliverable:** assert the palette availability flip is truthful; reuse the Feature
@@ -589,9 +639,26 @@ the user's burning pain on every screen.
   (FR17).
 - **Acceptance:** availability is truthful; parity holds; no catalog id/version change.
 - **Verification:** `bun test packages/core/test/operator/** packages/tui/test/operator/parity.test.ts`.
-- **Evidence:** _(implement)_
+- **Evidence:** 2026-07-19 — `packages/core/test/operator/feature017-availability.test.ts`
+  `describe("T017 — persisting-set truthfulness + parity (FR15, FR17)")` asserts mcp flips
+  `Unavailable → Partial`, the 14 newly-real MCP mutations + 3 output admin-edge verbs read
+  `persists_today`, the 4 still-gapped verbs (`auth.start`/`finish`,
+  `resource.admin.subscribe`/`unsubscribe`) stay `honest_unavailable`, output
+  export/share stay deny-by-default, and every `OPERATOR_PERSISTING_VERBS` entry resolves
+  to a real id in `RESERVED_CATALOG.entries` (no fabricated/new catalog id). Parity itself
+  reuses the untouched Feature 011 harness `packages/tui/test/operator/parity.test.ts`
+  (`describe("T016 command-id parity with slash/CLI (FR8)")`, spies the wire text against
+  the canonical `/op.<id>` alias for a read and a mutation) — this feature adds no new
+  parity mechanism, per the plan's "no new dispatch path" constraint (FR17). Companion
+  non-regressions: `packages/core/test/operator/feature014-availability.test.ts` +
+  `palette-menu.test.ts` (mcp → Partial, output admin edge), `packages/tui/test/operator/
+  screen-controls.test.ts` (mcp toggles real) and `entity.test.ts` (mcp actions real) all
+  stay green. Verification: `cd packages/core && bun test test/operator/` → 118 pass / 0
+  fail across 12 files (2121 `expect()` calls); `cd packages/tui && bun test
+  test/operator/parity.test.ts` passes as part of the T019 175/175 tui run; both
+  re-confirmed 2026-07-19.
 
-- [ ] **T024 — Guard scope + doc sync + `speckit analyze` + `validate --json` green**
+- [x] **T024 — Guard scope + doc sync + `speckit analyze` + `validate --json` green**
 - **Depends:** T001-T023
 - **Paths:** `doc/arch/speckit.toml`, `doc/arch/**`
 - **Deliverable:** confirm the Feature 017 guard block covers every genuinely-new
@@ -603,7 +670,37 @@ the user's burning pain on every screen.
 - **Acceptance:** `speckit analyze` clean of new Critical/High/Medium; `speckit
   validate --json` green (0 new findings on Feature 017 artifacts).
 - **Verification:** `speckit analyze`; `speckit validate --json`.
-- **Evidence:** _(implement)_
+- **Evidence:** 2026-07-19 — **Guard scope confirmed sufficient, no `speckit.toml` edit
+  needed.** The Feature 017 block (`doc/arch/speckit.toml:473-501`) already declares the
+  four genuinely-new top-level globs (`packages/opencode/src/session/**`,
+  `packages/opencode/.gitignore`, `packages/tui/src/operator/form/**`,
+  `packages/tui/src/operator/status.ts`). Verified every fix-round path resolves under an
+  ALREADY-declared glob and needs no addition: `operator/application/{handler,mutation,
+  dispatcher,command-authority}.ts`, `operator/http/{handler,mount}.ts`,
+  `operator/worker-adapter.ts`, `operator/adapters/inbound/{tui-port,http-slash-port,
+  rpc-slash-port}.ts` all resolve under `packages/opencode/src/operator/**` (Feature 007,
+  already in scope); `outputspool/spool-process-writer.ts` resolves under
+  `packages/opencode/src/outputspool/**` (Feature 005, `speckit.toml:225`, already in
+  scope); `server/server.ts` was already an individually-declared path
+  (`speckit.toml:110`) predating this feature. **Doc sync.** Added the "Implementation
+  notes (recorded during implement)" section to `plan.md` per the Feature 012-016
+  convention (group-by-group summary + a dedicated fix-round subsection referencing
+  ADR-0017's superseding-decision section — no new ADR). Confirmed no drift in the
+  companion artifacts: the `operator-capability-gaps/*.cue` corpus
+  (`editform.cue #EditField/#EditFieldList/#DetailTree`, `reads.cue #LiveServerRead/
+  #LiveServerReadResult`, plus the mutation/flag/spoolwriter files) already types every
+  shape the Evidence blocks above cite, and `doc/arch/statecharts/output-spool-writer.md`
+  already matches the shipped writer. `spec.md` FR15/FR16/FR18 wording matches the
+  landed behavior (deferred-gap list, availability-flip description) — no edit needed.
+  **Gate commands (all re-run 2026-07-19, this closing pass):**
+  `/Users/farchanjo/bin/speckit validate --json` → `"ok":true`, `"waivedCount":4`, 0 new
+  findings (the 4 are the pre-existing waived `hygiene.empty-file` hits on
+  `packages/desktop/src/renderer/styles.css`, `packages/opencode/test/config/fixtures/
+  no-frontmatter.md`, `packages/plugin/.gitignore`, `sdks/vscode/.gitignore` — none on a
+  Feature 017 artifact). `/Users/farchanjo/bin/speckit analyze` → "analyzed 17 feature(s):
+  consistent; 0 ADR overlap(s)" (only pre-existing `info`-level slug-drift notices across
+  multiple features, none new, none blocking). `/Users/farchanjo/bin/speckit status` →
+  `phase: implement`, `status: implemented`, `next: none`, `completeness: ok`.
 
 ## Dependencies
 

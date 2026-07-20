@@ -334,4 +334,110 @@ None required beyond this plan. The capability-gap ValueObjects
 
 ## Implementation notes (recorded during implement)
 
+- 2026-07-19 — T001-T024 + the adversarial-review fix-round landed per plan.
+
+  **Group A (T001-T006, FR19-FR23) — operator TUI editing, first.** The Feature 015
+  single-field `OperatorEditPrefill` grew into an ordered `EditFieldList`
+  (`packages/tui/src/operator/form/field-list.ts`): one labeled `EditField` per
+  payload property, enum properties as `picker`, secret fields never pre-filled.
+  `multi-field-modal.tsx` renders the ordered list (inputs, `DialogSelect` pickers,
+  toggles, a `BindingsEditor` for `pools.set`) inside the unchanged Feature 015 modal
+  contract (title/in-modal error/busy/Save-Cancel/`esc`). `composePayload` builds the
+  byte-exact per-verb payload (the Feature 014 lesson: never a naive
+  `{ [field.key]: rawText }` spread) and dispatches once through
+  `executeOperatorCommand`. `routing.configure` renders a structured `enabled`/`mode`
+  sub-form plus a labeled advanced-JSON field — no bare unlabeled JSON prompt remains.
+  `status.ts` gained a `toDetailTree` renderer (bounded depth ~4, bounded rows, honest
+  `… N more`), kept strictly distinct from the existing compact `toStatusNodes` strip.
+
+  **Group B/C (T007-T010, FR1-FR5) — MCP live reads + mutations.** `mcp-port.ts`
+  gained a content-free `McpLiveServerReader` projecting `MCP.Service.status()`/
+  `clients()`; SSOT-only fields (CAS version, `auditId`, trust profile, timestamps)
+  stay absent. Config-backed MCP verbs (`server.add`/`update`/`delete`, `logging.
+  level.set`, `experimental.*`, `extension.*`, `resource.admin.policy.set`) convert to
+  the `OperatorMutationPlan` contract over the `store.config` `"global:mcp"`
+  authority, eliminating the FR5 phantom-write trap. Live-service actions
+  (`connect`/`disconnect`/`reconnect`) and `auth.remove` (confirmed real via
+  `McpAuth.Service.remove` / `MCP.Service.removeAuth`) record their outcome under
+  store-scoped authorities (`"global:mcp-connections"`, `"global:mcp-auth"`);
+  `auth.start`/`finish` stay typed gaps (interactive OAuth cannot run headless
+  through the operator loopback). Fixed a latent port bug in the same pass:
+  `mcp-command-port.ts` default transport `"streamable_http"` was not a valid
+  `TransportKind` member — corrected to `"streamable-http"`.
+
+  **Group D/E (T011-T014, FR6-FR10) — OutputSpool writer + reads + admin edge.** A
+  new production writer (`session/output-spool-writer.ts`) subscribes at the session
+  message-part seam via the `GlobalBus` fan-out and drives the existing
+  `outputspool/file-sink-writer.ts` machinery into the SAME control store the
+  operator reads — REUSED, not re-authored, honoring producer ownership, content-free
+  events, bounded memory, and stale-generation fencing. `output.stat`/`read` project
+  the now-populated store; `output.follow` binds an opaque base64url cursor over a
+  bounded 64 KiB page read on an independent read-only handle, never blocking the
+  writer. `output.release`/`delete`/`purge` wire through a control-store admin port
+  whose plan records the outcome under a store-scoped authority
+  (`"global:output-admin"`) — never a fabricated config CAS version — preserving
+  audit + no-phantom-write.
+
+  **Group F/G (T015-T016, FR11-FR14) — jobs projection + Milvus binding.** The jobs
+  occurrence projection (`operator/jobs/occurrence-projection.ts`) folds the durable
+  `job.*` vocabulary through the SAME `EventV2Bridge.Service` seam the lifecycle
+  domain already uses; `jobs.watch` opens a bounded, closable subscription and
+  degrades to a typed gap when the bridge is unbound. The Milvus binding
+  (`operator/semantic/milvus-binding.ts`) binds an `IndexPort` under a
+  hard-capped-10s probe when an endpoint is configured; the full index-maintenance
+  pipeline stays a typed `milvus_unavailable` gap (honest "mixed" readiness per
+  spec) — never a fabricated generation/count. Fixed a second latent port bug:
+  `semantic-command-port.ts` `semantic.provider.add` residency default
+  `"unrestricted"` was not a `ResidencyProfile` member — corrected to `"remote"`.
+
+  **Group H (T017-T018, FR15, FR16, FR18) — availability + deferred gaps.**
+  `packages/core/src/operator/palette.ts` `OPERATOR_PERSISTING_VERBS` gained the 14
+  newly-real MCP mutations + the 3 output admin verbs, flipping mcp
+  `Unavailable → Partial` (output stays `Partial`); the still-gapped verbs
+  (`auth.start`/`finish`, `resource.admin.subscribe`/`unsubscribe`, output
+  export/share) stay `honest_unavailable`. `jobs.run-now`, the lifecycle
+  forced-abort `cancel`, and the Smart Routing consumption edge are confirmed still
+  typed capability gaps — no code path fabricates their availability.
+  `packages/opencode/.gitignore` already carries `config.json`
+  (`git check-ignore` confirms).
+
+  **Fix-round (adversarial review, same day) — 3 defects, 1 root mechanism, see
+  ADR-0017's superseding-decision section for full rationale.** (1) The irreversible
+  op in `output.release`/`delete`/`purge`, `mcp.server.connect`/`disconnect`/
+  `reconnect`, and `mcp.auth.remove` ran at plan-BUILD time, before
+  `mutateAuthority`'s CAS/idempotency checks — a `plan.effect` seam
+  (`application/handler.ts`, `application/mutation.ts`, `application/dispatcher.ts`)
+  now defers the destructive op to run AFTER all checks pass, before the CAS write,
+  so a failed CAS or an idempotent replay never re-runs it. (2) The root mechanism:
+  the preflight resolved the authority from `commandId.split(".")[0]`, which never
+  matched the shared global authorities (`global:mcp`, `global:output-admin`, …) —
+  a new `application/command-authority.ts` registry (sourced from each domain's
+  exported authority constants, no re-typed string table) is now threaded through
+  every inbound surface (`http/handler.ts`, `http/mount.ts`, `stack-live.ts`,
+  `worker-adapter.ts`, `adapters/inbound/tui-port.ts`, `http-slash-port.ts`,
+  `rpc-slash-port.ts`) so the client always threads the CAS token for the SAME
+  authority the plan commits to. (3) The production spool writer was armed only
+  inside the lazy operator stack, so a session that never opened the operator lost
+  its output — `outputspool/spool-process-writer.ts` is now an idempotent,
+  fail-open process singleton armed eagerly at server start (`server/server.ts`),
+  reused (not duplicated) by the operator stack.
+
+  **Tests + guard + docs (T019-T024, FR17).** All test coverage for T001-T018 landed
+  incrementally inside each group's own commit (per-task Evidence above cites the
+  exact `describe()` blocks and files) rather than as a deferred end-of-phase
+  authoring pass — T019-T023 close as verification passes over that existing
+  coverage, re-run and re-confirmed on 2026-07-19 (see each task's Evidence for the
+  per-suite counts). No guard scope change was needed: every genuinely-new implement
+  path (the fix-round's `command-authority.ts`, `spool-process-writer.ts`, and the
+  http/worker/adapter threading) resolves under the ALREADY-declared
+  `packages/opencode/src/operator/**` / `packages/opencode/src/outputspool/**` /
+  `packages/opencode/src/server/server.ts` globs — none of it is a new top-level
+  glob. The `operator-capability-gaps/*.cue` corpus (`#EditField`/`#EditFieldList`/
+  `#DetailTree`, `#LiveServerRead`/`#LiveServerReadResult`, mutation/flag/spoolwriter
+  shapes) already types the shipped shapes with no drift. ADR-0017 carries its own
+  superseding-decision section for the fix-round (no new ADR). `speckit analyze` →
+  consistent, 0 ADR overlaps; `speckit validate --json` → `ok:true`, 0 new findings
+  (the 4 findings present are pre-existing waived `hygiene.empty-file` hits unrelated
+  to Feature 017).
+
 - _(reserved — filled during implement with date + file:line + test results)_
