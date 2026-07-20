@@ -1,0 +1,430 @@
+/**
+ * Multi-field operator edit modal (Feature 017 T002/T004/T005, FR19-FR22).
+ *
+ * Renders an ordered `EditFieldList` (field-list.ts) as a real form — one labeled
+ * input per payload property, enum properties as pickers, a bindings-list editor
+ * for `pools.set`, and a structured + advanced-JSON split for `routing.configure`
+ * — replacing the single-field raw-JSON prompt. It keeps the Feature 015 modal
+ * contract unchanged: a title, an in-modal error surface, a busy state, Save via
+ * the submit shortcut, and `esc` to cancel. On Save it composes the BYTE-EXACT port
+ * payload and dispatches ONCE through the same `executeOperatorCommand` loopback; a
+ * per-field validation failure or a non-composable payload stays IN-MODAL, never a
+ * global toast (FR20). A secret field is never pre-filled from a resolved value.
+ */
+import { InputRenderable, TextAttributes, TextareaRenderable } from "@opentui/core"
+import { batch, createEffect, For, onMount, Show, type JSX } from "solid-js"
+import { createStore } from "solid-js/store"
+import { listOperatorPaletteEntries, type OperatorPaletteEntry } from "@opencode-ai/core/operator"
+import type { OperatorSlashPort } from "../../context/operator-slash"
+import type { DialogContext } from "../../ui/dialog"
+import { useTheme } from "../../context/theme"
+import { DialogPrompt } from "../../ui/dialog-prompt"
+import { DialogSelect } from "../../ui/dialog-select"
+import { useBindings } from "../../keymap"
+import { executeOperatorCommand, type OperatorToast } from "../execute"
+import {
+  composePayload,
+  prefillBindings,
+  type BindingRow,
+  type EditField,
+  type EditFieldListDescriptor,
+} from "./field-list"
+import { failureReason } from "./edit-modal"
+
+/** Outcomes that committed the mutation — the only ones that close the modal (FR20). */
+const SUCCESS_OUTCOMES = new Set(["success", "idempotent_replay"])
+
+export type MultiFieldModalProps = {
+  readonly entry: OperatorPaletteEntry
+  readonly descriptor: EditFieldListDescriptor
+  readonly port: OperatorSlashPort | undefined
+  readonly projectId?: string | null
+  readonly sessionId?: string | null
+  readonly dialog: DialogContext
+  readonly toast: OperatorToast
+  readonly title?: string
+  /** Fixed payload merged UNDER the composed payload (the entity id an update targets, FR22). */
+  readonly basePayload?: Record<string, unknown>
+  readonly onSaved?: () => void
+}
+
+/** Factory for `dialog.push` that mounts the multi-field edit form (T002). */
+export function openMultiFieldModal(props: MultiFieldModalProps): () => JSX.Element {
+  return () => <MultiFieldForm {...props} />
+}
+
+/** True for the single-line/multi-line free-text kinds rendered as an `<input>`/`<textarea>`. */
+function isTextLike(field: EditField): boolean {
+  return field.kind === "text" || field.kind === "numeric" || field.kind === "advanced_json"
+}
+
+/** The pre-filled, validated multi-field edit form (FR19). */
+export function MultiFieldForm(props: MultiFieldModalProps): JSX.Element {
+  const { theme } = useTheme()
+  const fields = props.descriptor.fields
+  const saveIndex = fields.length
+  const inputs: (InputRenderable | TextareaRenderable | undefined)[] = []
+  const [store, setStore] = createStore({
+    raw: Object.fromEntries(fields.map((f) => [f.key, ""])),
+    bindings: [] as BindingRow[],
+    active: 0,
+    error: undefined as string | undefined,
+    busy: false,
+    loaded: false,
+  })
+
+  onMount(() => {
+    props.dialog.setSize("large")
+    void load()
+  })
+
+  // Focus follows the active row; picker/toggle/bindings/Save rows carry no input.
+  createEffect(() => {
+    const active = store.active
+    inputs.forEach((input, index) => {
+      if (!input || input.isDestroyed) return
+      if (index === active) input.focus()
+      else input.blur()
+    })
+  })
+
+  async function load() {
+    const initial: Record<string, string> = Object.fromEntries(fields.map((f) => [f.key, ""]))
+    if (props.descriptor.readId) await prefillFromRead(initial)
+    batch(() => {
+      setStore("raw", initial)
+      setStore("loaded", true)
+    })
+  }
+
+  /** Issue the descriptor's silent read and seed each non-secret field from its effective (FR19). */
+  async function prefillFromRead(initial: Record<string, string>) {
+    const readEntry = listOperatorPaletteEntries().find((entry) => entry.id === props.descriptor.readId)
+    if (!readEntry) return
+    const result = await executeOperatorCommand({
+      entry: readEntry,
+      port: props.port,
+      projectId: props.projectId,
+      sessionId: props.sessionId,
+      dialog: props.dialog,
+      toast: props.toast,
+      silent: true,
+    })
+    const effective = result.result?.effective
+    for (const field of fields) {
+      if (field.secret || field.kind === "bindings_list") continue
+      const seed = field.prefill?.(effective)
+      if (seed !== undefined) initial[field.key] = seed
+    }
+    setStore("bindings", prefillBindings(effective))
+  }
+
+  function move(delta: number) {
+    setStore("active", (store.active + delta + saveIndex + 1) % (saveIndex + 1))
+  }
+
+  function activeField(): EditField | undefined {
+    return store.active < fields.length ? fields[store.active] : undefined
+  }
+
+  function onActivate() {
+    const field = activeField()
+    if (!field) {
+      void submit()
+      return
+    }
+    if (field.kind === "picker") openPicker(field)
+    else if (field.kind === "toggle") setStore("raw", field.key, store.raw[field.key] === "true" ? "false" : "true")
+    else if (field.kind === "bindings_list") openBindings()
+  }
+
+  function openPicker(field: EditField) {
+    props.dialog.push(() => (
+      <DialogSelect
+        title={field.label}
+        current={store.raw[field.key]}
+        options={(field.options ?? []).map((option) => ({
+          title: option.title,
+          description: option.description,
+          category: field.label,
+          value: option.value,
+          onSelect: () => {
+            setStore("raw", field.key, option.value)
+            props.dialog.pop()
+          },
+        }))}
+        footerHints={[
+          { title: "esc", label: "back", side: "right" },
+          { title: "enter", label: "select", side: "right" },
+        ]}
+      />
+    ))
+  }
+
+  function openBindings() {
+    props.dialog.push(() => (
+      <BindingsEditor
+        rows={() => store.bindings}
+        onChange={(rows) => setStore("bindings", rows)}
+        dialog={props.dialog}
+      />
+    ))
+  }
+
+  /** Snapshot the raw form values: text-like fields from their live input refs, the rest from the store. */
+  function snapshotRaw(): Record<string, string> {
+    const raw: Record<string, string> = { ...store.raw }
+    fields.forEach((field, index) => {
+      const input = inputs[index]
+      if (isTextLike(field) && input && !input.isDestroyed) raw[field.key] = input.plainText
+    })
+    return raw
+  }
+
+  async function submit() {
+    if (store.busy) return
+    const composed = composePayload(props.descriptor, snapshotRaw(), { bindings: store.bindings })
+    if (!composed.ok) {
+      setStore("error", composed.message)
+      return
+    }
+    await dispatch(composed.payload)
+  }
+
+  async function dispatch(payload: Record<string, unknown>) {
+    batch(() => {
+      setStore("busy", true)
+      setStore("error", undefined)
+    })
+    try {
+      const result = await executeOperatorCommand({
+        entry: props.entry,
+        port: props.port,
+        projectId: props.projectId,
+        sessionId: props.sessionId,
+        dialog: props.dialog,
+        toast: props.toast,
+        payload: { ...props.basePayload, ...payload },
+        silent: true,
+      })
+      if (result.outcome && SUCCESS_OUTCOMES.has(result.outcome)) {
+        props.onSaved?.()
+        props.dialog.pop()
+        return
+      }
+      if (result.cancelled) return
+      setStore("error", failureReason(result))
+    } finally {
+      setStore("busy", false)
+    }
+  }
+
+  useBindings(() => ({
+    bindings: [
+      { key: "tab", desc: "Next field", group: "Dialog", cmd: () => move(1) },
+      { key: "down", desc: "Next field", group: "Dialog", cmd: () => move(1) },
+      { key: "shift+tab", desc: "Previous field", group: "Dialog", cmd: () => move(-1) },
+      { key: "up", desc: "Previous field", group: "Dialog", cmd: () => move(-1) },
+    ],
+  }))
+  useBindings(() => ({
+    // enter/space act on non-text rows (picker/toggle/bindings/Save); a text input keeps them.
+    enabled: !store.busy && (activeField() === undefined || !isTextLike(activeField()!)),
+    bindings: [
+      { key: "return", desc: "Activate field", group: "Dialog", cmd: onActivate },
+      { key: "space", desc: "Activate field", group: "Dialog", cmd: onActivate },
+    ],
+  }))
+  useBindings(() => ({
+    bindings: [{ key: "ctrl+s", desc: "Save", group: "Dialog", cmd: () => void submit() }],
+  }))
+
+  return (
+    <box paddingLeft={2} paddingRight={2} paddingBottom={1} gap={1} flexDirection="column">
+      <box flexDirection="row" justifyContent="space-between">
+        <text fg={theme.text} attributes={TextAttributes.BOLD}>
+          {props.title ?? props.entry.title}
+        </text>
+        <text fg={theme.textMuted} onMouseUp={() => props.dialog.pop()}>
+          esc
+        </text>
+      </box>
+      <Show when={store.loaded} fallback={<text fg={theme.textMuted}>Loading current value…</text>}>
+        <box flexDirection="column" gap={1}>
+          <For each={fields}>{(field, index) => <FieldRow field={field} index={index()} />}</For>
+          <box
+            paddingLeft={1}
+            backgroundColor={store.active === saveIndex ? theme.backgroundElement : undefined}
+            onMouseUp={() => void submit()}
+          >
+            <text fg={store.active === saveIndex ? theme.primary : theme.text} attributes={TextAttributes.BOLD}>
+              {store.busy ? "Saving…" : "Save"}
+            </text>
+          </box>
+        </box>
+      </Show>
+      <Show when={store.error}>
+        <text fg={theme.error} wrapMode="word">
+          {store.error}
+        </text>
+      </Show>
+      <text fg={theme.textMuted}>tab move · space/return select · ctrl+s save · esc cancel</text>
+    </box>
+  )
+
+  /** One field row; the active row is highlighted and, when text-like, holds the focused input. */
+  function FieldRow(rowProps: { field: EditField; index: number }): JSX.Element {
+    const field = rowProps.field
+    const on = () => store.active === rowProps.index
+    // Seed the input once (non-reactive) so typing doesn't fight a reactive `value`.
+    const seed = store.raw[field.key]
+    return (
+      <box flexDirection="column" paddingLeft={1} backgroundColor={on() ? theme.backgroundElement : undefined}>
+        <text fg={on() ? theme.primary : theme.textMuted}>
+          {field.label}
+          {field.required ? " *" : ""}
+        </text>
+        <Show when={isTextLike(field)} fallback={<NonTextValue field={field} active={on} />}>
+          <Show
+            when={field.kind === "advanced_json"}
+            fallback={
+              <input
+                ref={(renderable: InputRenderable) => (inputs[rowProps.index] = renderable)}
+                value={seed}
+                focusedBackgroundColor={theme.backgroundPanel}
+                cursorColor={theme.primary}
+                focusedTextColor={theme.text}
+                placeholder={field.placeholder}
+                placeholderColor={theme.textMuted}
+              />
+            }
+          >
+            <textarea
+              height={3}
+              ref={(renderable: TextareaRenderable) => (inputs[rowProps.index] = renderable)}
+              initialValue={seed}
+              placeholder={field.placeholder}
+              placeholderColor={theme.textMuted}
+              textColor={theme.text}
+              focusedTextColor={theme.text}
+              cursorColor={theme.text}
+            />
+          </Show>
+        </Show>
+      </box>
+    )
+  }
+
+  /** The read-only value line for a picker/toggle/bindings row (activated with return/space). */
+  function NonTextValue(rowProps: { field: EditField; active: () => boolean }): JSX.Element {
+    const field = rowProps.field
+    const value = () => {
+      if (field.kind === "toggle") return store.raw[field.key] === "true" ? "[x] on" : "[ ] off"
+      if (field.kind === "bindings_list") return `${store.bindings.length} binding(s) — return to edit`
+      const selected = (field.options ?? []).find((option) => option.value === store.raw[field.key])
+      return selected ? selected.title : "— select —"
+    }
+    return <text fg={rowProps.active() ? theme.primary : theme.text}>{value()}</text>
+  }
+}
+
+/**
+ * The `pools.set` bindings-list editor (FR22): an ordered list of `{role, models}`
+ * rows with add/remove-row and add/remove-model actions, mutating the parent
+ * modal's bindings via `onChange`. `esc` returns to the form; Save on the form
+ * composes exactly `{bindings:[{role,models}]}` from these rows.
+ */
+export function BindingsEditor(props: {
+  rows: () => readonly BindingRow[]
+  onChange: (rows: BindingRow[]) => void
+  dialog: DialogContext
+}): JSX.Element {
+  async function addBinding() {
+    const role = await DialogPrompt.show(props.dialog, "Role", { placeholder: "e.g. worker" })
+    if (role && role.trim().length > 0) props.onChange([...props.rows(), { role: role.trim(), models: [] }])
+  }
+
+  function removeBinding(index: number) {
+    props.onChange(props.rows().filter((_, position) => position !== index))
+  }
+
+  function openRow(index: number) {
+    props.dialog.push(() => (
+      <BindingRowEditor
+        row={() => props.rows()[index]}
+        onModels={(models) => props.onChange(props.rows().map((row, position) => (position === index ? { ...row, models } : row)))}
+        onRemove={() => {
+          removeBinding(index)
+          props.dialog.pop()
+        }}
+        dialog={props.dialog}
+      />
+    ))
+  }
+
+  const options = () => [
+    ...props.rows().map((row, index) => ({
+      title: row.role,
+      description: row.models.length > 0 ? row.models.join(", ") : "no models — return to edit",
+      category: "Bindings",
+      value: `row:${index}`,
+      onSelect: () => openRow(index),
+    })),
+    { title: "+ Add binding", description: "Add a new role pool", category: "Actions", value: "add", onSelect: () => void addBinding() },
+    { title: "Done", description: "Return to the form", category: "Actions", value: "done", onSelect: () => props.dialog.pop() },
+  ]
+
+  return (
+    <DialogSelect
+      title="Role bindings"
+      options={options()}
+      footerHints={[
+        { title: "esc", label: "back", side: "right" },
+        { title: "enter", label: "open", side: "right" },
+      ]}
+    />
+  )
+}
+
+/** One binding's model-list editor: add/remove candidate model ids (FR22). */
+function BindingRowEditor(props: {
+  row: () => BindingRow | undefined
+  onModels: (models: string[]) => void
+  onRemove: () => void
+  dialog: DialogContext
+}): JSX.Element {
+  async function addModel() {
+    const model = await DialogPrompt.show(props.dialog, "Model id", { placeholder: "e.g. anthropic/claude-…" })
+    const row = props.row()
+    if (model && model.trim().length > 0 && row) props.onModels([...row.models, model.trim()])
+  }
+
+  function removeModel(index: number) {
+    const row = props.row()
+    if (row) props.onModels(row.models.filter((_, position) => position !== index))
+  }
+
+  const options = () => [
+    ...(props.row()?.models ?? []).map((model, index) => ({
+      title: model,
+      description: "return to remove",
+      category: "Models",
+      value: `model:${index}`,
+      onSelect: () => removeModel(index),
+    })),
+    { title: "+ Add model", description: "Add a candidate model id", category: "Actions", value: "add", onSelect: () => void addModel() },
+    { title: "Remove binding", description: "Delete this role pool", category: "Actions", value: "remove", onSelect: props.onRemove },
+    { title: "Done", description: "Back to bindings", category: "Actions", value: "done", onSelect: () => props.dialog.pop() },
+  ]
+
+  return (
+    <DialogSelect
+      title={`Models · ${props.row()?.role ?? ""}`}
+      options={options()}
+      footerHints={[
+        { title: "esc", label: "back", side: "right" },
+        { title: "enter", label: "select", side: "right" },
+      ]}
+    />
+  )
+}

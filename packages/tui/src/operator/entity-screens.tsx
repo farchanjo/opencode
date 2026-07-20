@@ -24,6 +24,8 @@ import { useRoute } from "../context/route"
 import { executeOperatorCommand } from "./execute"
 import { resolveOperatorFormField } from "./form"
 import { openOperatorEditModal } from "./form/edit-modal"
+import { resolveOperatorFieldList } from "./form/field-list"
+import { openMultiFieldModal } from "./form/multi-field-modal"
 import {
   buildOperatorEntityActions,
   entityCreateAvailability,
@@ -111,6 +113,11 @@ export function DialogOperatorEntityList(props: { kind: OperatorEntityKind }): J
   function onCreate() {
     const entry = screen.createId ? ENTRY_BY_ID.get(screen.createId) : undefined
     if (!entry) return
+    const descriptor = resolveOperatorFieldList(entry.id)
+    if (descriptor) {
+      dialog.push(openMultiFieldModal({ ...context(entry), descriptor, onSaved: bump }))
+      return
+    }
     const field = resolveOperatorFormField(entry)
     if (field) dialog.push(openOperatorEditModal({ ...context(entry), field, onSaved: bump }))
     else void dispatch(entry.id).then((ok) => ok && bump())
@@ -190,6 +197,11 @@ export function DialogOperatorEntityItem(props: {
   function openEdit(action: OperatorEntityAction) {
     const entry = ENTRY_BY_ID.get(action.id)
     if (!entry) return
+    const descriptor = resolveOperatorFieldList(entry.id)
+    if (descriptor) {
+      dialog.push(openMultiFieldModal({ ...context(entry), descriptor, basePayload: payload(), onSaved: props.onMutated }))
+      return
+    }
     const field = resolveOperatorFormField(entry)
     if (!field) {
       void run(action.id)

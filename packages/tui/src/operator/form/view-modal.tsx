@@ -18,7 +18,7 @@ import { useToast } from "../../ui/toast"
 import { useOperatorSlash } from "../../context/operator-slash"
 import { useRoute } from "../../context/route"
 import { executeOperatorCommand } from "../execute"
-import { toStatusNodes } from "../status"
+import { toDetailTree } from "../status"
 
 export type OperatorViewModalProps = {
   readonly entry: OperatorPaletteEntry
@@ -37,7 +37,9 @@ export function OperatorViewModal(props: OperatorViewModalProps): JSX.Element {
   const operator = useOperatorSlash()
   const route = useRoute()
   const [read, setRead] = createSignal<ViewRead>({ value: undefined, loaded: false, available: true })
-  const nodes = createMemo(() => toStatusNodes(read().value))
+  // The view modal expands nested records/arrays to a bounded detail tree (FR23) —
+  // distinct from the compact status strip's `{n}` one-line summary.
+  const rows = createMemo(() => toDetailTree(read().value))
 
   onMount(() => {
     const sessionId = route.data.type === "session" ? route.data.sessionID : undefined
@@ -68,12 +70,17 @@ export function OperatorViewModal(props: OperatorViewModalProps): JSX.Element {
       </box>
       <Show when={read().loaded} fallback={<text fg={theme.textMuted}>Loading…</text>}>
         <Show when={read().available} fallback={<text fg={theme.textMuted}>Detail unavailable</text>}>
-          <Show when={nodes().length > 0} fallback={<text fg={theme.textMuted}>No detail reported</text>}>
+          <Show when={rows().length > 0} fallback={<text fg={theme.textMuted}>No detail reported</text>}>
             <box flexDirection="column">
-              <For each={nodes()}>
-                {(node) => (
-                  <text fg={theme.textMuted} wrapMode="none">
-                    {node.key}: <span style={{ fg: theme.text }}>{node.value}</span>
+              <For each={rows()}>
+                {(row) => (
+                  <text fg={theme.textMuted} wrapMode="none" paddingLeft={row.depth * 2}>
+                    <Show when={row.label} fallback={row.value}>
+                      {row.label}
+                      <Show when={!row.branch || row.truncation}>
+                        : <span style={{ fg: theme.text }}>{row.value}</span>
+                      </Show>
+                    </Show>
                   </text>
                 )}
               </For>

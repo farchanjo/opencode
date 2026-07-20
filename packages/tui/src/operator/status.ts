@@ -119,3 +119,111 @@ export function statusEmptySummary(groups: readonly OperatorStatusGroup[]): stri
 export function plainStatusReadId(domain: string): string {
   return `${domain}.status`
 }
+
+// ── Feature 017 T006 — detail view tree (FR23) ──────────────────────────────
+// A renderer DISTINCT from the compact strip above: the view modal expands nested
+// records/arrays to a bounded depth + row budget with an honest "… N more"
+// truncation marker, so a probe result shows its `endpoint`/`transport` fields
+// instead of the strip's `{2}` count placeholder. The `toStatusNodes`/
+// `formatStatusValue`/`toStatusGroups` compact contract above stays unchanged.
+
+/** One indented row of the detail view tree (mirrors `operator-capability-gaps` `#DetailTree`). */
+export interface OperatorDetailRow {
+  /** Indentation level; the top-level entries are depth 0. */
+  readonly depth: number
+  /** The entry key or `[i]` array index; empty on a truncation marker row. */
+  readonly label: string
+  /** A scalar's verbatim (capped) rendering, a branch's `… N more`, or `""` for an expandable header. */
+  readonly value: string
+  /** True when the row heads an expanded record/array (rendered without a value). */
+  readonly branch: boolean
+  /** True when the row is an honest `… N more` truncation marker (depth or row-budget bound). */
+  readonly truncation: boolean
+}
+
+/** Levels the detail tree expands before a nested container collapses to `… N more` (FR23). */
+export const MAX_DETAIL_DEPTH = 4
+
+/** Total rows the detail tree renders before the remaining siblings collapse to `… N more` (FR23). */
+export const MAX_DETAIL_ROWS = 200
+
+/** The record/array child entries of a value, or `undefined` for a scalar leaf. */
+function detailEntries(value: unknown): readonly { readonly label: string; readonly value: unknown }[] | undefined {
+  if (Array.isArray(value)) return value.map((item, index) => ({ label: `[${index}]`, value: item }))
+  if (isRecord(value)) return Object.entries(value).map(([label, item]) => ({ label, value: item }))
+  return undefined
+}
+
+/** Render one scalar leaf verbatim under the shared string cap; never a `{n}`/`[n]` count (FR23). */
+function formatDetailScalar(raw: unknown): string {
+  if (raw === undefined) return "—"
+  if (raw === null) return "null"
+  if (typeof raw === "string") return truncate(raw)
+  if (typeof raw === "number" || typeof raw === "boolean" || typeof raw === "bigint") return String(raw)
+  return typeof raw === "symbol" ? truncate(raw.toString()) : "function"
+}
+
+/** A `… N more` truncation marker row at `depth` for `hidden` collapsed items (FR23). */
+function truncationRow(depth: number, hidden: number): OperatorDetailRow {
+  return { depth, label: "", value: `… ${hidden} more`, branch: false, truncation: true }
+}
+
+/** DFS-append a container's children into `rows`, honoring the depth and row-budget bounds (FR23). */
+function appendDetailChildren(
+  rows: OperatorDetailRow[],
+  entries: readonly { readonly label: string; readonly value: unknown }[],
+  depth: number,
+  maxDepth: number,
+  maxRows: number,
+): void {
+  for (let index = 0; index < entries.length; index++) {
+    if (rows.length >= maxRows) return // a prior sibling already emitted the marker
+    const remaining = entries.length - index
+    // Reserve the last slot for the honest marker when more than one item remains.
+    if (rows.length >= maxRows - 1 && remaining > 1) {
+      rows.push(truncationRow(depth, remaining))
+      return
+    }
+    const { label, value } = entries[index]
+    const children = detailEntries(value)
+    if (!children) {
+      rows.push({ depth, label, value: formatDetailScalar(value), branch: false, truncation: false })
+      continue
+    }
+    if (children.length === 0) {
+      rows.push({ depth, label, value: Array.isArray(value) ? "(empty)" : "(none)", branch: false, truncation: false })
+      continue
+    }
+    if (depth + 1 >= maxDepth) {
+      // At the depth bound the container collapses to an honest count marker on its
+      // own header row — never a `{n}` placeholder within the bound.
+      rows.push({ depth, label, value: `… ${children.length} more`, branch: true, truncation: true })
+      continue
+    }
+    rows.push({ depth, label, value: "", branch: true, truncation: false })
+    appendDetailChildren(rows, children, depth + 1, maxDepth, maxRows)
+  }
+}
+
+/**
+ * Project an opaque, already-redacted operator `effective` payload into an indented
+ * detail tree (FR23). Records and arrays expand to `maxDepth` levels and `maxRows`
+ * total rows; anything deeper or beyond the budget collapses to an honest `… N more`
+ * marker. A non-record/array payload renders as a single verbatim scalar row; an
+ * absent payload yields the honest empty list. No secret or raw body is widened —
+ * scalars pass through the same string cap as the compact strip.
+ */
+export function toDetailTree(
+  effective: unknown,
+  maxDepth: number = MAX_DETAIL_DEPTH,
+  maxRows: number = MAX_DETAIL_ROWS,
+): readonly OperatorDetailRow[] {
+  const entries = detailEntries(effective)
+  if (!entries) {
+    if (effective === undefined) return []
+    return [{ depth: 0, label: "", value: formatDetailScalar(effective), branch: false, truncation: false }]
+  }
+  const rows: OperatorDetailRow[] = []
+  appendDetailChildren(rows, entries, 0, maxDepth, maxRows)
+  return rows
+}

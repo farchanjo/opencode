@@ -45,6 +45,8 @@ import {
 } from "./controls"
 import { openOperatorForm, resolveOperatorFormField } from "./form"
 import { openOperatorEditModal } from "./form/edit-modal"
+import { resolveOperatorFieldList } from "./form/field-list"
+import { openMultiFieldModal } from "./form/multi-field-modal"
 import { openOperatorViewModal } from "./form/view-modal"
 import {
   entityConsumedConfigureIds,
@@ -339,8 +341,17 @@ export function DialogOperatorDomainPanel(props: { domain: string }) {
     dialog.push(openOperatorViewModal({ entry, label: panel().label }))
   }
 
-  /** A settings (Configure) verb opens its edit modal / entity form, or dispatches directly when it collects no payload (FR9, FR12). */
+  /** A settings (Configure) verb opens its edit modal / entity form, or dispatches directly when it collects no payload (FR9, FR12, FR19). */
   function onSelectSetting(entry: OperatorPaletteEntry) {
+    // A payload-carrying Configure verb with a multi-field descriptor opens the real
+    // multi-field form modal (FR19-FR22) — never the single-field raw-JSON prompt.
+    const descriptor = resolveOperatorFieldList(entry.id)
+    if (descriptor) {
+      dialog.push(
+        openMultiFieldModal({ entry, descriptor, port: operator.port, projectId: project.project(), sessionId: sessionId(), dialog, toast }),
+      )
+      return
+    }
     const field = resolveOperatorFormField(entry)
     if (!field) {
       void run(entry)
