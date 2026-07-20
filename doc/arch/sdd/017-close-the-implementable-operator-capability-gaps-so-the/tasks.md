@@ -38,10 +38,10 @@ the user's burning pain on every screen.
 - [x] T008 — Convert config-backed MCP mutations to the `mutation_plan` contract
 - [x] T009 — Live-service MCP action plans (`connect`/`disconnect`/`reconnect`)
 - [x] T010 — MCP auth headless verdict (`start`/`finish` gap; `remove` convert)
-- [ ] T011 — OutputSpool production writer at the session message-part seam
-- [ ] T012 — `output.stat`/`read` reflect the populated control store
-- [ ] T013 — `output.follow` cursor-codec seam
-- [ ] T014 — `output.release`/`delete`/`purge` store-scoped admin edge
+- [x] T011 — OutputSpool production writer at the session message-part seam
+- [x] T012 — `output.stat`/`read` reflect the populated control store
+- [x] T013 — `output.follow` cursor-codec seam
+- [x] T014 — `output.release`/`delete`/`purge` store-scoped admin edge
 - [ ] T015 — Jobs occurrence projection over `EventV2Bridge` + bounded watch
 - [ ] T016 — Milvus registry binding when an endpoint is configured
 - [ ] T017 — Palette availability flip (MCP/output → persists_today/partial)
@@ -292,7 +292,7 @@ the user's burning pain on every screen.
 
 ## Group D — OutputSpool production writer + reads (FR6, FR7, FR8, FR10)
 
-- [ ] **T011 — OutputSpool production writer at the session message-part seam**
+- [x] **T011 — OutputSpool production writer at the session message-part seam**
 - **Depends:** none
 - **Paths:** `packages/opencode/src/session/**`, `packages/opencode/src/outputspool/**`,
   `packages/opencode/src/operator/outputspool/**`
@@ -308,9 +308,25 @@ the user's burning pain on every screen.
   bounded memory; a stale generation's append/seal is fenced; cancel seals/aborts
   preserving committed bytes; no content byte on any event.
 - **Verification:** `bun test packages/opencode/test/outputspool/** packages/opencode/test/operator/**`.
-- **Evidence:** _(implement)_
+- **Evidence:** 2026-07-19 — new `packages/opencode/src/session/output-spool-writer.ts`
+  `createSessionSpoolWriter` + `subscribeSessionSpoolWriter`: subscribes the production
+  writer to the session message-part seam via the `GlobalBus` fan-out (`@/bus/global`, the
+  process-wide mirror of the `EventV2Bridge` stream `session.ts:639` `updatePart` publishes
+  `message.part.updated` onto). `onPartUpdated` maps a part → channel (`deriveChannel`:
+  text→assistant-text, reasoning→reasoning, completed tool→tool-result) and drives
+  `FileSinkWriter.createChannelWriter` (`file-sink-writer.ts:139`) per channel generation
+  (`groupId = partID`, one channel per part, C21), appending ONLY the growing byte suffix
+  (bounded, monotonic). Writes to the SAME control store + spool root the operator reads
+  (wired at `stack-live.ts` outputspool region over `outputControlStore`). Honors
+  stale-generation fencing (`ControlStore.openGeneration` `accepted:false` → no append),
+  seal/abort preserving committed bytes, content-free events (C22), and a bounded
+  concurrent-writer cap. FAILS OPEN — every ingest is guarded and the `GlobalBus` listener
+  swallows throws, so a spool write never breaks the session loop. Tests
+  `test/operator/outputspool/feature017-outputspool-writer.test.ts` "T011" block (part→row,
+  suffix-only append, reasoning/skip, tool seal, fencing, store-throw isolation) green;
+  `bun test test/operator/ test/outputspool/` 499 pass / 2 skip; typecheck clean.
 
-- [ ] **T012 — `output.stat`/`read` reflect the populated control store**
+- [x] **T012 — `output.stat`/`read` reflect the populated control store**
 - **Depends:** T011
 - **Paths:** `packages/opencode/src/operator/outputspool/backend-live.ts`
 - **Deliverable:** with the store populated, `output.stat`/`read` project real session
@@ -319,9 +335,16 @@ the user's burning pain on every screen.
 - **Acceptance:** `output.stat`/`read` reflect real output; an unbound store degrades
   to a typed gap.
 - **Verification:** `bun test packages/opencode/test/operator/**`.
-- **Evidence:** _(implement)_
+- **Evidence:** 2026-07-19 — the Feature 014 `readerMethods` over the injected control
+  store + `page-reader.ts` already project `stat`/`read`; T012 PROVES the round-trip
+  end-to-end: `feature017-outputspool-writer.test.ts` "T012" block seeds bytes THROUGH the
+  production writer (real `openBunSink` files under a temp spool root) and dispatches
+  `output.stat`/`read` through the real dispatcher — `stat.committedBytes === 11`, `read`
+  decodes back to `"hello world"`, `caughtUp` true. An unbound store keeps `output.stat` a
+  typed `unavailable` gap. No backend code change needed beyond the writer populating the
+  store; the empty-store gap is closed by real data.
 
-- [ ] **T013 — `output.follow` cursor-codec seam**
+- [x] **T013 — `output.follow` cursor-codec seam**
 - **Depends:** T012
 - **Paths:** `packages/opencode/src/operator/outputspool/backend-live.ts`
 - **Deliverable:** bind `output.follow`'s cursor-codec seam
@@ -331,13 +354,22 @@ the user's burning pain on every screen.
 - **Acceptance:** `output.follow` streams committed pages with bounded backpressure/
   `eof`; it never blocks the writer.
 - **Verification:** `bun test packages/opencode/test/operator/**`.
-- **Evidence:** _(implement)_
+- **Evidence:** 2026-07-19 — `outputspool/backend-live.ts` new `followMethod` binds the
+  cursor-codec seam (replacing `FOLLOW_GAP`): an opaque `{ outputRef, offset }` cursor
+  (base64url JSON, `encodeFollowCursor`/`decodeFollowCursor`) reads exactly one bounded
+  `FOLLOW_PAGE_SIZE` (64 KiB) page through `page-reader.ts` over an INDEPENDENT read-only
+  handle (never blocking the writer) and re-encodes the cursor at `page.next_offset`;
+  `caughtUp`/`eof` follow the Feature 005 semantics. Bound behind `deps.enableFollow` (+
+  store present) so an unbound seam stays a typed gap. `feature017-outputspool-writer.test.ts`
+  "T013" block: a follower streams `"hello world"` then catches up with an empty page from
+  the returned cursor; an invalid cursor → typed `invalid_argument`; unenabled → typed
+  `unavailable`. `stack-live.ts` sets `enableFollow: outputControlStore !== undefined`.
 
 ---
 
 ## Group E — OutputSpool admin edge (FR9)
 
-- [ ] **T014 — `output.release`/`delete`/`purge` store-scoped admin edge**
+- [x] **T014 — `output.release`/`delete`/`purge` store-scoped admin edge**
 - **Depends:** T012
 - **Paths:** `packages/opencode/src/operator/outputspool/**`, `operator/application/handler.ts`
 - **Deliverable:** wire `output.release`/`delete`/`purge` (`backend-live.ts:100-102`,
@@ -350,7 +382,25 @@ the user's burning pain on every screen.
   is emitted; no config CAS version is fabricated; the deny-by-default export/share
   guard is preserved.
 - **Verification:** `bun test packages/opencode/test/operator/**`.
-- **Evidence:** _(implement)_
+- **Evidence:** 2026-07-19 — followed the MCP T009 recorded pattern (the store op runs at
+  plan-build time, `apply` records the outcome, rejection = typed failure + no write).
+  `outputspool-port.ts` adds `planRelease`/`planDelete`/`planPurge`
+  (`Effect<OperatorMutationPlan, AdminError>`); `backend-live.ts` `adminMethods` runs the
+  REAL control-store op — `release` = drop reference edges (`removeEdge`), `delete` =
+  `deleteGeneration`, `purge` = `SessionSpoolWriter.removeChannelData` (on-disk bytes) +
+  `deleteGeneration` — after `require(outputRef)` (a missing/store-outage record fails BEFORE
+  any op, so NO phantom write). The plan's `apply` records `{ action, generation, committedBytes }`
+  under the STORE-SCOPED authority `OUTPUT_ADMIN_AUTHORITY = "global:output-admin"`, so the
+  settled version is the real control-store generation, never a fabricated config CAS version
+  (FR9, ADR-0017). `outputspool-command-port.ts` routes `output.release`/`delete`/`purge` through
+  `runPlan(port.planX)`, so `mutateAuthority` owns the single committed record + the Feature 007
+  audit. Bound behind `deps.adminAuthority` (+ store) so an unbound edge stays a typed gap;
+  export/share deny-by-default is UNCHANGED. `feature017-outputspool-writer.test.ts` "T014"
+  block: `delete` removes the record + records generation 3; `release` drops the edge; a missing
+  ref → typed `invalid_argument` with `config.get("global:output-admin") === null` (no phantom
+  write); unbound authority → typed `unavailable`. `stack-live.ts` sets
+  `adminAuthority: OUTPUT_ADMIN_AUTHORITY`. The Feature 014 `feature014-outputspool-wire.test.ts`
+  gap assertions stay green (unbound follow/admin still degrade to `unavailable`).
 
 ---
 
