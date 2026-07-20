@@ -180,26 +180,32 @@ function poolsInvoke(deps: PoolsCommandDeps): DomainInvoke {
     const principal = toPoolsOperator(ctx.request.principal)
     const principalId = principal.id
     const target = ctx.request.scope.ref ?? ctx.request.scope.kind
+    // Thread the dispatcher-resolved REQUEST scope so the backend writes the SAME
+    // authority the mutation preflight reported (project → "routing", global →
+    // "global:routing"), never the effective-config origin — keeping the CAS token and
+    // the committed authority in lockstep on a fresh project (Feature 033, mirroring
+    // the Feature 025 smart/budget fix).
+    const requestScopeKind = ctx.request.scope.kind
 
     switch (id) {
       case "pools.status":
       case "pools.show":
-        return run(id, principalId, target, backend.resolve(), (projection) => query(projection))
+        return run(id, principalId, target, backend.resolve(requestScopeKind), (projection) => query(projection))
 
       case "pools.validate":
-        return run(id, principalId, target, backend.validate(), (projection) => query({ valid: projection.valid, projection }))
+        return run(id, principalId, target, backend.validate(requestScopeKind), (projection) => query({ valid: projection.valid, projection }))
 
       case "pools.set": {
         const bindings = parseBindings(payload)
         if (bindings === undefined)
           return Promise.resolve(fail("invalid_argument", "pools.set requires a bindings array of { role, models }", { field: "bindings" }))
         const expectedVersion = resolveExpectedVersion(payload, ctx.request.version)
-        return runPlan(id, principalId, target, backend.planSet({ bindings, expectedVersion, principal }))
+        return runPlan(id, principalId, target, backend.planSet({ bindings, expectedVersion, principal }, requestScopeKind))
       }
 
       case "pools.reset": {
         const expectedVersion = resolveExpectedVersion(payload, ctx.request.version)
-        return runPlan(id, principalId, target, backend.planReset({ expectedVersion, principal }))
+        return runPlan(id, principalId, target, backend.planReset({ expectedVersion, principal }, requestScopeKind))
       }
 
       default:

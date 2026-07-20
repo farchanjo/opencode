@@ -27,7 +27,11 @@ export * as PoolsBackendLive from "./backend-live"
 
 import { Effect, Exit, Schema } from "effect"
 import { RoutingConfig } from "@opencode-ai/schema/routing/config"
-import { createConfigAdapter, DEFAULT_ROUTING_CONFIG } from "@/routing/adapters/outbound/config-adapter"
+import {
+  createConfigAdapter,
+  DEFAULT_ROUTING_CONFIG,
+  type RoutingConfigScope,
+} from "@/routing/adapters/outbound/config-adapter"
 import { INITIAL_CONFIG_VERSION } from "@/operator/application/ports/config-port"
 import type { ConfigPort, ConfigVersion } from "@/operator/application/ports/config-port"
 import type { OperatorMutationPlan } from "@/operator/application/handler"
@@ -40,8 +44,29 @@ import type {
 } from "@opencode-ai/protocol/pools/commands"
 import type { PoolsBackend } from "./pools-port"
 
-// The `project` routing Config.Service authority key (mirrors ConfigAdapter AUTHORITY.project).
-export const PROJECT_AUTHORITY = "routing"
+// The routing Config.Service authority keys per scope (mirrors config-adapter's map and
+// SmartBackendLive.AUTHORITY). `pools` is a PROJECTION of the SAME per-scope routing
+// document, so role_pools follow the REQUEST scope (project `routing` / `global:routing`
+// — Feature 033), never a hardwired project binding.
+export const AUTHORITY: Record<RoutingConfigScope, string> = {
+  global: "global:routing",
+  project: "routing",
+}
+
+// The `project` routing authority key — retained as the PROJECT default for the degraded
+// preflight fallback (`staticAuthorityForCommandId`, imported as `POOLS_AUTHORITY`).
+export const PROJECT_AUTHORITY = AUTHORITY.project
+
+/**
+ * The scope a pools mutation WRITES: derived from the REQUEST scope, never the
+ * effective-config origin — mirrors `SmartBackendLive.scopeForRequest` so the mutation
+ * preflight CAS-token authority and the committed authority never diverge on a fresh
+ * project whose config resolves via global/default (Feature 025/033). Defaults to
+ * `project` for back-compat when no scope is threaded.
+ */
+function scopeForRequest(scopeKind: string | undefined): RoutingConfigScope {
+  return scopeKind === "global" ? "global" : "project"
+}
 
 export interface LivePoolsBackendDeps {
   readonly config: ConfigPort
@@ -51,8 +76,8 @@ export interface LivePoolsBackendDeps {
 
 type RolePoolRecord = RoutingConfig.Info["models"]["role_pools"]
 
-/** The raw project-scope routing entry: its CAS token, decoded config, and last-write time. */
-interface ProjectEntry {
+/** The raw scoped routing entry: its CAS token, decoded config, and last-write time. */
+interface ScopedEntry {
   readonly version: ConfigVersion
   readonly config: RoutingConfig.Info | null
   readonly updatedAtMs: number
@@ -109,10 +134,10 @@ export function createLivePoolsBackend(deps: LivePoolsBackendDeps): PoolsBackend
   const clock = deps.clock ?? Date.now
   const routing = createConfigAdapter({ config: deps.config, now: clock })
 
-  /** Read the raw project-scope entry (CAS token + last-write time) — `unavailable` on outage. */
-  const readProject = (): Effect.Effect<ProjectEntry, PoolsError> =>
+  /** Read the raw scoped entry (CAS token + last-write time) — `unavailable` on outage. */
+  const readScoped = (scope: RoutingConfigScope): Effect.Effect<ScopedEntry, PoolsError> =>
     Effect.tryPromise({
-      try: () => deps.config.get(PROJECT_AUTHORITY),
+      try: () => deps.config.get(AUTHORITY[scope]),
       catch: (cause): PoolsError => unavailable(String(cause)),
     }).pipe(
       Effect.map((entry) =>
@@ -138,10 +163,12 @@ export function createLivePoolsBackend(deps: LivePoolsBackendDeps): PoolsBackend
     version,
   })
 
-  const project = (): Effect.Effect<PoolsProjection, PoolsError> =>
+  const project = (requestScopeKind?: string): Effect.Effect<PoolsProjection, PoolsError> =>
     Effect.gen(function* () {
+      // Bindings project the EFFECTIVE map (project > global > default) so a read always
+      // reflects the merged view; the CAS token + timestamp follow the REQUEST scope.
       const effective = yield* readEffective()
-      const entry = yield* readProject()
+      const entry = yield* readScoped(scopeForRequest(requestScopeKind))
       return buildProjection(effective.models.role_pools, entry.version, entry.updatedAtMs)
     })
 
@@ -149,34 +176,46 @@ export function createLivePoolsBackend(deps: LivePoolsBackendDeps): PoolsBackend
    * Validate the principal + transformed routing config and hand the dispatcher an
    * `OperatorMutationPlan` whose `role_pools` map is `nextRolePools` (the rest of the
    * effective config preserved). `mutateAuthority` owns the one CAS write over the
-   * `routing` authority — the backend never self-commits (FR5, FR7, FR8).
+   * SCOPED routing authority (`routing` / `global:routing`) — the backend never
+   * self-commits (FR5, FR7, FR8). The commit-time `apply` folds the role_pools
+   * transform into the FRESH on-disk payload `mutateAuthority` threads in (`current`)
+   * — never a plan-time snapshot — so sibling activation/budget/routing.configure
+   * fields on the shared document are preserved rather than clobbered (Feature 025).
    */
   const planWrite = (
     input: { readonly principal: PoolsSetInput["principal"] },
     nextRolePools: RolePoolRecord,
+    scope: RoutingConfigScope,
   ): Effect.Effect<OperatorMutationPlan, PoolsError> =>
     Effect.gen(function* () {
       if (input.principal.kind !== "operator" && input.principal.kind !== "system")
         return yield* Effect.fail<PoolsError>({ type: "unauthorized", reason: `principal ${input.principal.kind} may not mutate role pools` })
 
-      const entry = yield* readProject()
-      const base = entry.config !== null ? entry.config : yield* readEffective()
-      const nextConfig: RoutingConfig.Info = { ...base, models: { ...base.models, role_pools: nextRolePools } }
-      const decoded = decodeRouting(nextConfig, { errors: "all" })
+      const entry = yield* readScoped(scope)
+      const planBase = entry.config !== null ? entry.config : yield* readEffective()
+      const withPools = (base: RoutingConfig.Info): RoutingConfig.Info => ({
+        ...base,
+        models: { ...base.models, role_pools: nextRolePools },
+      })
+      const decoded = decodeRouting(withPools(planBase), { errors: "all" })
       if (Exit.isFailure(decoded))
         return yield* Effect.fail<PoolsError>({ type: "invalid_argument", field: "bindings", reason: "role pools failed schema validation" })
-      const payload = decoded.value as RoutingConfig.Info
-      return { authority: PROJECT_AUTHORITY, apply: () => payload }
+      const validated = decoded.value as RoutingConfig.Info
+      const apply = (current: unknown): RoutingConfig.Info => {
+        const base = parseRouting(current)
+        return base !== null ? withPools(base) : validated
+      }
+      return { authority: AUTHORITY[scope], apply }
     })
 
-  const planSet = (input: PoolsSetInput): Effect.Effect<OperatorMutationPlan, PoolsError> => {
+  const planSet = (input: PoolsSetInput, requestScopeKind?: string): Effect.Effect<OperatorMutationPlan, PoolsError> => {
     const defect = firstBindingDefect(input.bindings)
     if (defect !== undefined) return Effect.fail(defect)
-    return planWrite(input, toRolePoolRecord(input.bindings))
+    return planWrite(input, toRolePoolRecord(input.bindings), scopeForRequest(requestScopeKind))
   }
 
-  const planReset = (input: PoolsResetInput): Effect.Effect<OperatorMutationPlan, PoolsError> =>
-    planWrite(input, DEFAULT_ROUTING_CONFIG.models.role_pools)
+  const planReset = (input: PoolsResetInput, requestScopeKind?: string): Effect.Effect<OperatorMutationPlan, PoolsError> =>
+    planWrite(input, DEFAULT_ROUTING_CONFIG.models.role_pools, scopeForRequest(requestScopeKind))
 
   return { resolve: project, planSet, planReset, validate: project }
 }

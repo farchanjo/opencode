@@ -52,12 +52,17 @@ export interface PoolsAuditSink {
  * The narrow domain seam `createLivePoolsBackend` provides over the reused routing
  * config. `resolve`/`validate` return the bounded projection (`pools.status`/`show`
  * and `pools.validate`); `planSet`/`planReset` VALIDATE and return an
- * `OperatorMutationPlan` (routing authority + pure transform) the dispatcher commits
- * via `mutateAuthority` — the backend never self-commits.
+ * `OperatorMutationPlan` (SCOPED routing authority + pure transform) the dispatcher
+ * commits via `mutateAuthority` — the backend never self-commits.
+ *
+ * `requestScopeKind` is the dispatcher-resolved REQUEST scope (`ctx.request.scope.kind`
+ * — "global" persists role_pools to `global:routing`; anything else to the project
+ * `routing` document). It is OPTIONAL and defaults to `project` for back-compat, so a
+ * caller that omits it keeps the pre-Feature-033 project-only behavior.
  */
 export interface PoolsBackend {
-  readonly resolve: () => Effect.Effect<PoolsProjection, PoolsError>
-  readonly planSet: (input: PoolsSetInput) => Effect.Effect<OperatorMutationPlan, PoolsError>
-  readonly planReset: (input: PoolsResetInput) => Effect.Effect<OperatorMutationPlan, PoolsError>
-  readonly validate: () => Effect.Effect<PoolsProjection, PoolsError>
+  readonly resolve: (requestScopeKind?: string) => Effect.Effect<PoolsProjection, PoolsError>
+  readonly planSet: (input: PoolsSetInput, requestScopeKind?: string) => Effect.Effect<OperatorMutationPlan, PoolsError>
+  readonly planReset: (input: PoolsResetInput, requestScopeKind?: string) => Effect.Effect<OperatorMutationPlan, PoolsError>
+  readonly validate: (requestScopeKind?: string) => Effect.Effect<PoolsProjection, PoolsError>
 }

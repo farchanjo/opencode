@@ -82,7 +82,9 @@ function domainOf(commandId: string): string {
  * fallback (`adapters/outbound/config-status.ts`), so the two can never drift. A
  * preflight path that does NOT thread the full resolver still resolves the correct
  * authority for these static commands (`pools.set → "routing"`), closing the
- * stale-binary / mis-wired-port hazard at the root (Feature 021 FR-A).
+ * stale-binary / mis-wired-port hazard at the root (Feature 021 FR-A). `pools` keeps
+ * its PROJECT-default entry here for that degraded fallback, but the WIRED resolver
+ * overrides it scope-dependently (`global:routing` under global scope — Feature 033).
  */
 export function staticAuthorityForCommandId(commandId: string): string | null {
   switch (domainOf(commandId)) {
@@ -120,11 +122,20 @@ export function createOperatorAuthorityResolver(deps: AuthorityResolverDeps = {}
   return (commandId, scope) => {
     // The scope-independent authorities resolve from the single shared SSOT.
     const staticAuthority = staticAuthorityForCommandId(commandId)
-    if (staticAuthority !== null) return staticAuthority
+    // `pools` carries a PROJECT-default static authority (`routing`) for the degraded
+    // preflight fallback ONLY (`authorityKeyForCommandId`, Feature 021). The WIRED
+    // resolver must honor the request scope like smart/budget/routing (Feature 033),
+    // so pools does NOT short-circuit here — it resolves scope-dependently below.
+    if (staticAuthority !== null && domainOf(commandId) !== "pools") return staticAuthority
     // Only the scope-DEPENDENT domains remain, resolved with the request scope + lambdas.
     const s = norm(scope.scopeKind)
     const scopeId = scope.scopeRef ?? ""
     switch (domainOf(commandId)) {
+      // pools/smart/routing all commit to the SAME per-scope routing document
+      // (`routing` / `global:routing`) — a coherent Smart Routing config lives on one
+      // document, so pools' role_pools follow the request scope (Feature 033).
+      case "pools":
+        return SMART_AUTHORITY[s]
       case "smart":
         return SMART_AUTHORITY[s]
       case "budget":
