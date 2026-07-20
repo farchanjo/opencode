@@ -54,11 +54,19 @@ export type CreateCliRunnerOptions = {
   readonly dispatcher: Dispatcher
 }
 
-function localPrincipal(ctx: CliPrincipalContext): OperatorPrincipal {
+/**
+ * The local (process-owner) operator principal. `projectBinding` is the AMBIENT cwd
+ * project, not an authorization boundary — so an EXPLICITLY-resolved global scope
+ * (Feature 034, via `--scope global`) is NOT project-bound and its binding is null,
+ * letting the fail-closed `authorizeCommand` admit the global request. A
+ * project/session/root-tree scope keeps the ambient binding, so the cross-project guard
+ * in `resolveCliScope` is unchanged.
+ */
+function localPrincipal(ctx: CliPrincipalContext, scope?: OperatorScope): OperatorPrincipal {
   return {
     kind: "operator",
     subject: ctx.subject?.trim() || "local",
-    projectBinding: ctx.projectId ?? null,
+    projectBinding: scope?.kind === "global" ? null : ctx.projectId ?? null,
   }
 }
 
@@ -209,7 +217,7 @@ export function createCliRunner(options: CreateCliRunnerOptions) {
       confirm = true
     }
 
-    const principal = localPrincipal(input.ctx)
+    const principal = localPrincipal(input.ctx, parsed.scope)
     const request = buildCliRequest({
       id: parsed.commandId,
       principal,

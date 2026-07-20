@@ -6,7 +6,7 @@ import { authorityKeyForCommandId } from "../outbound/config-status"
 import type { ConfigPort } from "../../application/ports/config-port"
 import type { SlashInterceptor } from "./slash"
 import { displayToToast } from "./slash-display"
-import { resolveScopeForCommandId, type OutcomeType } from "@opencode-ai/core/operator"
+import { resolveScopeForCommandId, type OutcomeType, type ScopeKind } from "@opencode-ai/core/operator"
 
 export type OperatorPreflightResult =
   | {
@@ -32,6 +32,12 @@ export type TuiOperatorSlashPort = {
     version?: string
     confirmToken?: string
     idempotencyKey?: string
+    /**
+     * Explicit operator-selected authority scope (Feature 034). Overrides the
+     * ambient-project preference so a scope-flexible command can be requested at
+     * `global` while a project is bound. Absent → project-preferred (back-compat).
+     */
+    requestedScope?: ScopeKind
   }) => Promise<
     | {
         readonly handled: true
@@ -69,6 +75,8 @@ export type TuiOperatorSlashPort = {
     projectId?: string | null
     sessionId?: string | null
     rootTreeRef?: string | null
+    /** Explicit operator-selected authority scope (Feature 034); see `tryHandle`. */
+    requestedScope?: ScopeKind
   }) => Promise<OperatorPreflightResult>
 }
 
@@ -103,6 +111,10 @@ export function createTuiOperatorSlashPort(
         projectId: input.projectId,
         sessionId: input.sessionId,
         rootTreeRef: input.rootTreeRef,
+        // Feature 034 — an explicit request scope makes the preflight read the SAME
+        // authority the command will commit to (global → global:routing), so the CAS
+        // token threaded back matches the write authority.
+        requestedKind: input.requestedScope ?? null,
       })
       if (!scopeResult.ok) {
         return { ok: false, code: scopeResult.code, message: scopeResult.message }
@@ -134,6 +146,9 @@ export function createTuiOperatorSlashPort(
         version: input.version,
         idempotencyKey: input.idempotencyKey,
         confirmToken: input.confirmToken,
+        // Feature 034 — carry the explicit request scope so the interceptor resolves the
+        // command to the requested kind (global) rather than the ambient-project preference.
+        requestedKind: input.requestedScope,
       })
       if (!result.handled) return { handled: false }
 

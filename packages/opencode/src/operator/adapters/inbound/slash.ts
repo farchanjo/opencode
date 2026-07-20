@@ -44,6 +44,12 @@ export type SlashInterceptInput = {
   readonly confirmToken?: string
   readonly principalContext: SlashPrincipalContext
   readonly scope?: OperatorScope
+  /**
+   * Explicit operator-selected authority scope kind (Feature 034). Overrides the
+   * ambient-project preference so a scope-flexible command resolves to the requested
+   * kind (e.g. `global`) when the descriptor allows it. Absent → project-preferred.
+   */
+  readonly requestedKind?: ScopeKind
 }
 
 export type SlashInterceptHandled = {
@@ -79,11 +85,19 @@ export type CreateSlashInterceptorOptions = {
   readonly randomIdempotencyKey?: () => string
 }
 
-function localPrincipal(ctx: SlashPrincipalContext): OperatorPrincipal {
+/**
+ * The local (process-owner) operator principal. Its `projectBinding` is the AMBIENT cwd
+ * project, not an authorization boundary — so an EXPLICITLY-resolved global scope (Feature
+ * 034) is NOT project-bound and its binding is null, letting the fail-closed capability
+ * check (`authorizeCommand`) admit the global request the operator asked for. A
+ * project/session/root-tree scope keeps the ambient binding, so cross-project safety is
+ * unchanged. (A server-derived remote principal binds server-side and is untouched here.)
+ */
+function localPrincipal(ctx: SlashPrincipalContext, scope?: OperatorScope): OperatorPrincipal {
   return {
     kind: "operator",
     subject: ctx.subject?.trim() || "local",
-    projectBinding: ctx.projectId ?? null,
+    projectBinding: scope?.kind === "global" ? null : ctx.projectId ?? null,
   }
 }
 
@@ -95,12 +109,15 @@ export function resolveSlashScope(input: {
   ctx: SlashPrincipalContext
   descriptor: OperatorCommandDescriptor
   override?: OperatorScope
+  requestedKind?: ScopeKind
 }) {
   return resolveOperatorScope({
     ctx: {
       projectId: input.ctx.projectId,
       sessionId: input.ctx.sessionId,
       rootTreeRef: input.ctx.rootTreeRef,
+      // Feature 034 — explicit request scope overrides the project preference.
+      requestedKind: input.requestedKind ?? null,
     },
     scopesAllowed: input.descriptor.scopesAllowed as readonly ScopeKind[],
     override: input.override,
@@ -221,7 +238,6 @@ export function createSlashInterceptor(options: CreateSlashInterceptorOptions): 
       const payload = parsedPayload.payload
       // Explicit version/idempotency from caller wins; else payload (never invent version).
       const version = input.version ?? parsedPayload.expectedVersion
-      const principal = localPrincipal(input.principalContext)
 
       if (!parsed.commandId) {
         const result = failureResult({
@@ -256,6 +272,7 @@ export function createSlashInterceptor(options: CreateSlashInterceptorOptions): 
         ctx: input.principalContext,
         descriptor,
         override: input.scope,
+        requestedKind: input.requestedKind,
       })
       if (!scopeResult.ok) {
         const result = failureResult({
@@ -271,6 +288,8 @@ export function createSlashInterceptor(options: CreateSlashInterceptorOptions): 
         }
       }
       const scope = scopeResult.scope
+      // Build the principal AFTER scope resolution: a global scope is not project-bound.
+      const principal = localPrincipal(input.principalContext, scope)
 
       const binding: SlashConfirmBinding = {
         commandId: descriptor.id,

@@ -167,6 +167,9 @@ export function createHttpOperatorSlashPort(options: HttpSlashPortOptions): TuiO
         projectId: input.projectId ?? options.getProjectId?.(),
         sessionId: input.sessionId ?? options.getSessionId?.(),
         rootTreeRef: input.rootTreeRef,
+        // Feature 034 — the explicit request scope (a first-class field, never smuggled in
+        // the payload) makes the preflight read the SAME authority the command commits to.
+        requestedKind: input.requestedScope ?? null,
       })
       if (!scopeResult.ok) {
         return { ok: false, code: scopeResult.code, message: scopeResult.message }
@@ -253,7 +256,14 @@ export function createHttpOperatorSlashPort(options: HttpSlashPortOptions): TuiO
       // Prefer per-call sessionId from TUI (DialogConfirm re-try must pass exact session).
       const sessionId = input.sessionId ?? options.getSessionId?.() ?? null
       const rootTreeRef = input.rootTreeRef ?? null
-      const scopeResult = resolveScopeForCommandId(parsed.commandId, { projectId, sessionId, rootTreeRef })
+      // Feature 034 — thread the explicit request scope as a FIRST-CLASS field; the
+      // payload-smuggled `scope` is still stripped in `parseStrictPayload` (security).
+      const scopeResult = resolveScopeForCommandId(parsed.commandId, {
+        projectId,
+        sessionId,
+        rootTreeRef,
+        requestedKind: input.requestedScope ?? null,
+      })
       if (!scopeResult.ok) {
         return displayHandled(
           failureResult({
