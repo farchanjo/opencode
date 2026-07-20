@@ -169,17 +169,18 @@ const layer = Layer.effectDiscard(
                   .shell ?? defaultShell()
               const timeout = input.timeout ?? DEFAULT_TIMEOUT_MS
 
-              // Opt-in native PTY route (FR12, C12). The permission gate above has
-              // already been evaluated (permission-first, spawn-second — FR13, AC15);
-              // native code never becomes a permission authority. `win32` degrades to
-              // the ChildProcess path with an advisory; a disabled/unloadable backend
-              // falls through silently (native_unavailable, C19).
+              // Default-on native PTY route (FR12, C12; Feature 023 FR-A). The permission
+              // gate above has already been evaluated (permission-first, spawn-second —
+              // FR13, AC15); native code never becomes a permission authority. `win32`
+              // degrades to the ChildProcess path with an advisory; a disabled/unloadable
+              // backend falls through silently (native_unavailable, C19). The native PTY is
+              // used by DEFAULT — only an explicit `native_pty: false` opts out (`!== false`).
               if (input.pty === true) {
                 if (process.platform === "win32") {
                   warnings.push(
                     "Native PTY is unavailable on this platform; running without a PTY (native_unavailable).",
                   )
-                } else if (Config.latest(entries, "experimental")?.native_pty === true) {
+                } else if (Config.latest(entries, "experimental")?.native_pty !== false) {
                   const backend = loadNativePty(sharedLoader(), true)
                   if (backend.kind === "ok") {
                     const env = Object.entries(process.env).flatMap(([nameKey, value]) =>

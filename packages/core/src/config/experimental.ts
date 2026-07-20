@@ -21,13 +21,19 @@ export class Experimental extends Schema.Class<Experimental>("ConfigV2.Experimen
   /** Feature 007: treat operator connectivity as offline when true. */
   offline: Schema.Boolean.pipe(Schema.optional),
   /**
-   * Feature 010: opt-in native Rust FFI backend for the filesystem/text tools
-   * (`read`/`write`/`edit`/`apply_patch`/`glob`/`grep`), default false. Presence
-   * never changes behavior when off; absence/unloadable/ABI-mismatch fall back
-   * silently to the TypeScript path (FR19, C2, C19).
+   * Feature 010/023: native Rust FFI backend for the wired tools (`glob`/`grep`),
+   * default ENABLED (Feature 023 FR-A). Absent flag resolves to on; only an explicit
+   * `native_tools: false` disables it. Absence/unloadable/ABI-mismatch/win32 still
+   * fall back silently to the TypeScript/ripgrep path (FR19, C2, C19). The tool gates
+   * read this as `!== false`. `read`/`write`/`edit`/`apply_patch` native wrappers stay
+   * unwired (documented follow-up, ADR-0023).
    */
   native_tools: Schema.Boolean.pipe(Schema.optional),
-  /** Feature 010: opt-in native Rust PTY backend for `bash pty:true`, default false. */
+  /**
+   * Feature 010/023: native Rust PTY backend for `bash pty:true`, default ENABLED
+   * (Feature 023 FR-A). Only an explicit `native_pty: false` disables it; win32 and an
+   * unloadable backend fall back silently to the ChildProcess path. Gate reads `!== false`.
+   */
   native_pty: Schema.Boolean.pipe(Schema.optional),
   /**
    * Feature 009: per-surface semantic tool-search config. Absent (or a surface

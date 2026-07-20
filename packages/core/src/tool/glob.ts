@@ -84,11 +84,12 @@ const layer = Layer.effectDiscard(
                     path: RelativePath.make(path.relative(location.directory, path.resolve(cwd, entry.path))),
                   }),
                 )
-              // Native backend selection before the Ripgrep.Service call (FR5, C5): the
-              // embedded ignore+globset engine serves the search when the flag is on;
-              // any gap or FFI error falls back through the external-`rg` seam.
+              // Native backend selection before the Ripgrep.Service call (FR5, C5;
+              // Feature 023 FR-A): the embedded ignore+globset engine serves the search
+              // by DEFAULT — only an explicit `native_tools: false` opts out (`!== false`).
+              // Any gap or FFI error still falls back through the external-`rg` seam.
               const entries = yield* config.entries()
-              const nativeTools = Config.latest(entries, "experimental")?.native_tools === true
+              const nativeTools = Config.latest(entries, "experimental")?.native_tools !== false
               if (nativeTools) {
                 const outcome = runNativeGlob(
                   sharedLoader(),
