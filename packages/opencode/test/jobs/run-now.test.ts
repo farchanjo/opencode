@@ -97,10 +97,53 @@ describe("T008 run-now effectful mutation plan — enqueues once after the check
     const version = (await config.get(OperatorJobPersistence.AUTHORITY))!.version
     const result = await mutateAuthority(
       { config, idempotency: createMemoryIdempotencyPort() },
-      { request: req(version), authority: plan.authority, apply: plan.apply, effect: plan.effect },
+      { request: req(version), authority: plan.authority, apply: plan.apply, effect: plan.effect, effectOnly: plan.effectOnly },
     )
     expect(result.ok).toBe(true)
     expect(runNow.calls).toBe(1) // the effect ran exactly once, after the CAS check
+  })
+
+  test("a successful run-now leaves the jobs authority version UNCHANGED (effect-only, no CAS churn)", async () => {
+    const { config, persistence, jobDefinitionId } = await seed()
+    const runNow = fakeRunNow({ outcome: "enqueued", occurrenceId: "occ_now" })
+    const backend = createLiveJobsBackend({ persistence, runNow: runNow.port })
+
+    const before = (await config.get(OperatorJobPersistence.AUTHORITY))!.version
+    const plan = await run(backend.planRunNow({ jobDefinitionId, principal }))
+    expect(plan.effectOnly).toBe(true)
+    const result = await mutateAuthority(
+      { config, idempotency: createMemoryIdempotencyPort() },
+      { request: req(before), authority: plan.authority, apply: plan.apply, effect: plan.effect, effectOnly: plan.effectOnly },
+    )
+    expect(result.ok).toBe(true)
+    expect(runNow.calls).toBe(1) // still enqueued exactly once
+    // No CAS churn: a successful run-now does NOT bump the definitions authority version,
+    // so it never spuriously conflicts with a concurrent definition edit (ADR-0018).
+    const after = (await config.get(OperatorJobPersistence.AUTHORITY))!.version
+    expect(after).toBe(before)
+  })
+
+  test("a successful run-now is idempotent — a replay does not re-enqueue", async () => {
+    const { config, persistence, jobDefinitionId } = await seed()
+    const runNow = fakeRunNow({ outcome: "enqueued", occurrenceId: "occ_now" })
+    const backend = createLiveJobsBackend({ persistence, runNow: runNow.port })
+    const idempotency = createMemoryIdempotencyPort()
+    const before = (await config.get(OperatorJobPersistence.AUTHORITY))!.version
+    const request = req(before)
+
+    const plan = await run(backend.planRunNow({ jobDefinitionId, principal }))
+    const first = await mutateAuthority(
+      { config, idempotency },
+      { request, authority: plan.authority, apply: plan.apply, effect: plan.effect, effectOnly: plan.effectOnly },
+    )
+    const second = await mutateAuthority(
+      { config, idempotency },
+      { request, authority: plan.authority, apply: plan.apply, effect: plan.effect, effectOnly: plan.effectOnly },
+    )
+    expect(first.ok).toBe(true)
+    expect(second.ok).toBe(true)
+    expect(second.outcome).toBe("idempotent_replay")
+    expect(runNow.calls).toBe(1) // the replay did NOT re-run the enqueue effect
   })
 })
 

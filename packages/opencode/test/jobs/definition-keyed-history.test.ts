@@ -71,6 +71,9 @@ function durableStore(): { emitter: JobEventEmitter; source: JobOccurrenceSource
               ordering: { sequence: seq, correlation_id: env.correlationId, causation_id: env.causationId },
               delivery: { timestamp: Date.now() },
             },
+            // The bounded terminal detail (e.g. `reason`) rides the durable row exactly
+            // as the live emitter maps it, so the projection can surface WHY (FR11).
+            ...(typeof input.detail.reason === "string" ? { detail: { reason: input.detail.reason } } : {}),
           },
         })
         seq++
@@ -139,5 +142,42 @@ describe("T010-T011 definition-keyed occurrence history round-trip", () => {
     // A different definition's aggregate holds nothing (defence in depth).
     const other = await run(projection.history({ jobDefinitionId: "job_other", limit: 50 }))
     expect(other.occurrences).toEqual([])
+  })
+
+  test("a failed occurrence surfaces its terminal reason in history (FR11)", async () => {
+    const { emitter, source } = durableStore()
+    const { registry } = fakeRegistry()
+    const { coordinator } = fakeCoordinator()
+    // A headless-incapable terminal carries `detail.reason` — history must surface WHY.
+    const incapableRunner: OccurrenceRunner = {
+      run: () => Effect.succeed({ disposition: "headless_incapable", reason: "no interactive permission surface" }),
+    }
+    const deps: ExecutorCompositionDeps = {
+      cron: fakeCron(),
+      emitter,
+      registry,
+      coordinator,
+      runner: incapableRunner,
+      resolveDueContext: () => Effect.succeed(null),
+      runFork: (effect) => void Effect.runPromise(effect),
+      newOccurrenceId: () => "occ_fail_1",
+    }
+    const composition = buildExecutorComposition(deps)
+    await composition.enqueueImmediate({
+      jobDefinitionId: "job_fail_1",
+      scheduleId: "sch_1",
+      overlapPolicy: "forbid",
+      overlapCapabilities: { allow: true, queue: false, replace: false },
+      rootSessionId: "job_fail_1",
+      generation: 0,
+    })
+    await new Promise((r) => setTimeout(r, 10))
+
+    const projection = createJobOccurrenceProjection(source)
+    const history = await run(projection.history({ jobDefinitionId: "job_fail_1", limit: 50 }))
+    expect(history.occurrences.length).toBe(1)
+    const occ = history.occurrences[0]!
+    expect(occ.state).toBe("failed")
+    expect(occ.reason).toBe("no interactive permission surface") // the WHY is no longer swallowed
   })
 })
