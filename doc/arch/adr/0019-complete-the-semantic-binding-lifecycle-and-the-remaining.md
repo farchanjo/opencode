@@ -153,12 +153,66 @@ Key decisions recorded:
    live Milvus endpoint and a live OTLP collector; unit tests use fake ports/transports and CI
    never requires the live endpoints.
 
+### Addendum 2026-07-20 — the config-backed validate transition (adversarial-review remediation)
+
+An adversarial review found the binding lifecycle **non-functional end-to-end at runtime**: no
+config-backed path produced a validated staged candidate. `planSelect` stages `{state:'draft',
+validated:false}`, and `semantic.*.validate` routed to the **gated Milvus/provider backend**, which
+writes separate probe state and never touches the `RegistryDocument`. So the `not_validated` gate on
+every cutover/reindex ALWAYS rejected, archives never grew, and rollbacks always hit
+`no_archived_prior`. The green tests only passed by INJECTING `validated:true` into the fake config —
+a state the real chain could never reach.
+
+10. **Validate is a config-backed, persisted transition — the ONLY producer of a validated
+    candidate.** `SemanticRegistryBackend` gains `planValidateReranker`/`planValidateEmbedding`
+    (`OperatorMutationPlan`s under `mutateAuthority`, CAS). On success each promotes the staged
+    candidate from `draft` to `{state:'staged', validated:true}` (the machine `draft --validate-->
+    staged`). `semantic.reranker.validate` / `semantic.embedding.validate` route through `c.registry`
+    when bound (the gated backend stays the unbound fallback), and the **catalog corrects them from
+    `mutates:false` to `mutates:true`** — a read-only probe cannot record the transition the
+    lifecycle requires, so the original classification was overstated. This changes NO catalog id and
+    does NOT bump the reserved catalog version (1.3.0); the reserved id SET is unchanged (FR15).
+    - **Reranker validate semantics.** Pure coherence gates (candidate staged from `draft`; eligible
+      rerank profile — profile C refused via `rerank-client.rejectForRerankerSlot`; model + provider
+      registered, enabled, secret-resolvable) then a **live provider rerank probe in the plan effect**
+      (after CAS, the ADR-0017/018 effectful-plan contract). A failing probe is a typed
+      `validation_failed` that commits nothing; a slot with **no probe composed** (the provider stack
+      is not bound from the operator runtime in this wave — the same honest boundary as
+      `provider.test`/`model.validate`) is a typed `unavailable` gap. NEVER a fabricated `validated`.
+    - **Embedding validate semantics + reindex-first ordering.** The embedding lifecycle ordering is
+      corrected to select → **reindex** → **validate** → cutover: `planReindexEmbedding` no longer
+      demands `validated:true` (it runs for a `draft`/re-staged candidate), so it PRECEDES validate
+      and produces the generation validate requires. `planValidateEmbedding` (a pure config plan)
+      enforces the cardinal honesty rule — a `validated` Milvus generation matching the candidate
+      version MUST already exist (reindex-first, else `not_validated`) and Milvus must be bound (else
+      `milvus_unavailable`) — then promotes the candidate.
+11. **Availability class is honest under the config-backed validate.** `semantic.reranker.cutover`/
+    `rollback` STAY UNCONDITIONAL in `OPERATOR_PERSISTING_VERBS`: cutover post-validation is pure
+    config (no provider, no Milvus) over the always-bound `semantic` authority, so its own backend
+    genuinely persists today; the provider dependency lives entirely in the separate `validate` verb,
+    and a cutover without a validated candidate is honest RUNTIME `not_validated` (FR16), not an
+    availability gap. The validate fix is precisely what makes that pre-existing `persists_today`
+    claim honest — previously the chain was unreachable. The two `validate` verbs stay the default
+    `honest_unavailable` (config-backed but backend-conditional: embedding needs a Milvus generation,
+    reranker needs a live provider probe); `#BackendReadiness` models no provider-probe signal, so a
+    conditional flip for `semantic.reranker.validate` would require a new readiness flag (a schema +
+    ADR change) — deliberately out of scope. The floor never over-advertises.
+
 ### Consequences
 
 - Good: the shipped contract activates with a minimal composition surface; every honesty,
   parity, and defensive-security invariant holds; no catalog id or dispatch path is added.
 - Good: reranker changes stop riding the Milvus gap; rollbacks target real archived versions;
   telemetry actually exports.
+- Good (remediation): the lifecycle is now reachable end-to-end without injected state — the driven
+  chain select → validate → cutover → rollback (reranker) and select → reindex → validate → cutover
+  (embedding) is proven by tests that inject NO `validated` state; the `persists_today` claim on the
+  reranker cutover/rollback is honest for the first time.
+- Bad (remediation): `semantic.reranker.validate` genuinely persists only once a live provider rerank
+  probe is composed from the operator runtime; that composition is deferred (the same
+  provider-stack-not-bound boundary as `provider.test`), so in the default runtime reranker validate
+  returns the honest typed gap and the full reranker chain is not yet operator-reachable end-to-end in
+  production — a documented residual, not a fabricated capability.
 - Bad: the MCP auth delegation revises the ADR-0017 headless boundary for the interactive TUI —
   the two surfaces (interactive vs headless) now diverge in capability, which must be
   documented at the surface level.

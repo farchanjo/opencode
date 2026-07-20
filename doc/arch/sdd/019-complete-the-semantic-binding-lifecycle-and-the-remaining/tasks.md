@@ -73,9 +73,21 @@ it needs no Milvus and unblocks the archive the embedding rollback also reads.
   gated Milvus path only as the unbound fallback. `registry-backend.ts` `planCutoverReranker`
   reuses the pure `CutoverExecutor.cutoverReranker` (no `MilvusPort`, `reEmbedded:false`) and
   bumps `rerankEvalVersion` in the committed transform; the activated binding keeps its
-  operator-authored version (no version churn). Tests: `feature019-reranker-lifecycle.test.ts`
-  (13) + `feature019-reranker-dispatch.test.ts` (3) green; `bun test test/operator/` 449 pass /
-  2 skip; `bun test test/semantic/` 129 pass; `bun run typecheck` 30/30.
+  operator-authored version (no version churn).
+- **Addendum 2026-07-20 (adversarial-review remediation):** the original wave left the reranker
+  cutover UNREACHABLE end-to-end — `planSelect` stages `{state:'draft', validated:false}` and
+  NOTHING config-backed ever produced a validated candidate (`semantic.reranker.validate` routed to
+  the gated Milvus backend, which never touches the `RegistryDocument`), so the `not_validated` gate
+  ALWAYS rejected. Fixed by adding the config-backed **validate transition** `planValidateReranker`
+  (registry-backend.ts): pure coherence gates (candidate staged from `draft`; eligible rerank
+  profile — profile C refused; model + provider registered, enabled, secret-resolvable) then a
+  provider rerank probe in the plan EFFECT (after CAS, 017 contract) that, on pass, promotes the
+  candidate to `{state:'staged', validated:true}` — the ONLY producer of a validated candidate.
+  `semantic.reranker.validate` now routes through `c.registry` (semantic-command-port.ts), and the
+  catalog marks it `mutates:true` (a persisted transition, not a read-only probe). Tests now drive
+  the REAL chain select → validate → cutover → rollback with NO injected validated state:
+  `feature019-reranker-lifecycle.test.ts` (16) + `feature019-reranker-dispatch.test.ts` (4) green;
+  `bun test test/operator/` 477 pass / 2 skip; `bun test test/semantic/` 138 pass.
 
 - [x] **T002 — Extend the `RegistryDocument` with a per-slot binding version archive**
 - **Depends:** T001
@@ -188,9 +200,20 @@ it needs no Milvus and unblocks the archive the embedding rollback also reads.
   `no_candidate_staged`, never a swap. The swap runs in the effect AFTER the confirmation gate, then
   `apply` promotes staged→active, archives the prior binding + supersedes the prior generation, and
   points `embeddingLiveGeneration` at the new one. Generation/alias state persists alongside the
-  registry doc (ADR-0019 decision 3). Tests: `feature019-embedding-lifecycle.test.ts` T006 cases
-  (reindex builds a validated generation; cutover swaps only after build+validate; `not_validated`;
-  cardinal-honesty refusal; `confirmation_required`) green.
+  registry doc (ADR-0019 decision 3).
+- **Addendum 2026-07-20 (adversarial-review remediation):** the embedding lifecycle had the same
+  unreachability defect as the reranker — nothing config-backed produced a validated candidate. Fixed
+  by adding `planValidateEmbedding` and correcting the ordering to select → **reindex** → **validate**
+  → cutover: `planReindexEmbedding` no longer demands `validated:true` (it now runs for a selected
+  `draft`/re-staged candidate, `BindingLifecycle.apply(state,'reindex') !== illegal`), so it PRECEDES
+  validate and produces the generation validate requires. `planValidateEmbedding` (pure config plan)
+  enforces the cardinal rule — a `validated` generation matching the candidate version must already
+  exist (reindex-first, else `not_validated`), Milvus must be bound (else `milvus_unavailable`), and
+  the model/provider must be coherent — then promotes the candidate to `{state:'staged',
+  validated:true}`. `semantic.embedding.validate` routes through `c.registry` and is `mutates:true` in
+  the catalog. Tests drive the REAL chain select → reindex → validate → cutover with NO injected
+  validated state: `feature019-embedding-lifecycle.test.ts` (10) green, plus the reindex-first and
+  no-candidate negative paths.
 
 - [x] **T007 — All-collections atomic CAS alias swap; unconfigured → `milvus_unavailable`**
 - **Depends:** T006
@@ -204,9 +227,14 @@ it needs no Milvus and unblocks the archive the embedding rollback also reads.
 - **Verification:** `bun test packages/opencode/test/semantic/**` (atomic swap, contention).
 - **Evidence:** 2026-07-20 — `planCutoverEmbedding` drives `CutoverExecutor.cutoverEmbedding` over the
   fixed `GENERATION_COLLECTIONS = [agents, skills, skill_chunks, tools]` in ONE `swapAliases` call (the
-  swap-spy test asserts `targets.length === 4` — never split). The executor's in-core
-  `IndexGeneration.cutoverAll` CAS plus the port's `cas_conflict` gap short-circuit the effect
-  (`{ ok:false, code:"conflict" }`) so `mutateAuthority` commits nothing on contention. Unconfigured
+  swap-spy test asserts `targets.length === 4` — never split). The REAL contention guard is TWO-fold:
+  the authority CAS token (the dispatcher `version` enforced by `mutateAuthority`) is the optimistic
+  concurrency gate that aborts a concurrent edit, and the Milvus port's own `swapAliases` `casToken`
+  mismatch surfaces a `cas_conflict` gap the effect maps to `{ ok:false, code:"conflict" }` so nothing
+  commits (pinned by the fake `casToken:"moved"` contention test). The executor's in-core
+  `IndexGeneration.cutoverAll` comparison is a TAUTOLOGY on this path (`planCutoverEmbedding` passes
+  `casExpected === casActual === generation.generationId`), so it is NOT the concurrency guard — the
+  authority CAS and the port swap CAS are. Unconfigured
   (no bound Milvus port) → the three embedding plans fail `{ type:"unavailable", reason:"milvus_unavailable" }`,
   mapped by `mapError` to the identical `unavailable` dispatch envelope as today. Tests:
   `feature019-embedding-lifecycle.test.ts` T007 cases (all-collections swap, CAS-contention aborts,
@@ -338,7 +366,7 @@ it needs no Milvus and unblocks the archive the embedding rollback also reads.
 
 ## Group D — Real OTLP telemetry export (FR11-FR13)
 
-- [ ] **T013 — Compose an eager, fail-open, process-singleton OTLP export pipeline**
+- [x] **T013 — Compose an eager, fail-open, process-singleton OTLP export pipeline**
 - **Depends:** none
 - **Paths:** `packages/opencode/src/operator/stack-live.ts`, `packages/opencode/src/routing/**`
 - **Deliverable:** a process-singleton export pipeline mirroring `ensureProcessSpoolWriter`
@@ -360,7 +388,7 @@ it needs no Milvus and unblocks the archive the embedding rollback also reads.
   network (`buildPipeline` `:280-297`). Tests: `test/routing/telemetry-export.test.ts` T013 block
   (armed/idempotent/disabled-disarmed) green.
 
-- [ ] **T014 — Real transport + bounded queue + drop policy + retry-budget enforcement**
+- [x] **T014 — Real transport + bounded queue + drop policy + retry-budget enforcement**
 - **Depends:** T013
 - **Paths:** `packages/opencode/src/routing/adapters/outbound/otlp-adapter.ts`, `packages/core/src/observability/otlp.ts`
 - **Deliverable:** implement a real `OtlpTransport` (`http/protobuf` via fetch; `grpc` if
@@ -386,7 +414,7 @@ it needs no Milvus and unblocks the archive the embedding rollback also reads.
   T014 block (flush ships content-free instruments; timer-driven flush non-blocking; drop policy sheds
   overflow; failing transport isolates the error) green (21 pass across the two files).
 
-- [ ] **T015 — Redaction defaults enforced on every exported signal**
+- [x] **T015 — Redaction defaults enforced on every exported signal**
 - **Depends:** T014
 - **Paths:** `packages/opencode/src/routing/**`
 - **Deliverable:** enforce the redaction defaults — `prompts`, `secrets`, `file_paths`,
@@ -407,7 +435,7 @@ it needs no Milvus and unblocks the archive the embedding rollback also reads.
   `[redacted]`, and only the bounded routing label survives (existing `test/telemetry/redaction.test.ts`
   + `otlp-pipeline.test.ts` content-free assertions still green). Defensive posture per FR12/Security.
 
-- [ ] **T016 — Pull-based re-arm on server start / `telemetry.*` dispatch; disabled → no fiber**
+- [x] **T016 — Pull-based re-arm on server start / `telemetry.*` dispatch; disabled → no fiber**
 - **Depends:** T013
 - **Paths:** `packages/opencode/src/operator/telemetry/**`, `packages/opencode/src/operator/stack-live.ts`
 - **Deliverable:** re-resolve the effective config and re-arm/stop the pipeline pull-based on
@@ -431,7 +459,7 @@ it needs no Milvus and unblocks the archive the embedding rollback also reads.
   boundary) green; `bun test test/operator/` 472 pass / 2 skip (dispatcher `onCommitted` addition
   regression-free).
 
-- [ ] **T017 — Env-gated live validation (Milvus endpoint + OTLP collector)**
+- [x] **T017 — Env-gated live validation (Milvus endpoint + OTLP collector)**
 - **Depends:** T007, T014
 - **Paths:** `packages/opencode/test/semantic/**`, `packages/opencode/test/routing/**`
 - **Deliverable:** an env-gated integration path that (a) exercises probe + create-generation +
@@ -508,6 +536,23 @@ it needs no Milvus and unblocks the archive the embedding rollback also reads.
   `feature014-availability.test.ts` updated (reranker cutover/rollback moved out of `SEMANTIC_GATED`);
   `bun test packages/core/test/operator/` 141 pass; `packages/tui` full 502 pass / 1 skip;
   `bun run typecheck` 30/30.
+- **Addendum 2026-07-20 (adversarial-review remediation) — availability re-check with a config-backed
+  validate.** With `validate` now config-backed (a persisted transition), the FR14 class of each verb
+  was re-decided honestly: (a) `semantic.reranker.cutover`/`rollback` STAY UNCONDITIONAL in
+  `OPERATOR_PERSISTING_VERBS`. Cutover post-validation is PURE config (no provider, no Milvus) and the
+  `semantic` authority is always bound, so cutover's own backend genuinely persists today; the
+  provider dependency lives entirely in the SEPARATE `validate` verb. A cutover attempted without a
+  validated candidate is honest RUNTIME `not_validated` (FR16 degradation), NOT an availability gap —
+  so `persists_today` is truthful, and the review's validate fix is precisely what makes that claim
+  honest (previously the chain was unreachable). (b) The two `validate` verbs are config-backed but
+  backend-conditional (embedding needs a reindex-built Milvus generation; reranker needs a live
+  provider probe). They keep the default `honest_unavailable` classification — the truthful floor that
+  NEVER over-advertises. `#BackendReadiness` models `milvusConfigured`/`interactiveSurface`/
+  `subscriptionCapable` but NOT a provider-probe-readiness signal, so a conditional flip for
+  `semantic.reranker.validate` would require a new readiness flag (a `#BackendReadiness` schema + ADR
+  change) — deliberately OUT of scope; the honest floor stands. No palette code change for
+  cutover/rollback (they were already correct); the correction is the validate transition + catalog
+  `mutates` that make the pre-existing `persists_today` claim honest.
 
 ## Group F — Tests + guard scope + doc sync (FR15)
 

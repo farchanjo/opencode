@@ -226,7 +226,18 @@ Priority uses P1 (must have), P2 (should have), and P3 (could have).
    (`registry-backend.ts:285-291`, currently single-entry) returns the real archive, and
    `bindingStatus` (`:281`) reports the real degradation rung instead of a hardcoded
    `full_semantic`. The archive is the source of truth a rollback targets.
-3. **Honest gating for cutover and rollback (FR3).** A reranker/embedding cutover without a
+3. **A config-backed validate transition + honest gating for cutover and rollback (FR3).** A
+   config-backed **validate transition** MUST be the ONLY producer of a validated staged
+   candidate: `semantic.reranker.validate` and `semantic.embedding.validate` route through the
+   config-backed registry (`planValidateReranker`/`planValidateEmbedding`, `mutates:true` in the
+   catalog — a persisted transition, not a read-only probe) and, on success, promote the staged
+   candidate from `draft` to `{ state: staged, validated: true }` (the machine `draft
+   --validate--> staged`). Reranker validate runs a live provider rerank probe in the plan effect
+   (after CAS, the 017 contract): a failing probe is a typed `validation_failed` and a slot with no
+   probe composed is the honest typed gap — NEVER a fabricated `validated`. Embedding validate
+   enforces the cardinal rule — a validated Milvus generation matching the candidate MUST already
+   exist (reindex-first, else `not_validated`); an unbound Milvus port is `milvus_unavailable`.
+   Given that transition, the activation gates hold: a reranker/embedding cutover without a
    **validated** staged candidate MUST return a typed `not_validated`; a rollback with **no
    archived prior** in the slot's superseded set MUST return a typed `no_archived_prior`
    rejection; a CAS contention MUST swap nothing (`cas_conflict`); an unconfirmed activation
@@ -356,12 +367,15 @@ Priority uses P1 (must have), P2 (should have), and P3 (could have).
 
 Given the operator control plane is composed
 
-- **Reranker cutover activates without Milvus.**
-  Given a validated staged reranker candidate and a per-slot archive,
-  When the operator dispatches `semantic.reranker.cutover` under CAS + confirmation,
-  Then it routes through the config-backed registry, invalidates the rerank cache/eval version with
-  `reEmbedded:false`, retains the prior in the superseded archive, and never touches Milvus; an
-  unvalidated candidate returns `not_validated`.
+- **Reranker lifecycle drives select → validate → cutover without Milvus.**
+  Given a registered reranker provider + model,
+  When the operator dispatches `semantic.reranker.select` (stages a `draft` candidate), then
+  `semantic.reranker.validate` (a passing provider probe promotes it to `validated`), then
+  `semantic.reranker.cutover` under CAS + confirmation,
+  Then the cutover routes through the config-backed registry, invalidates the rerank cache/eval
+  version with `reEmbedded:false`, retains the prior in the superseded archive, and never touches
+  Milvus; a cutover BEFORE validate (no validated candidate) returns `not_validated`, and a failing
+  provider probe returns `validation_failed` — neither commits (no injected validated state exists).
 
 - **Rollback targets a real archived prior.**
   Given a slot whose archive holds a superseded prior,
@@ -371,10 +385,12 @@ Given the operator control plane is composed
 
 - **Embedding cutover physically builds a generation.**
   Given a configured Milvus endpoint and a staged embedding candidate needing a new vector space,
-  When the operator runs `reindex` then `cutover`,
+  When the operator runs `select` → `reindex` (builds the generation) → `validate` (promotes the
+  candidate only because the matching validated generation exists, reindex-first) → `cutover`,
   Then a blue/green generation is built and validated (`building → validated → live`) before the
-  alias swaps under one CAS across every collection together; `select`/`reindex` alone never
-  activate; an unconfigured endpoint returns `milvus_unavailable`.
+  alias swaps under one CAS across every collection together; `select`/`reindex`/`validate` alone
+  never activate; a `validate` before `reindex` returns `not_validated`; an unconfigured endpoint
+  returns `milvus_unavailable`.
 
 - **Reconcile diffs real state and never re-pins.**
   Given the live-doc source and the enumerate seam are bound,
@@ -460,15 +476,23 @@ binding-generation lifecycle as a statechart in
 
 ```
 Group A — reranker over a config-backed archive
+  reranker.select → stage draft candidate (validated=false), live binding untouched   (FR2)
+  reranker.validate → provider rerank probe (plan effect, after CAS) →
+    { pass → promote draft to staged, validated=true | validation_failed | typed gap
+      when no probe composed } — the ONLY producer of a validated candidate         (FR3)
   reranker.cutover → registry OperatorMutationPlan (mutateAuthority, CAS + confirm) →
-    cutoverReranker (no MilvusPort) → invalidate rerank cache/eval version, reEmbedded=false →
-    archive: current + superseded[]                                                (FR1, FR2)
+    require validated staged candidate → cutoverReranker (no MilvusPort) →
+    invalidate rerank cache/eval version, reEmbedded=false → archive: current + superseded[]  (FR1, FR2)
   reranker.rollback → resolve #RollbackTarget from superseded[] →
     { restored | no_archived_prior }                                              (FR3)
 
 Group B — embedding + index against a live Milvus
   configured endpoint → bind real MilvusPort + persisted generation/alias/CAS state (FR4)
-  embedding.reindex → build generation (building → validated) in Milvus            (FR5, FR6)
+  embedding.select → stage draft candidate (validated=false)                        (FR2)
+  embedding.reindex → build generation (building → validated) in Milvus (draft/re-staged
+    candidate; reindex PRECEDES validate, no validated precondition)                 (FR5, FR6)
+  embedding.validate → cardinal rule: require a validated generation matching the
+    candidate (reindex-first, else not_validated) + coherence → promote to validated (FR3, FR5)
   embedding.cutover → cutoverEmbedding CAS + confirm → swapAliases (all collections) → live (FR5)
   index.reconcile → live-doc source + enumerate-indexed-docs → runReconcile →
     content-free counts, binding version UNCHANGED                                 (FR6, FR7)

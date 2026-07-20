@@ -192,12 +192,26 @@ readiness classes are typed by the ValueObjects in `doc/arch/schemas/semantic-li
 Per `doc/arch/statecharts/binding-generation-lifecycle.md`:
 
 ```
-staged -> cutover (CAS + confirm) -> { reranker path (config-backed, no Milvus) |
-          embedding path: building -> validated -> live under one CAS } -> active
+select -> draft candidate (validated=false; live binding untouched)
+draft -> validate -> staged, validated=true  [the ONLY producer of a validated candidate]
+         reranker: live provider rerank probe (plan effect, after CAS); fail -> validation_failed;
+                   no probe composed -> typed gap        (config-backed, no Milvus, mutates=true)
+         embedding: reindex-first — require a validated generation matching the candidate,
+                    else not_validated; Milvus unbound -> milvus_unavailable
+staged -> cutover (CAS + confirm; requires validated candidate) ->
+          { reranker path (config-backed, no Milvus) |
+            embedding path: building -> validated -> live under one CAS } -> active
 active -> rollback -> { restored (archived prior) | no_archived_prior }
 reconcile: live-doc source + enumerate -> runReconcile -> content-free counts, version UNCHANGED
 unreachable dependency -> typed capability gap (milvus_unavailable / not_validated / ...)
 ```
+
+The **validate transition** is config-backed and PERSISTED (an adversarial-review remediation): the
+original wave produced no validated candidate on any config-backed path, so cutover always rejected
+`not_validated` and archives never grew. `planValidateReranker`/`planValidateEmbedding` promote a
+`draft` candidate to `{staged, validated:true}` — the only way a cutover becomes reachable end-to-end
+(no injected state); the two validate verbs are `mutates:true` in the catalog (a persisted transition,
+not a read-only probe; no new id, no catalog version bump).
 
 The activation is honest and bounded; an embedding cutover never flips the alias without a
 built+validated generation (FR5); every mutation commits through `mutateAuthority` and every
