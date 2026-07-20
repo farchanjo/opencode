@@ -2,12 +2,19 @@
  * Feature 010 — native library loader (T006, S4).
  *
  * The discovery / `dlopen` / ABI-handshake / capability-gap seam the six tool
- * wrappers and the PTY registry sit on. Discovery ladder (C1):
+ * wrappers and the PTY registry sit on. Discovery ladder (C1, Feature 023 FR-B):
  *
- *   1. env override — `OPENCODE_NATIVE_LIB_DIR` (directory) or the per-crate
- *      `OPENCODE_TOOLS_FFI_PATH` / `OPENCODE_PTY_FFI_PATH` (exact file);
- *   2. the bundled `packages/core/native/<platform>-<arch>/` path;
- *   3. neither present, or `dlopen`/handshake fails → typed `native_unavailable`.
+ *   1. env override — the per-crate `OPENCODE_TOOLS_FFI_PATH` /
+ *      `OPENCODE_PTY_FFI_PATH` (exact file);
+ *   2. env override — `OPENCODE_NATIVE_LIB_DIR` (directory);
+ *   3. the compiled-binary co-located `<execDir>/native/<platform>-<arch>/` path,
+ *      resolved from `path.dirname(process.execPath)` — the ONLY rung that resolves
+ *      inside a `bun build --compile` binary, whose `import.meta.dir` is the virtual
+ *      `/$bunfs/root` namespace (Feature 023, ADR-0023). Only used when the candidate
+ *      is a real file, so it is inert in a dev checkout;
+ *   4. the dev bundled `packages/core/native/<platform>-<arch>/` path (resolved from
+ *      `import.meta.dir` — dead inside a compiled binary);
+ *   5. none present, or `dlopen`/handshake fails → typed `native_unavailable`.
  *
  * `win32` never `dlopen`s and always reports `native_unavailable` (C19). The
  * `dlopen` handle is cached after the first success (lazy, once per crate per
@@ -56,6 +63,12 @@ export interface LoaderDeps {
   readonly env: Record<string, string | undefined>
   readonly fileExists: (candidate: string) => boolean
   readonly bundledBaseDir: string
+  /**
+   * The directory holding the running executable (`path.dirname(process.execPath)`),
+   * used by the compiled-binary co-located discovery rung (Feature 023 FR-B). Absent
+   * (or pointing at a directory with no co-located dylib) leaves the rung inert.
+   */
+  readonly execDir?: string
   readonly ffi: () => BunFfi | null
 }
 
@@ -128,6 +141,15 @@ export function discover(crate: NativeCrate, deps: LoaderDeps): { path: string }
   if (overrideDir) {
     const candidate = path.join(overrideDir, `${stem}.${ext}`)
     if (deps.fileExists(candidate)) return { path: candidate }
+  }
+
+  // Compiled-binary co-located rung (Feature 023 FR-B): resolve relative to the real
+  // executable, not `import.meta.dir` (which is `/$bunfs/root` inside a compiled
+  // binary, making the dev bundled rung below dead). Guarded by `fileExists`, so a
+  // dev checkout — where no dylib sits next to the interpreter — simply falls through.
+  if (deps.execDir) {
+    const colocated = path.join(deps.execDir, "native", `${deps.platform}-${deps.arch}`, `${stem}.${ext}`)
+    if (deps.fileExists(colocated)) return { path: colocated }
   }
 
   const bundled = path.join(deps.bundledBaseDir, `${deps.platform}-${deps.arch}`, `${stem}.${ext}`)
@@ -243,8 +265,74 @@ export function defaultLoaderDeps(): LoaderDeps {
       }
     },
     bundledBaseDir: defaultBundledBaseDir(),
+    execDir: (() => {
+      try {
+        return path.dirname(process.execPath)
+      } catch {
+        return undefined
+      }
+    })(),
     ffi: defaultBunFfi,
   }
+}
+
+/** The discovery rung a resolved path came from — for the {@link probeNativeStatus} diagnostic. */
+export type DiscoveryRung = "per_crate_env" | "override_dir" | "exec_colocated" | "dev_bundled" | "none"
+
+/** A content-free native-load diagnostic (Feature 023): which rung resolved, whether it loaded. */
+export interface NativeStatusReport {
+  readonly crate: NativeCrate
+  readonly platform: Platform
+  readonly arch: string
+  readonly importMetaDir: string
+  readonly execDir?: string
+  readonly rung: DiscoveryRung
+  readonly path?: string
+  readonly loaded: boolean
+  readonly gapReason?: NativeUnavailableGapReason
+  readonly semver?: string
+}
+
+/** Classify which discovery rung produced a resolved path (diagnostic only, pure). */
+function classifyRung(resolvedPath: string, deps: LoaderDeps, crate: NativeCrate): DiscoveryRung {
+  const ext = libExtension(deps.platform)
+  const stem = LIB_STEM[crate]
+  if (resolvedPath === deps.env[PER_CRATE_ENV[crate]]) return "per_crate_env"
+  const overrideDir = deps.env["OPENCODE_NATIVE_LIB_DIR"]
+  if (overrideDir && resolvedPath === path.join(overrideDir, `${stem}.${ext}`)) return "override_dir"
+  if (deps.execDir && resolvedPath === path.join(deps.execDir, "native", `${deps.platform}-${deps.arch}`, `${stem}.${ext}`))
+    return "exec_colocated"
+  return "dev_bundled"
+}
+
+/**
+ * Honest, content-free native-load diagnostic (Feature 023 FR-B proof). Runs the real
+ * discovery ladder + `dlopen` handshake through the live {@link defaultLoaderDeps} and
+ * reports which rung resolved and whether the crate loaded — never any file content,
+ * path body, or command string beyond the resolved dylib path. Used to prove native
+ * loads from a compiled binary (where `import.meta.dir` is `/$bunfs/root`).
+ */
+export function probeNativeStatus(
+  crate: NativeCrate = "tools",
+  deps: LoaderDeps = defaultLoaderDeps(),
+): NativeStatusReport {
+  const resolved = discover(crate, deps)
+  const loadedOrGap = loadNative(crate, true, deps)
+  const base = {
+    crate,
+    platform: deps.platform,
+    arch: deps.arch,
+    importMetaDir: import.meta.dir,
+    execDir: deps.execDir,
+  }
+  if ("gapReason" in resolved) {
+    return { ...base, rung: "none", loaded: false, gapReason: resolved.gapReason }
+  }
+  const rung = classifyRung(resolved.path, deps, crate)
+  if (isUnavailable(loadedOrGap)) {
+    return { ...base, rung, path: resolved.path, loaded: false, gapReason: loadedOrGap.gapReason }
+  }
+  return { ...base, rung, path: resolved.path, loaded: true, semver: loadedOrGap.version.semver }
 }
 
 /**
@@ -267,7 +355,25 @@ export class NativeLoader {
     if (cached && !("gapReason" in cached && cached.gapReason === "disabled")) return cached
     const result = loadNative(crate, enabled, this.deps)
     this.cache.set(crate, result)
+    this.debugLog(crate, result)
     return result
+  }
+
+  /**
+   * One content-free stderr line per crate load when `OPENCODE_NATIVE_DEBUG` is set
+   * (Feature 023 FR-B diagnostic). Emits only the resolved dylib path + load outcome,
+   * never any file content or command string; failures to log are swallowed.
+   */
+  private debugLog(crate: NativeCrate, result: LoadedNative | NativeUnavailable): void {
+    if (!this.deps.env["OPENCODE_NATIVE_DEBUG"]) return
+    try {
+      const line = isUnavailable(result)
+        ? { native: crate, loaded: false, gapReason: result.gapReason }
+        : { native: crate, loaded: true, path: result.path, semver: result.version.semver }
+      process.stderr.write(`[native] ${JSON.stringify(line)}\n`)
+    } catch {
+      /* diagnostic best-effort only */
+    }
   }
 
   /** Invoke a native entry point on an already-loaded crate. */

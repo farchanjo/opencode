@@ -367,6 +367,8 @@ specScopeGlobs = [
   "packages/core/test/tool/native/**",
   "packages/core/test/fixtures/native-parity/**",
   "script/build-native.ts",
+  # Feature 023 — native tools default-on + compiled-binary dylib co-location.
+  "packages/opencode/script/build.ts",  # ships the co-located dylibs into the compiled dist (FR-B)
 
   # Feature 011 implement-phase paths (T001-T017): Restructure the Operator
   #   Control Plane TUI from a flat list into grouped navigation with editable

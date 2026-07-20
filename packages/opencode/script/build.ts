@@ -212,6 +212,38 @@ for (const item of targets) {
   }
 
   await $`rm -rf ./dist/${name}/bin/tui`
+
+  // Feature 023 FR-B: co-locate the native Rust dylibs next to the compiled binary so
+  // the loader's compiled-binary discovery rung (`<execDir>/native/<platform>-<arch>/`)
+  // finds them at runtime — a `bun build --compile` binary cannot resolve them via
+  // `import.meta.dir` (that is the virtual `/$bunfs/root`). Only the current-platform
+  // target can be co-located (dylibs are built for the host by `bun run build:native`);
+  // cross-compiled targets carry no dylib and fall back to the TypeScript/ripgrep path.
+  if (item.os === process.platform && item.arch === process.arch && !item.abi) {
+    const nativeExt = item.os === "darwin" ? "dylib" : "so"
+    const nativeSrcDir = path.resolve(dir, "../core/native", `${item.os}-${item.arch}`)
+    const nativeStems = ["libopencode_tools_ffi", "libopencode_pty_ffi"]
+    const missing = nativeStems.filter((stem) => !fs.existsSync(path.join(nativeSrcDir, `${stem}.${nativeExt}`)))
+    if (missing.length > 0) {
+      console.log(`Native dylibs missing (${missing.join(", ")}); running 'bun run build:native' to produce them`)
+      await $`bun run build:native`.cwd(path.resolve(dir, "../..")).nothrow()
+    }
+    const stillMissing = nativeStems.filter((stem) => !fs.existsSync(path.join(nativeSrcDir, `${stem}.${nativeExt}`)))
+    if (stillMissing.length > 0) {
+      console.error(
+        `build: cannot ship ${name} without the native dylibs (${stillMissing.join(", ")}). ` +
+          `Run 'bun run build:native' first (produces packages/core/native/${item.os}-${item.arch}/*.${nativeExt}).`,
+      )
+      process.exit(1)
+    }
+    const nativeDestDir = `dist/${name}/bin/native/${item.os}-${item.arch}`
+    await $`mkdir -p ${nativeDestDir}`
+    for (const stem of nativeStems) {
+      fs.copyFileSync(path.join(nativeSrcDir, `${stem}.${nativeExt}`), path.join(nativeDestDir, `${stem}.${nativeExt}`))
+      console.log(`Co-located native dylib: ${nativeDestDir}/${stem}.${nativeExt}`)
+    }
+  }
+
   await Bun.file(`dist/${name}/package.json`).write(
     JSON.stringify(
       {
