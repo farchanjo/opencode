@@ -35,9 +35,9 @@ it needs no Milvus and unblocks the archive the embedding rollback also reads.
 - [x] T007 — All-collections atomic CAS alias swap; unconfigured → `milvus_unavailable`
 - [x] T008 — Reindex/reconcile live-doc source (agent/skill builders) + bound embedding client
 - [x] T009 — Content-free reconcile that never re-pins the binding
-- [ ] T010 — Delegate `mcp.auth.start`/`finish` for the interactive TUI; headless keeps the gap
-- [ ] T011 — `mcp.resource.admin.subscribe`/`unsubscribe` over the dual-authority machine
-- [ ] T012 — Truthful experimental/extension badges from the config-backed flag state
+- [x] T010 — Delegate `mcp.auth.start`/`finish` for the interactive TUI; headless keeps the gap
+- [x] T011 — `mcp.resource.admin.subscribe`/`unsubscribe` over the dual-authority machine
+- [x] T012 — Truthful experimental/extension badges from the config-backed flag state
 - [ ] T013 — Compose an eager, fail-open, process-singleton OTLP export pipeline
 - [ ] T014 — Real transport + bounded queue + drop policy + retry-budget enforcement
 - [ ] T015 — Redaction defaults enforced on every exported signal
@@ -257,7 +257,7 @@ it needs no Milvus and unblocks the archive the embedding rollback also reads.
 
 ## Group C — MCP delegation edges (FR8-FR10)
 
-- [ ] **T010 — Delegate `mcp.auth.start`/`finish` for the interactive TUI; headless keeps the gap**
+- [x] **T010 — Delegate `mcp.auth.start`/`finish` for the interactive TUI; headless keeps the gap**
 - **Depends:** none
 - **Paths:** `packages/opencode/src/operator/mcp/backend-live.ts`, `packages/opencode/src/operator/stack-live.ts`, `packages/opencode/src/mcp/index.ts`
 - **Deliverable:** for an interactive TUI surface, `mcp.auth.start` delegates to
@@ -267,9 +267,22 @@ it needs no Milvus and unblocks the archive the embedding rollback also reads.
 - **Acceptance:** the TUI receives the authorize URL and the callback listener starts; finish
   completes the exchange; a headless surface returns the typed gap; no secret leaks.
 - **Verification:** `bun test packages/opencode/test/operator/** packages/opencode/test/mcp/**`.
-- **Evidence:** _(reserved)_
+- **Evidence:** 2026-07-20 — Surface-detection contract per FR8: the command port reads the request
+  envelope `source` (Feature 007 data-model) and delegates ONLY for an interactive TUI surface
+  (`mcp-command-port.ts` `isInteractiveAuthSurface` = `{palette, slash}`); a headless surface
+  (`cli`/`api`/`system`/`settings`) returns `null` from `mutationInvoke` so `mcp.auth.start`/`finish`
+  fall through to `authInvoke` → the honest typed gap (`backend-live.ts` `liveAuthPort` start/finish
+  = `unavailable`). Interactive delegation runs as effectOnly `OperatorMutationPlan`s
+  (`backend-live.ts` `planAuthStart`/`planAuthFinish`, ADR-0017/018 contract) whose deferred effect
+  calls the live `McpAuthDelegate`; the effect value surfaces the non-secret `#McpAuthStart`
+  (`{serverId, delegation:"interactive_delegated", authorizationUrl}`) — the authorize URL is not a
+  secret and NO token, code verifier, or oauthState crosses the envelope (asserted). `stack-live.ts`
+  `mcpAuthDelegate` binds `MCP.Service.startAuth`/`finishAuth` (state validated against the CSRF
+  nonce, `NotFoundError` → typed `not_found`, a non-OAuth `die` caught → typed unavailable). A
+  headless surface, a `not_found` server, a state mismatch (→ conflict), and an unbound delegate each
+  degrade typed. Tests: `mcp-service-backend.test.ts` T010 block (5 cases) green.
 
-- [ ] **T011 — `mcp.resource.admin.subscribe`/`unsubscribe` over the dual-authority machine**
+- [x] **T011 — `mcp.resource.admin.subscribe`/`unsubscribe` over the dual-authority machine**
 - **Depends:** none
 - **Paths:** `packages/opencode/src/operator/mcp/backend-live.ts`, `packages/opencode/src/mcp/resource-adapter.ts`, `packages/core/src/mcp/subscription-machine.ts`, `packages/opencode/src/mcp/index.ts`
 - **Deliverable:** connect the existing dual-authority subscription machine
@@ -280,9 +293,24 @@ it needs no Milvus and unblocks the archive the embedding rollback also reads.
 - **Acceptance:** subscribe/unsubscribe drive the client subscription; a client without the
   capability returns `capability_absent`; the machine stays fail-closed.
 - **Verification:** `bun test packages/opencode/test/mcp/** packages/opencode/test/operator/**`.
-- **Evidence:** _(reserved)_
+- **Evidence:** 2026-07-20 — The SDK subscription primitive + the pure `SubscriptionMachine`
+  existed but were never connected to a live client (corpus finding). `backend-live.ts`
+  `planResourceSubscribe`/`planResourceUnsubscribe` are effectOnly `OperatorMutationPlan`s (018
+  contract) whose deferred effect probes the live client capability then drives the pure
+  `SubscriptionMachine.apply("unsubscribed","subscribe",{serverCapable, operatorGranted:true})`
+  (dual authority; the operator grant is the audited operator principal + confirmation) BEFORE any
+  live call — a `fail_closed` verdict short-circuits with a typed `capability_absent` rejection and
+  the live client is never touched (no phantom subscription); a present capability calls the live
+  `McpSubscriptionClient.subscribe`/`unsubscribe` exactly once and surfaces `#McpSubscription`
+  (`{serverId, resourceUri, state:"subscribed"|"unsubscribed"}`). `stack-live.ts`
+  `mcpSubscriptionClient` binds the SDK `client.subscribeResource`/`unsubscribeResource` +
+  `getServerCapabilities().resources.subscribe`; no connected client → typed `unavailable`; an
+  unbound client → typed `mcp_unavailable`. The `mcp.resource.admin.subscribe`/`unsubscribe` verbs
+  (`mutates:true`) route through `mutationInvoke` so a `query` never trips the FR5 phantom-write
+  trap. Tests: `mcp-service-backend.test.ts` T011 block (5 cases: capable sub/unsub once,
+  capability_absent no-phantom, no-client unavailable, unbound gap) green.
 
-- [ ] **T012 — Truthful experimental/extension badges from the config-backed flag state**
+- [x] **T012 — Truthful experimental/extension badges from the config-backed flag state**
 - **Depends:** none
 - **Paths:** `packages/opencode/src/operator/mcp/backend-live.ts`
 - **Deliverable:** project the operator's config-backed experimental/extension flag state into the
@@ -292,7 +320,21 @@ it needs no Milvus and unblocks the archive the embedding rollback also reads.
 - **Acceptance:** a connected server's badges render truthfully from the config-backed flag state;
   the schema-split boundary is documented.
 - **Verification:** `bun test packages/opencode/test/operator/**` (badge projection).
-- **Evidence:** _(reserved)_
+- **Evidence:** 2026-07-20 — `backend-live.ts` `liveExperimentalPort`/`liveExtensionPort` back
+  `mcp.experimental.status`/`mcp.extension.status` by reading the SAME config-backed MCP authority
+  (`store.config` `global:mcp`) the operator toggles write via `planExperimentalToggle`/
+  `planExtensionToggle`, wired through `createMcpServiceOverride` when the config seam is bound.
+  Experimental status projects the 4 rollout-order flags plus the aggregate `enabled` (the default
+  `tasks` flag the Feature 015 toggle row governs); extension status projects `enabled` from
+  `extensionEnabled`. The TUI `controls.ts` `toggleStateFrom` reads that boolean → `toggleBadge`
+  renders `Enabled`/`Disabled`; a genuinely absent server carries NO aggregate `enabled` so the row
+  stays the honest `Unknown` (protocol `ExperimentalStatusOutput`/`ExtensionStatusOutput` extended
+  with an optional `enabled`). The `cfg.mcp` schema-split boundary (the runtime schema has no such
+  field; the badge reflects the operator config SSOT the toggle owns) is documented in code and in
+  spec Out of Scope; the live-list is same-instance and needs no fix. Tests:
+  `mcp-service-backend.test.ts` T012 block (4 cases: truthful experimental/extension, unset →
+  Disabled, absent → no `enabled`) + `packages/tui/test/operator/controls.test.ts` T012 block (3
+  cases: Enabled/Disabled from config-backed effective; Unknown only when genuinely absent) green.
 
 ## Group D — Real OTLP telemetry export (FR11-FR13)
 
