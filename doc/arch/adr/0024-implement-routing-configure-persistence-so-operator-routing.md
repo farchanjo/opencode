@@ -120,15 +120,29 @@ Key decisions recorded:
    write + audit (`mutation.ts:277-296`). A stale expected-version still returns `CAS
    version conflict`, and a rejected Save (invalid policy / conflict) surfaces a typed
    envelope to the TUI and commits nothing.
-5. **Regression proof over the REAL wired dispatcher (FR-E).**
+5. **The write authority follows the REQUEST scope, not the effective origin
+   (FR-F, fix-round 2026-07-20).** `planConfigure` derives its write authority from the
+   dispatcher-resolved request scope (`ctx.request.scope.kind` → `scopeForRequest`:
+   `global` → `global:routing`, otherwise → project `routing`), threaded from the inbound
+   adapter (`routing-command-port.ts`). This is the SAME resolution the mutation preflight
+   uses (`command-authority.ts` — `case "routing": return SMART_AUTHORITY[norm(scopeKind)]`),
+   so the preflight CAS-token authority and the committed authority can never diverge. The
+   effective config is still read for the merge base/defaults, but the WRITE TARGET is the
+   request scope — exactly as `pools.set` writes its fixed project `PROJECT_AUTHORITY`.
+6. **Regression proof over the REAL wired dispatcher (FR-E).**
    `feature024-configure-persist.test.ts` drives the same live construction the TUI uses
    (smart + pools + routing over one `store.config`, production authority resolver
-   threaded) and proves: (a) a Save persists activation/mode/policy + bumps the version
-   (and a second configure persists); (b) pools + smart + routing coexist with none
-   clobbering the others in the on-disk `config.json` + a fresh re-read; (c) invalid
-   policy → typed error, nothing committed; (d) stale version → conflict, nothing
-   committed.
-6. **No contract change (invariant).** No operator payload, command id, catalog version,
+   threaded) and proves: (a) a Save on a FRESH (unseeded) project persists
+   activation/mode/policy to the PROJECT `routing` authority (never `global:routing`) +
+   bumps the version, and a second configure persists (no false `mutations require
+   version`); (b) pools + smart + routing coexist with none clobbering the others in the
+   on-disk `config.json` + a fresh re-read; (c) invalid policy → typed error, nothing
+   committed; (d) stale version → conflict, nothing committed; (e) a global-resolved base
+   with a project-scope configure still creates the PROJECT override and the second save
+   succeeds. The prior masking precondition (`seedProjectRouting`, which forced
+   origin=project so the two authorities coincided) was removed from the scenarios that
+   must pass without it.
+7. **No contract change (invariant).** No operator payload, command id, catalog version,
    dispatch path, server/port surface, or feature flag is added or altered; only the
    `routing.configure` handler body and its composition-root wiring change.
 
@@ -145,15 +159,26 @@ Key decisions recorded:
   round-trip — configuring one facet of routing never zeroes another.
 - Good: zero contract surface and an unchanged CAS guard — no server, SDK, or catalog
   work, and lost-update protection is fully preserved.
+- Good (fix-round 2026-07-20): the scope-alignment fix eliminated the original residual.
+  The write authority is now derived from the REQUEST scope (`scopeForRequest`), so a
+  first `routing.configure` on a wholly-unconfigured project targets the PROJECT `routing`
+  authority (matching the preflight) instead of silently writing `global:routing` and
+  failing the second Save with `invalid_argument` ("mutations require version"). Verified
+  by an adversarial repro over the real wired dispatcher (fresh project, two consecutive
+  project-scope Saves) and covered by scenarios (a)/(e) of the regression suite.
 - Bad (documented boundary): only the `budgetPolicy` advanced-override key is mapped;
   other enforcement/model overrides in the advanced JSON are not yet routed and remain
   out of scope. A future feature can extend the mapping following the same plan `apply`.
-- Bad (residual): the write scope is chosen from the effective config's origin
-  (`scopeForOrigin`), so a first `routing.configure` on a wholly-unconfigured store
-  targets `global:routing`; the realistic operator flow (a project routing document
-  already initialized by pools/smart or a prior configure) resolves to the project
-  `routing` authority. This matches the existing `smart`/`budget` behavior and is
-  covered by the coexistence proof (project origin throughout).
+- Bad (follow-up, out of scope here — Feature 025 candidate): `smart.*`
+  (`smart/backend-live.ts`) and `budget.*` (`budget/backend-live.ts`) STILL derive their
+  write authority from the effective-config origin (`scopeForOrigin(effective.origin)`),
+  while their preflight authority is the request scope (`command-authority.ts`
+  `case "smart"/"budget": SMART_AUTHORITY[norm(scopeKind)]`). This is the SAME latent
+  divergence `routing.configure` just fixed: an adversarial repro (fresh project,
+  `smart.on` then `smart.off`) confirmed SAVE#1 mis-writes `global:routing` and SAVE#2
+  returns `invalid_argument`. It is deliberately NOT fixed in Feature 024 (scope
+  boundary); the same request-scope derivation should be applied to `smart`/`budget` in a
+  dedicated follow-up so their preflight and commit authorities align.
 
 ## Related
 

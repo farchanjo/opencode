@@ -168,15 +168,32 @@ Priority uses P1 (must have), P2 (should have), and P3 (could have).
    Regression coverage MUST drive the SAME live dispatcher construction the TUI uses
    (smart + pools + routing over ONE shared `store.config`, with the production
    authority resolver threaded) and prove:
-   - (a) a `routing.configure` Save → outcome `success`, persisting
-     `activation.enabled`/`mode`/policy to the `routing` authority with a bumped CAS
-     version, and a **second** configure threading the bumped version persists again;
+   - (a) a `routing.configure` Save on a **fresh** (unseeded) project → outcome
+     `success`, persisting `activation.enabled`/`mode`/policy to the PROJECT `routing`
+     authority (never `global:routing`) with a bumped CAS version, and a **second**
+     configure threading the bumped version persists again;
    - (b) THE COEXISTENCE PROOF — `pools.set` (role_pools) + `smart.on` (activation) +
      `routing.configure` (mode + budget) in sequence, and NONE clobbers the others in
      the final **on-disk** `config.json` (physical round-trip via
      `createFileConfigService` + a fresh-store re-read);
    - (c) an invalid advanced policy JSON → typed validation error, NOTHING committed;
-   - (d) a stale expected-version → conflict, NOTHING committed (CAS preserved).
+   - (d) a stale expected-version → conflict, NOTHING committed (CAS preserved);
+   - (e) a global-config-resolved base + a project-scope configure still creates the
+     PROJECT override and a second save succeeds (no `mutations require version`).
+
+### Group F — Write authority follows the REQUEST scope (FR-F, fix-round)
+
+6. **FR-F — The write authority MUST be derived from the request scope, not the
+   effective-config origin.** `routing.configure` MUST commit to the SAME Config
+   authority the mutation preflight reports for the request scope
+   (`command-authority.ts` — project → `routing`, global → `global:routing`), NOT the
+   authority implied by where the effective config happens to resolve
+   (`scopeForOrigin(effective.origin)`). On a fresh project whose config resolves via
+   global/default, the two MUST NOT diverge: a project-scope Save creates/writes the
+   project `routing` override so the preflight CAS token and the committed authority
+   always match. This closes the reproduced RED failure (SAVE#1 silently to
+   `global:routing`, SAVE#2 `invalid_argument`) and removes the regression suite's
+   masking precondition. The effective config is still read for the merge base/defaults.
 
 ## Non-Functional Requirements
 
@@ -325,6 +342,13 @@ single-committed-CAS-write contract is preserved verbatim (FR-D).
   overrides are out of this feature's scope.
 - **Changing the TUI "Routing configure" form** — the form already composes and
   dispatches the payload (Feature 017); this feature only makes the dispatch persist.
+- **Aligning `smart.*` / `budget.*` write scope with their preflight (Feature 025
+  candidate)** — `smart/backend-live.ts` and `budget/backend-live.ts` still derive their
+  write authority from `scopeForOrigin(effective.origin)` while their preflight resolves
+  the request scope (`command-authority.ts`). A repro (fresh project, `smart.on` then
+  `smart.off`) confirmed the SAME divergence FR-F fixes for `routing.configure` (SAVE#1 →
+  `global:routing`, SAVE#2 → `invalid_argument`). Applying the request-scope derivation to
+  `smart`/`budget` is deliberately deferred to a dedicated follow-up.
 
 ## Related Features and Decisions
 

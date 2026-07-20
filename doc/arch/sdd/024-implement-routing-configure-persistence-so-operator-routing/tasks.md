@@ -29,6 +29,7 @@ Legend:
 - [x] T005 — Wire the configure backend into the live stack (`stack-live.ts`)
 - [x] T006 — FR-E regression proof over the REAL wired dispatcher
 - [x] T007 — `bun test` + `tsc` + `speckit validate --json` green + doc sync
+- [x] T008 — Fix-round: write authority follows the REQUEST scope, not the origin (FR-F)
 
 ---
 
@@ -64,10 +65,12 @@ Legend:
 - **Acceptance:** a valid input yields a plan whose `authority` is the scoped routing
   authority; an invalid budget policy fails as `invalid_argument` before any plan.
 - **Verification:** `bun test test/routing/feature024-configure-persist.test.ts`.
-- **Evidence:** 2026-07-20 — `configure-backend.ts:105-145` `createRoutingConfigureBackend`;
+- **Evidence:** 2026-07-20 — `configure-backend.ts` `createRoutingConfigureBackend`;
   `planConfigure` reads effective, validates via `Schema.decodeUnknownExit(RoutingConfig.Info)`
-  (`:112-127`) → `invalid_argument` on failure, else `{ authority, apply }`. Config reads
+  → `invalid_argument` on failure, else `{ authority, apply }`. Config reads
   guarded (`Effect.tryPromise` → `unavailable`). feature024 (c) invalid-policy test green.
+  NOTE: the initial `scopeForOrigin(effective.origin)` write-scope derivation was SUPERSEDED
+  by T008 (fix-round) — the write authority now comes from the request scope.
 
 - [x] **T003 — Partial-merge under CAS in `apply(current)` (preserve siblings)**
 - **Depends:** T002
@@ -143,12 +146,15 @@ Legend:
   (b) asserts role_pools + enabled + mode/budget coexist on disk and re-read;
   (c)/(d) assert a non-success outcome and an unchanged document.
 - **Verification:** `bun test test/routing/feature024-configure-persist.test.ts`.
-- **Evidence:** 2026-07-20 — `feature024-configure-persist.test.ts` (6 tests, 43
-  expect()): (a) persist+bump + 2nd-configure persist; (b) coexistence on-disk
+- **Evidence:** 2026-07-20 — `feature024-configure-persist.test.ts` (7 tests, 55
+  expect()): (a) FRESH-project persist+bump to the PROJECT `routing` authority
+  (`global:routing` absent) + 2nd-configure persist; (b) coexistence on-disk
   (`operator.authorities.routing.payload` holds role_pools + activation.enabled +
   mode + budget.cost.cost_budget_usd=42) + fresh `createFileConfigService` re-read;
-  (c) invalid budgetPolicy → non-success, seed version unchanged; (d) stale token →
-  `conflict`, committed doc preserved. 6 pass.
+  (c) invalid budgetPolicy → non-success, version unchanged; (d) stale token →
+  `conflict`, committed doc preserved; (e) global-resolved base + project-scope configure
+  creates the project override, 2nd save succeeds. 7 pass. The `seedProjectRouting` mask
+  was removed from (a)/(e) (see T008).
 
 - [x] **T007 — `bun test` + `tsc` + `speckit validate --json` green + doc sync**
 - **Depends:** T006
@@ -161,11 +167,44 @@ Legend:
   surface change expected — the operator command surface is unchanged).
 - **Acceptance:** guard clean; `bun test test/routing/ test/operator/` green; `tsc` 0
   new errors; `speckit validate --json` `ok:true`.
-- **Evidence:** 2026-07-20 — `bun test test/routing/ test/operator/` → 732 pass / 3 skip
+- **Evidence:** 2026-07-20 — `bun test test/routing/ test/operator/` → 733 pass / 3 skip
   / 0 fail (incl. the new feature024 suite); `bunx tsc --noEmit` → 0 new errors (11
   pre-existing `dialog-move-session.tsx` only); `speckit validate --json` → `ok:true`
   (pre-existing waived hygiene findings only). Corpus authored: spec/plan/tasks + ADR-0024
   + schema cue. No AGENTS.md/README surface change (operator command surface unchanged).
+
+- [x] **T008 — Fix-round: write authority follows the REQUEST scope, not the origin (FR-F)**
+- **Depends:** T007
+- **Paths:** `packages/opencode/src/routing/adapters/outbound/configure-backend.ts`,
+  `packages/opencode/src/routing/adapters/inbound/routing-command-port.ts`,
+  `packages/opencode/test/routing/feature024-configure-persist.test.ts`
+- **Deliverable:** an adversarial review confirmed a HIGH defect: `planConfigure` derived
+  its write authority from the effective-config ORIGIN (`scopeForOrigin(effective.origin)`)
+  while the mutation preflight/CAS-token authority comes from the REQUEST scope
+  (`command-authority.ts` `case "routing": SMART_AUTHORITY[norm(scopeKind)]`). On a fresh
+  project with no project-scope routing doc these DIVERGE: SAVE#1 silently persisted to
+  `global:routing`, SAVE#2 failed `invalid_argument` ("mutations require version"). The
+  committed test masked this with a `seedProjectRouting` precondition (forcing
+  origin=project). Fix: thread `ctx.request.scope.kind` into `planConfigure` and derive the
+  write authority via `scopeForRequest` (global → `global:routing`, else → project
+  `routing`) — the SAME map the preflight uses, as `pools.set` does — so preflight and
+  commit authority always match. The effective config is still read for the merge
+  base/defaults; only the write TARGET moved to the request scope.
+- **Acceptance:** two consecutive project-scope Saves on a FRESH (unseeded) project both
+  succeed and land on the PROJECT `routing` authority; `global:routing` untouched; the
+  masking seed removed from the scenarios that must pass without it; smart/CAS/invalid
+  negatives preserved.
+- **Verification:** `bun test test/routing/ test/operator/`; `bunx tsc --noEmit`;
+  `speckit validate --json`.
+- **Evidence:** 2026-07-20 — `configure-backend.ts` `scopeForRequest` + `planConfigure(input,
+  requestScopeKind)`; `routing-command-port.ts` passes `ctx.request.scope.kind`.
+  Adversarial repro over the real wired dispatcher: BEFORE (origin-based) SAVE#1 →
+  `global:routing`, SAVE#2 → `invalid_argument`; AFTER (request-scope) SAVE#1 → project
+  `routing` (cas_v1), SAVE#2 → `success`. feature024 (a)/(e) un-masked → 7 pass / 55
+  expect(); `test/routing/ test/operator/` → 733 pass / 3 skip / 0 fail; `tsc` 0 new errors;
+  `speckit validate --json` `ok:true`. Follow-up recorded (ADR-0024 consequences): `smart.*`
+  and `budget.*` carry the SAME latent origin-vs-request divergence (repro-confirmed) — NOT
+  fixed here (out of scope), Feature 025 candidate.
 
 ## Dependencies
 
