@@ -8,7 +8,12 @@ import {
   buildOperatorPaletteCommands,
   type OperatorPaletteEntry,
 } from "@opencode-ai/core/operator"
-import type { OperatorSlashDisplay, OperatorSlashPort, OperatorStructuredResult } from "../context/operator-slash"
+import type {
+  OperatorRequestScope,
+  OperatorSlashDisplay,
+  OperatorSlashPort,
+  OperatorStructuredResult,
+} from "../context/operator-slash"
 import type { DialogContext } from "../ui/dialog"
 import { DialogConfirm } from "../ui/dialog-confirm"
 
@@ -43,6 +48,12 @@ export async function executeOperatorCommand(input: {
   sessionId?: string | null
   rootTreeRef?: string | null
   version?: string
+  /**
+   * Explicit operator-selected authority scope (Feature 034). Threaded first-class into
+   * BOTH the preflight and the dispatch so the CAS read authority matches the write
+   * authority (global → global:routing). Absent → project-preferred (back-compat).
+   */
+  requestedScope?: OperatorRequestScope
   dialog: DialogContext
   toast: OperatorToast
   /**
@@ -99,6 +110,7 @@ export async function executeOperatorCommand(input: {
     projectId: input.projectId,
     sessionId: input.sessionId,
     rootTreeRef: input.rootTreeRef,
+    ...(input.requestedScope ? { requestedScope: input.requestedScope } : {}),
   }
 
   if (input.entry.mutates || input.entry.confirmRequired) {
@@ -117,6 +129,7 @@ export async function executeOperatorCommand(input: {
       projectId: input.projectId,
       sessionId: input.sessionId,
       rootTreeRef: input.rootTreeRef,
+      ...(input.requestedScope ? { requestedScope: input.requestedScope } : {}),
     })
     if (!pre.ok) {
       toast.show({
@@ -186,6 +199,7 @@ export async function executeOperatorCommand(input: {
             projectId: input.projectId,
             sessionId: input.sessionId,
             rootTreeRef: input.rootTreeRef,
+            ...(input.requestedScope ? { requestedScope: input.requestedScope } : {}),
           })
           if (refresh.ok) {
             toast.show({

@@ -76,6 +76,9 @@ export type OperatorPreflightResult =
     }
   | { readonly ok: false; readonly code: string; readonly message: string }
 
+/** Explicit operator-selected authority scope kind (Feature 034). */
+export type OperatorRequestScope = "global" | "project" | "session" | "root-tree"
+
 export type OperatorSlashPort = {
   readonly tryHandle: (input: {
     text: string
@@ -85,6 +88,8 @@ export type OperatorSlashPort = {
     version?: string
     confirmToken?: string
     idempotencyKey?: string
+    /** Explicit request scope (Feature 034) — overrides the ambient-project preference. */
+    requestedScope?: OperatorRequestScope
   }) => Promise<OperatorSlashResult>
   readonly cancelConfirmation?: (token: string) => void
   /** Required for mutations — absent → executeOperatorCommand refuses blind mutate */
@@ -93,6 +98,8 @@ export type OperatorSlashPort = {
     projectId?: string | null
     sessionId?: string | null
     rootTreeRef?: string | null
+    /** Explicit request scope (Feature 034); the preflight reads the SAME authority. */
+    requestedScope?: OperatorRequestScope
   }) => Promise<OperatorPreflightResult>
 }
 
@@ -107,6 +114,7 @@ function init(port: OperatorSlashPort | undefined) {
       version?: string
       confirmToken?: string
       idempotencyKey?: string
+      requestedScope?: OperatorRequestScope
     }): Promise<OperatorSlashResult | null> {
       if (!port) return null
       return port.tryHandle(input)

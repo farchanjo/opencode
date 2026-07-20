@@ -414,6 +414,44 @@ const DESCRIPTORS: readonly EditFieldListDescriptor[] = [
   },
 ]
 
+// ── request-scope picker (Feature 034) ──────────────────────────────────────
+
+/**
+ * The authority-scope options a scope-flexible Configure verb may target (Feature
+ * 034). This is the REQUEST authority scope (which config document the write lands on
+ * — `global:routing` vs `routing`), NOT a payload field: the chosen kind rides
+ * `executeOperatorCommand`'s `requestedScope` into the port's `resolveScopeForCommandId`,
+ * never `compose`. `value` is the `ScopeKind` string the resolver understands.
+ */
+const REQUEST_SCOPE_OPTIONS: readonly EditFieldOption[] = [
+  { title: "Project (this directory)", value: "project", description: "persist to the per-project config" },
+  { title: "Global (all projects)", value: "global", description: "persist to the shared global config" },
+  { title: "Session", value: "session", description: "persist to the current session" },
+  { title: "Root tree", value: "root-tree", description: "persist to the workspace root tree" },
+]
+
+/**
+ * True when a command is scope-FLEXIBLE — its `scopesAllowed` offers both `global` and
+ * `project`, so the operator should pick which authority the write targets (Feature
+ * 034). A single-scope command needs no picker (the scope is implied).
+ */
+export function isScopeFlexibleCommand(scopesAllowed: readonly string[]): boolean {
+  return scopesAllowed.includes("global") && scopesAllowed.includes("project")
+}
+
+/**
+ * The request-scope picker options for a command, limited to its `scopesAllowed` and in
+ * a stable order with `project` first (the back-compat default selection). Returns `[]`
+ * for a command that is not scope-flexible, so the caller renders NO picker (Feature 034).
+ */
+export function requestScopePickerOptions(scopesAllowed: readonly string[]): readonly EditFieldOption[] {
+  if (!isScopeFlexibleCommand(scopesAllowed)) return []
+  return REQUEST_SCOPE_OPTIONS.filter((option) => scopesAllowed.includes(option.value))
+}
+
+/** The default request-scope selection — `project`, preserving pre-Feature-034 behavior. */
+export const DEFAULT_REQUEST_SCOPE = "project" as const
+
 const DESCRIPTOR_BY_ID: ReadonlyMap<string, EditFieldListDescriptor> = new Map(DESCRIPTORS.map((d) => [d.commandId, d]))
 
 /** Resolve the multi-field descriptor for a Configure verb, or `undefined` for a verb with no field list (FR19, FR21). */
