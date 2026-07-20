@@ -10,14 +10,23 @@
  * This suite drives the REAL wired dispatcher (the same construction the TUI uses —
  * smart + pools + routing over ONE shared `store.config` seam, with the production
  * authority resolver threaded) and proves:
- *   - (a) a routing.configure Save persists activation.enabled / mode / budget policy
- *     to the shared `routing` authority and the CAS version bumps;
+ *   - (a) a routing.configure Save on a FRESH project (no pre-seeded routing doc)
+ *     persists activation.enabled / mode / budget policy to the PROJECT `routing`
+ *     authority — never `global:routing` — and the CAS version bumps;
  *   - (b) THE COEXISTENCE PROOF — pools.set (role_pools) + smart.on (activation) +
  *     routing.configure (mode + budget) in sequence, and NONE clobbers the others in
  *     the final on-disk config.json (physical round-trip + fresh-store re-read);
  *   - (c) an invalid advanced policy JSON is a TYPED validation error and commits
  *     NOTHING;
- *   - (d) a stale expected-version is a CAS conflict and commits NOTHING.
+ *   - (d) a stale expected-version is a CAS conflict and commits NOTHING;
+ *   - (e) the SCOPE-ALIGNMENT regression proof: two consecutive project-scope Saves
+ *     on a fresh (unseeded) project BOTH succeed and land on the PROJECT authority,
+ *     and a global-resolved base still creates the project override. Before the
+ *     fix-round the write authority was derived from the effective-config ORIGIN, so
+ *     SAVE#1 silently persisted to `global:routing` and SAVE#2 failed
+ *     `invalid_argument` ("mutations require version"). The write authority now comes
+ *     from the REQUEST scope (matching the mutation preflight), so the two never
+ *     diverge — no `seedProjectRouting` mask required.
  */
 import { afterEach, describe, expect, test } from "bun:test"
 import { mkdtempSync, rmSync, readFileSync } from "node:fs"
@@ -141,9 +150,10 @@ async function readEffective(config: MutationPorts["config"]) {
   return (await createConfigAdapter({ config }).resolveEffective()).config
 }
 
-/** Seed the project "routing" document (disabled default) so origin=project — the realistic
- *  "routing was initialized, operator now edits it" precondition that aligns the resolver
- *  (scope → "routing") with the backend (origin → "routing"). */
+/** Seed the project "routing" document (disabled default) — used only by the CAS /
+ *  invalid negative scenarios to establish a known committed version. After the
+ *  scope-alignment fix this is NO LONGER required for correctness (a fresh project
+ *  aligns on its own); scenarios that must prove that never call it. */
 async function seedProjectRouting(config: MutationPorts["config"]) {
   const seed = await createConfigAdapter({ config }).set("project", DEFAULT_ROUTING_CONFIG, null)
   if (!seed.ok) throw new Error("seed failed")
@@ -151,24 +161,28 @@ async function seedProjectRouting(config: MutationPorts["config"]) {
 }
 
 // =============================================================================
-// (a) routing.configure Save persists activation + mode + policy; version bumps
+// (a) routing.configure Save on a FRESH project persists to the PROJECT authority
 // =============================================================================
-describe("Feature 024 (a) — routing.configure Save persists and bumps the CAS version", () => {
-  test("enabling routing + setting mode + advanced budget policy commits to the shared routing authority", async () => {
+describe("Feature 024 (a) — routing.configure Save persists to the project authority and bumps the CAS version", () => {
+  test("enabling routing + mode + advanced budget on a FRESH project commits to the project routing authority (not global)", async () => {
     const { tuiPort, config } = wiredStack(freshStore())
-    const seedVersion = await seedProjectRouting(config)
 
+    // No seed: config resolves via default. The preflight still targets the PROJECT
+    // "routing" doc (create-if-absent, currentVersion null).
     const pre = await tuiPort.preflightMutation({ commandId: "routing.configure", projectId: PROJECT })
     expect(pre.ok).toBe(true)
     if (!pre.ok) return
     expect(pre.authority).toBe("routing")
-    expect(pre.currentVersion).toBe(seedVersion)
+    expect(pre.currentVersion).toBe(null)
 
     const res = await driveMutation(tuiPort, configureText({ enabled: true, mode: "auto", budgetPolicy: CUSTOM_BUDGET }), pre.currentVersion ?? undefined)
     expect(res.handled).toBe(true)
     expect(res.result?.outcome).toBe("success")
-    // The CAS version bumped off the seed.
-    expect(res.result?.version).not.toBe(seedVersion)
+    expect(res.result?.version).not.toBe(null)
+
+    // The write landed on the PROJECT authority — `global:routing` stays absent.
+    expect(await config.get("routing")).not.toBe(null)
+    expect(await config.get("global:routing")).toBe(null)
 
     const effective = await readEffective(config)
     expect(effective.activation.enabled).toBe(true)
@@ -178,9 +192,9 @@ describe("Feature 024 (a) — routing.configure Save persists and bumps the CAS 
 
   test("a SECOND configure threads the bumped version and persists again (no false 'mutations require version')", async () => {
     const { tuiPort, config } = wiredStack(freshStore())
-    await seedProjectRouting(config)
 
     const v0 = await preflightVersion(tuiPort, "routing.configure")
+    expect(v0).toBe(undefined) // fresh project — no committed version yet
     const first = await driveMutation(tuiPort, configureText({ enabled: true, mode: "always" }), v0)
     expect(first.result?.outcome).toBe("success")
 
@@ -192,6 +206,44 @@ describe("Feature 024 (a) — routing.configure Save persists and bumps the CAS 
     const effective = await readEffective(config)
     expect(effective.activation.enabled).toBe(false)
     expect(effective.activation.mode).toBe("never")
+  })
+})
+
+// =============================================================================
+// (e) SCOPE-ALIGNMENT regression — the exact reproduced RED failure, un-masked.
+// =============================================================================
+describe("Feature 024 (e) — write authority follows the REQUEST scope, not the effective origin", () => {
+  test("global-config-resolved base + project-scope configure creates the PROJECT override; second save succeeds", async () => {
+    const { tuiPort, config } = wiredStack(freshStore())
+    // Seed ONLY the global routing doc, so the effective origin resolves to "global"
+    // while a project-scope configure must still target the PROJECT authority.
+    const globalSeed = await createConfigAdapter({ config }).set("global", DEFAULT_ROUTING_CONFIG, null)
+    if (!globalSeed.ok) throw new Error("global seed failed")
+
+    // Preflight targets the PROJECT authority (no project doc yet → version null),
+    // even though the effective config resolves from global.
+    const pre = await tuiPort.preflightMutation({ commandId: "routing.configure", projectId: PROJECT })
+    expect(pre.ok).toBe(true)
+    if (!pre.ok) return
+    expect(pre.authority).toBe("routing")
+    expect(pre.currentVersion).toBe(null)
+
+    const first = await driveMutation(tuiPort, configureText({ enabled: true, mode: "auto" }), undefined)
+    expect(first.result?.outcome).toBe("success")
+
+    // A project override now exists; the global seed is untouched (its version stands).
+    expect(await config.get("routing")).not.toBe(null)
+    const globalEntry = await config.get("global:routing")
+    expect(globalEntry?.version).toBe(globalSeed.version)
+
+    // SECOND save threads the bumped PROJECT token — must NOT fail 'mutations require version'.
+    const v1 = await preflightVersion(tuiPort, "routing.configure")
+    expect(v1).toBe(first.result?.version ?? undefined)
+    const second = await driveMutation(tuiPort, configureText({ mode: "always" }), v1)
+    expect(second.result?.outcome).toBe("success")
+
+    const effective = await readEffective(config)
+    expect(effective.activation.mode).toBe("always")
   })
 })
 

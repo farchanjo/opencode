@@ -58,8 +58,17 @@ export interface RoutingConfigureBackend {
    * VALIDATE the patched routing config and hand back an `OperatorMutationPlan`
    * whose `apply` merges the configure fields into the fresh persisted document
    * under CAS. `mutateAuthority` owns the one committed write.
+   *
+   * `requestScopeKind` is the dispatcher-resolved request scope
+   * (`ctx.request.scope.kind` — "global" / "project" / "session"). The write
+   * authority is derived from THIS scope — the SAME resolution the mutation
+   * preflight uses (`command-authority.ts`) — so the preflight CAS token and the
+   * committed authority can never diverge (Feature 024 fix-round).
    */
-  readonly planConfigure: (input: RoutingConfigureInput) => Effect.Effect<OperatorMutationPlan, RoutingError>
+  readonly planConfigure: (
+    input: RoutingConfigureInput,
+    requestScopeKind: string,
+  ) => Effect.Effect<OperatorMutationPlan, RoutingError>
 }
 
 export interface LiveRoutingConfigureBackendDeps {
@@ -77,9 +86,20 @@ function parseRouting(payload: unknown): RoutingConfig.Info | null {
 
 const unavailable = (reason: string): RoutingError => ({ type: "unavailable", reason })
 
-/** The scope a mutation writes: the effective override authority, or global when unconfigured. */
-function scopeForOrigin(origin: "global" | "project" | "default"): RoutingConfigScope {
-  return origin === "project" ? "project" : "global"
+/**
+ * The scope a `routing.configure` mutation WRITES: derived from the REQUEST scope,
+ * never the effective-config origin. This mirrors the mutation preflight
+ * (`command-authority.ts` — `SMART_AUTHORITY[norm(scope.scopeKind)]`, where `norm`
+ * maps everything but "global" to "project") and the `pools.set` backend (which
+ * always writes the PROJECT `routing` authority for a project-scoped op). Deriving
+ * from the request scope — not `origin` — keeps the preflight CAS-token authority
+ * and the committed authority ALWAYS in lockstep, even on a fresh project whose
+ * config resolves via global/default. A project-scoped configure therefore
+ * creates/writes the project `routing` override; a global-scoped one writes
+ * `global:routing`.
+ */
+function scopeForRequest(scopeKind: string): RoutingConfigScope {
+  return scopeKind === "global" ? "global" : "project"
 }
 
 /**
@@ -106,15 +126,20 @@ export function createRoutingConfigureBackend(deps: LiveRoutingConfigureBackendD
   const now = deps.now ?? Date.now
   const routing = createConfigAdapter({ config: deps.config, now })
 
-  const planConfigure = (input: RoutingConfigureInput): Effect.Effect<OperatorMutationPlan, RoutingError> =>
+  const planConfigure = (
+    input: RoutingConfigureInput,
+    requestScopeKind: string,
+  ): Effect.Effect<OperatorMutationPlan, RoutingError> =>
     Effect.gen(function* () {
-      // Read the effective config (project > global > default) for the merge base +
-      // the write scope — the SAME resolution smart/pools use.
+      // Read the effective config (project > global > default) for the merge BASE
+      // and defaults only — the SAME resolution smart/pools use. The WRITE TARGET
+      // authority, however, comes from the REQUEST scope (below), not this origin.
       const effective = yield* Effect.tryPromise({
         try: () => routing.resolveEffective(),
         catch: (cause): RoutingError => unavailable(String(cause)),
       })
-      const scope = scopeForOrigin(effective.origin)
+      // Write authority = request scope (matches the preflight), NOT effective origin.
+      const scope = scopeForRequest(requestScopeKind)
 
       // VALIDATE the patched config at plan time. An invalid advanced policy (bad
       // budget shape) or an out-of-range mode fails BEFORE any plan is produced, so

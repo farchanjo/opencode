@@ -197,7 +197,12 @@ export function createRoutingDomainPort(routing: RoutingPort, configure?: Routin
         }
         const parsed = parseConfigure(payload)
         if ("kind" in parsed) return Promise.resolve(parsed)
-        return runPlan(configure.planConfigure(parsed))
+        // Thread the dispatcher-resolved REQUEST scope so the backend writes the
+        // SAME authority the mutation preflight reported (project → "routing",
+        // global → "global:routing") — never the effective-config origin. This
+        // keeps the CAS token and the committed authority in lockstep, even on a
+        // fresh project with no project-scope routing document yet (Feature 024).
+        return runPlan(configure.planConfigure(parsed, ctx.request.scope.kind))
       }
 
       default:
