@@ -16,8 +16,10 @@ import {
   composePayload,
   prefillBindings,
   resolveOperatorFieldList,
+  validateBindings,
   type BindingRow,
 } from "../../src/operator/form/field-list"
+import { createMultiFieldState } from "../../src/operator/form/multi-field-modal"
 import { toDetailTree } from "../../src/operator/status"
 import { toStatusNodes } from "../../src/operator/status"
 import { createSpyPort, createFakeToast, createFakeDialog } from "./harness"
@@ -222,6 +224,48 @@ describe("T004 — pools.set bindings-list editor (FR22)", () => {
     expect(compose("pools.set", {}, { bindings: [{ role: "worker", models: ["a"] }] })).toEqual({
       bindings: [{ role: "worker", models: ["a"] }],
     })
+  })
+})
+
+describe("019 fix-round — bindings save-time validation blocks a doomed dispatch (FR22)", () => {
+  test("a role pool with no models is an in-modal error, mirroring backend-live", () => {
+    expect(validateBindings([{ role: "worker", models: [] }])).toBe(`Role pool "worker" has no candidate models`)
+    // Whitespace-only model ids collapse to empty and are rejected just the same.
+    expect(validateBindings([{ role: "worker", models: ["   ", ""] }])).toBe(`Role pool "worker" has no candidate models`)
+  })
+
+  test("a duplicate role pool is rejected before dispatch", () => {
+    expect(validateBindings([{ role: "worker", models: ["a"] }, { role: "worker", models: ["b"] }])).toBe(
+      `Duplicate role pool "worker"`,
+    )
+  })
+
+  test("a blank-role row is ignored (the composer drops it), and a valid list passes clean", () => {
+    expect(validateBindings([{ role: "  ", models: [] }, { role: "worker", models: ["a"] }])).toBeUndefined()
+    expect(validateBindings([{ role: "worker", models: ["a", "b"] }, { role: "manager", models: ["c"] }])).toBeUndefined()
+    expect(validateBindings([])).toBeUndefined() // an empty list is a legitimate "clear pools"
+  })
+})
+
+describe("019 fix-round — hoisted modal state survives a sub-dialog push/pop (FR22)", () => {
+  test("createMultiFieldState seeds one raw key per field and an empty bindings list", () => {
+    const [store] = createMultiFieldState(resolveOperatorFieldList("telemetry.configure")!)
+    expect(Object.keys(store.raw).sort()).toEqual(["endpoint", "transport"])
+    expect(store.bindings).toEqual([])
+    expect(store.loaded).toBe(false)
+  })
+
+  test("state hoisted outside the form persists edits the way a picker/bindings push relies on", () => {
+    // The dialog stack renders only its top level, so a pushed sub-dialog unmounts the
+    // form and re-mounts it on pop. State created here (as the factory does) is the SAME
+    // instance across that re-mount, so a binding added under the pushed editor survives.
+    const [store, setStore] = createMultiFieldState(resolveOperatorFieldList("pools.set")!)
+    setStore("loaded", true)
+    setStore("bindings", [{ role: "worker", models: ["anthropic/claude"] }])
+    // Simulate the re-mount: a fresh MultiFieldForm reads this SAME tuple (props.state).
+    expect(store.loaded).toBe(true)
+    expect(store.bindings).toEqual([{ role: "worker", models: ["anthropic/claude"] }])
+    expect(composeBindingsPayload(store.bindings)).toEqual({ bindings: [{ role: "worker", models: ["anthropic/claude"] }] })
   })
 })
 

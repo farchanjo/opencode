@@ -189,6 +189,26 @@ export function composeBindingsPayload(rows: readonly BindingRow[]): Record<stri
   return { bindings }
 }
 
+/**
+ * In-modal validation for the bindings editor (FR22): mirror the backend's
+ * `pools/backend-live.ts` `describeBindingProblem` rules so an invalid pool is
+ * caught IN-MODAL before a doomed dispatch — a role pool must have at least one
+ * candidate model, and role names must be unique. Blank-role rows are ignored
+ * (the composer drops them). Returns the first problem, or `undefined` when clean.
+ */
+export function validateBindings(rows: readonly BindingRow[]): string | undefined {
+  const seen = new Set<string>()
+  for (const row of rows) {
+    const role = row.role.trim()
+    if (role.length === 0) continue // dropped by composeBindingsPayload
+    if (seen.has(role)) return `Duplicate role pool "${role}"`
+    seen.add(role)
+    const models = row.models.map((m) => m.trim()).filter((m) => m.length > 0)
+    if (models.length === 0) return `Role pool "${role}" has no candidate models`
+  }
+  return undefined
+}
+
 // ── payload composition helpers ─────────────────────────────────────────────
 
 /** Build a partial `patch` object from the parsed values present under the given keys (update verbs). */

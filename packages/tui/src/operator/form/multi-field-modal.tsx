@@ -13,7 +13,7 @@
  */
 import { InputRenderable, TextAttributes, TextareaRenderable } from "@opentui/core"
 import { batch, createEffect, For, onMount, Show, type JSX } from "solid-js"
-import { createStore } from "solid-js/store"
+import { createStore, type SetStoreFunction } from "solid-js/store"
 import { listOperatorPaletteEntries, type OperatorPaletteEntry } from "@opencode-ai/core/operator"
 import type { OperatorSlashPort } from "../../context/operator-slash"
 import type { DialogContext } from "../../ui/dialog"
@@ -25,6 +25,7 @@ import { executeOperatorCommand, type OperatorToast } from "../execute"
 import {
   composePayload,
   prefillBindings,
+  validateBindings,
   type BindingRow,
   type EditField,
   type EditFieldListDescriptor,
@@ -33,6 +34,38 @@ import { failureReason } from "./edit-modal"
 
 /** Outcomes that committed the mutation — the only ones that close the modal (FR20). */
 const SUCCESS_OUTCOMES = new Set(["success", "idempotent_replay"])
+
+/** The reactive form state (raw entries, bindings, cursor, error, busy, loaded). */
+type MultiFieldStore = {
+  raw: Record<string, string>
+  bindings: BindingRow[]
+  active: number
+  error: string | undefined
+  busy: boolean
+  loaded: boolean
+}
+
+/** A hoisted store/setter pair, created ONCE per modal open so it survives sub-dialog push/pop. */
+export type MultiFieldState = readonly [MultiFieldStore, SetStoreFunction<MultiFieldStore>]
+
+/**
+ * Create the modal's reactive state. It is created in `openMultiFieldModal` — OUTSIDE
+ * the `MultiFieldForm` component — so entered values (text fields AND the bindings
+ * rows) persist while the form is unmounted under a pushed picker/bindings sub-dialog.
+ * The dialog stack renders only its top level, so a pushed sub-dialog UNMOUNTS the form
+ * and re-mounts it on pop; a component-local `createStore` would be discarded, losing
+ * every entry (the pools bindings dead-end this fix closes).
+ */
+export function createMultiFieldState(descriptor: EditFieldListDescriptor): MultiFieldState {
+  return createStore<MultiFieldStore>({
+    raw: Object.fromEntries(descriptor.fields.map((f) => [f.key, ""])),
+    bindings: [],
+    active: 0,
+    error: undefined,
+    busy: false,
+    loaded: false,
+  })
+}
 
 export type MultiFieldModalProps = {
   readonly entry: OperatorPaletteEntry
@@ -46,11 +79,47 @@ export type MultiFieldModalProps = {
   /** Fixed payload merged UNDER the composed payload (the entity id an update targets, FR22). */
   readonly basePayload?: Record<string, unknown>
   readonly onSaved?: () => void
+  /** Hoisted state, created once by the factory; a direct mount creates its own on first render. */
+  readonly state?: MultiFieldState
 }
 
 /** Factory for `dialog.push` that mounts the multi-field edit form (T002). */
 export function openMultiFieldModal(props: MultiFieldModalProps): () => JSX.Element {
-  return () => <MultiFieldForm {...props} />
+  // Created once here, NOT inside MultiFieldForm: it must outlive the form's re-mount
+  // when a picker/bindings sub-dialog is pushed on top and later popped.
+  const state = createMultiFieldState(props.descriptor)
+  return () => <MultiFieldForm {...props} state={state} />
+}
+
+/**
+ * A push-based text prompt (FR22): unlike `DialogPrompt.show` — which `dialog.replace`s
+ * the WHOLE stack to a single level, destroying the bindings sub-editors beneath it —
+ * this PUSHES the prompt as one back-stack level and POPS back on confirm/cancel, so the
+ * `BindingsEditor`/`BindingRowEditor` under it stay live and receive the entered value.
+ */
+function promptText(dialog: DialogContext, title: string, placeholder?: string): Promise<string | null> {
+  return new Promise((resolve) => {
+    let settled = false
+    const finish = (value: string | null) => {
+      if (settled) return
+      settled = true
+      resolve(value)
+    }
+    dialog.push(
+      () => (
+        <DialogPrompt
+          title={title}
+          placeholder={placeholder}
+          onConfirm={(value) => {
+            finish(value)
+            dialog.pop()
+          }}
+        />
+      ),
+      // esc / ctrl+c pops this level and runs onClose → resolves null, back to the editor.
+      () => finish(null),
+    )
+  })
 }
 
 /** True for the single-line/multi-line free-text kinds rendered as an `<input>`/`<textarea>`. */
@@ -64,18 +133,14 @@ export function MultiFieldForm(props: MultiFieldModalProps): JSX.Element {
   const fields = props.descriptor.fields
   const saveIndex = fields.length
   const inputs: (InputRenderable | TextareaRenderable | undefined)[] = []
-  const [store, setStore] = createStore({
-    raw: Object.fromEntries(fields.map((f) => [f.key, ""])),
-    bindings: [] as BindingRow[],
-    active: 0,
-    error: undefined as string | undefined,
-    busy: false,
-    loaded: false,
-  })
+  // Hoisted by the factory so it survives the form's re-mount under a pushed sub-dialog.
+  const [store, setStore] = props.state ?? createMultiFieldState(props.descriptor)
 
   onMount(() => {
     props.dialog.setSize("large")
-    void load()
+    // Read/pre-fill exactly once; on a re-mount (pop back from a sub-dialog) the entered
+    // values already live in the hoisted store and must not be clobbered by a re-read.
+    if (!store.loaded) void load()
   })
 
   // Focus follows the active row; picker/toggle/bindings/Save rows carry no input.
@@ -139,6 +204,8 @@ export function MultiFieldForm(props: MultiFieldModalProps): JSX.Element {
   }
 
   function openPicker(field: EditField) {
+    // Capture live text inputs before the push unmounts the form, so they re-seed on pop.
+    setStore("raw", snapshotRaw())
     props.dialog.push(() => (
       <DialogSelect
         title={field.label}
@@ -162,6 +229,8 @@ export function MultiFieldForm(props: MultiFieldModalProps): JSX.Element {
   }
 
   function openBindings() {
+    // Capture live text inputs before the push unmounts the form, so they re-seed on pop.
+    setStore("raw", snapshotRaw())
     props.dialog.push(() => (
       <BindingsEditor
         rows={() => store.bindings}
@@ -183,6 +252,15 @@ export function MultiFieldForm(props: MultiFieldModalProps): JSX.Element {
 
   async function submit() {
     if (store.busy) return
+    // A bindings-list verb (pools.set) validates its rows IN-MODAL first — an empty
+    // model pool or a duplicate role stays a per-field error, never a doomed dispatch (FR22).
+    if (fields.some((field) => field.kind === "bindings_list")) {
+      const bindingsError = validateBindings(store.bindings)
+      if (bindingsError) {
+        setStore("error", bindingsError)
+        return
+      }
+    }
     const composed = composePayload(props.descriptor, snapshotRaw(), { bindings: store.bindings })
     if (!composed.ok) {
       setStore("error", composed.message)
@@ -340,7 +418,7 @@ export function BindingsEditor(props: {
   dialog: DialogContext
 }): JSX.Element {
   async function addBinding() {
-    const role = await DialogPrompt.show(props.dialog, "Role", { placeholder: "e.g. worker" })
+    const role = await promptText(props.dialog, "Role", "e.g. worker")
     if (role && role.trim().length > 0) props.onChange([...props.rows(), { role: role.trim(), models: [] }])
   }
 
@@ -394,7 +472,7 @@ function BindingRowEditor(props: {
   dialog: DialogContext
 }): JSX.Element {
   async function addModel() {
-    const model = await DialogPrompt.show(props.dialog, "Model id", { placeholder: "e.g. anthropic/claude-…" })
+    const model = await promptText(props.dialog, "Model id", "e.g. anthropic/claude-…")
     const row = props.row()
     if (model && model.trim().length > 0 && row) props.onModels([...row.models, model.trim()])
   }
