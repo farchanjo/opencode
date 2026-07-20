@@ -20,6 +20,7 @@ import type { DialogContext } from "../../ui/dialog"
 import { useTheme } from "../../context/theme"
 import { DialogPrompt } from "../../ui/dialog-prompt"
 import { DialogSelect } from "../../ui/dialog-select"
+import { pickModel } from "./model-picker"
 import { useBindings } from "../../keymap"
 import { executeOperatorCommand, type OperatorToast } from "../execute"
 import {
@@ -472,9 +473,15 @@ function BindingRowEditor(props: {
   dialog: DialogContext
 }): JSX.Element {
   async function addModel() {
-    const model = await promptText(props.dialog, "Model id", "e.g. anthropic/claude-…")
+    // Feature 020 (FR2): pick a `provider/model` id from the shared connected-models
+    // picker instead of the free-text prompt; the picker's `Custom id…` escape hatch
+    // still reaches the raw entry (FR4). Already-added ids are skipped so the same id
+    // is not silently duplicated, and a cancel resolves `undefined` → no mutation (FR6).
     const row = props.row()
-    if (model && model.trim().length > 0 && row) props.onModels([...row.models, model.trim()])
+    if (!row) return
+    const model = await pickModel(props.dialog, { alreadySelected: new Set(row.models) })
+    const current = props.row()
+    if (model && model.trim().length > 0 && current) props.onModels([...current.models, model.trim()])
   }
 
   function removeModel(index: number) {

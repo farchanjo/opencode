@@ -22,6 +22,7 @@ import { DialogPrompt } from "../../ui/dialog-prompt"
 import { DialogSelect } from "../../ui/dialog-select"
 import { executeOperatorCommand, type OperatorToast } from "../execute"
 import { resolveOperatorEditPrefill } from "./edit-descriptor"
+import { ModelPicker, promptCustomModelId } from "./model-picker"
 import type { OperatorFormField } from "./descriptor"
 
 /** Outcomes that committed the mutation — the only ones that close the modal (FR9). */
@@ -124,7 +125,31 @@ export function OperatorEditModal(props: OperatorEditModalProps): JSX.Element {
   const title = () => props.title ?? props.entry.title
 
   if (props.field.mode === "value_picker") return <PickerBody />
+  if (props.field.mode === "model_picker") return <ModelPickerBody />
   return <TextBody />
+
+  /** Model-id body (Feature 020 FR3): pick a `provider/model` from the shared connected-models
+   * picker; the `Custom id…` escape hatch reaches the raw id (FR4). The composed payload
+   * (`{ id: "provider/model" }`) is unchanged; a failure stays in-modal, a success closes it. */
+  function ModelPickerBody(): JSX.Element {
+    const field = props.field
+    return (
+      <box flexDirection="column" flexGrow={1}>
+        <ModelPicker
+          current={prefill()}
+          onSelect={(modelId) => {
+            if (field.mode === "model_picker") void dispatchPayload(field.toPayload(modelId))
+          }}
+          onCustom={() =>
+            void promptCustomModelId(props.dialog).then((raw) => {
+              if (raw !== null && field.mode === "model_picker") void dispatchPayload(field.toPayload(raw))
+            })
+          }
+        />
+        <InModalError error={error} />
+      </box>
+    )
+  }
 
   /** Text edit body: pre-filled prompt with an in-modal validation/failure surface. */
   function TextBody(): JSX.Element {

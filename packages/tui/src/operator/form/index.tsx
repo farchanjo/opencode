@@ -125,6 +125,19 @@ export function OperatorForm(props: OperatorFormProps): JSX.Element {
     )
   }
 
+  // Unreachable: `dialog-settings.tsx`'s `onSelectSetting` is the only router that
+  // can feed a Configure verb's field into this form, and it sends a `model_picker`
+  // field down the `openOperatorEditModal` branch instead — a `model_picker` field's
+  // `source` is structurally always `undefined` (descriptor.ts), so its
+  // `field.mode === "text_input" || !field.source` guard is always true for this
+  // mode. `entity-screens.tsx` never calls `openOperatorForm` at all. Verified by a
+  // full-repo caller trace during the Feature 020 review; kept as a loud invariant
+  // (not a silent render) so a future router change that actually reaches this path
+  // fails fast instead of shipping the unmaintained duplicate UI this replaced.
+  if (props.field.mode === "model_picker") {
+    throw new Error("OperatorForm: model_picker is not supported here — it always routes through openOperatorEditModal")
+  }
+
   const field = props.field
   function submitText(raw: string) {
     const validation = field.validate(raw)

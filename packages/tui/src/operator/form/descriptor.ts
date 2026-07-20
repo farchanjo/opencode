@@ -57,6 +57,25 @@ export type OperatorFormField =
       readonly source?: OperatorPickerSource
     }
   | {
+      /**
+       * A model-id field resolved through the shared connected-models picker
+       * (Feature 020 FR3): the operator PICKS a `provider/model` from the live
+       * connected catalog instead of hand-typing it, with a `Custom id…` raw-text
+       * escape hatch (FR4). The payload is composed exactly as the scalar text_input
+       * (`{ [key]: value }`), so the port contract is byte-for-byte unchanged (FR5).
+       */
+      readonly mode: "model_picker"
+      readonly key: string
+      readonly placeholder: string
+      readonly toPayload: (value: string) => Record<string, unknown>
+      /**
+       * Structurally present but always `undefined`: a model_picker uses no dynamic
+       * read source, so the settings router (`!field.source`) routes it to the edit
+       * modal, where the shared `ModelPicker` renders the live connected catalog.
+       */
+      readonly source?: undefined
+    }
+  | {
       readonly mode: "text_input"
       readonly key: string
       readonly placeholder: string
@@ -174,6 +193,8 @@ type FieldSpec =
       readonly label: string
       /** When true the value is a JSON object spread to the top-level payload; otherwise it is a scalar under `key`. */
       readonly json?: boolean
+      /** When true the scalar model-id field resolves through the shared connected-models picker (Feature 020 FR3). */
+      readonly modelPicker?: boolean
     }
 
 const NO_OPTIONS: () => readonly OperatorFormOption[] = () => []
@@ -210,7 +231,7 @@ const FORM_FIELDS: Readonly<Record<string, FieldSpec>> = {
   "semantic.provider.delete": { mode: "text_input", key: "id", placeholder: "Provider id", label: "Provider id" },
   "semantic.provider.rotate-secret": { mode: "text_input", key: "newSecretRef", placeholder: "New secret reference (keychain:…)", label: "Secret reference" },
   "semantic.model.register": { mode: "text_input", json: true, key: "model", placeholder: '{"providerProfileId":"…","modelRef":"…","displayName":"…"}', label: "Model definition" },
-  "semantic.model.disable": { mode: "text_input", key: "id", placeholder: "Model id", label: "Model id" },
+  "semantic.model.disable": { mode: "text_input", key: "id", placeholder: "Model id", label: "Model id", modelPicker: true },
   "semantic.embedding.select": { mode: "text_input", key: "modelDescriptorId", placeholder: "Embedding model id", label: "Embedding model id" },
   "semantic.reranker.select": { mode: "text_input", key: "modelDescriptorId", placeholder: "Reranker model id", label: "Reranker model id" },
   // Feature 014 T012 — output config-backed policy setters (T007). JSON objects spread
@@ -231,6 +252,11 @@ export function resolveOperatorFormField(entry: OperatorPaletteEntry): OperatorF
   if (!spec) return undefined
   if (spec.mode === "value_picker") {
     return { mode: "value_picker", key: spec.key, options: spec.options, emptyText: spec.emptyText, source: spec.source }
+  }
+  // A model-id text field routes to the shared connected-models picker (Feature 020
+  // FR3); the payload is composed as the scalar `{ [key]: value }`, contract unchanged.
+  if (spec.modelPicker) {
+    return { mode: "model_picker", key: spec.key, placeholder: spec.placeholder, toPayload: (value) => ({ [spec.key]: value }) }
   }
   const key = spec.key
   const validate = spec.json ? requireJsonObject(spec.label) : requireText(spec.label)
