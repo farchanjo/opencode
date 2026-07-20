@@ -44,6 +44,9 @@ export async function createTrustedWorkerOperatorFetch(
     getProjectId: () => ctx.projectId,
     injectProjectScopeWhenOmitted: true,
     config: stack.mutationPorts.config,
+    // Feature 017 fix-round (ADR-0017): resolve the preflight to the SAME authority the plan
+    // commits to, so the TUI threads the right CAS token on a second mutation of a shared global.
+    resolveAuthority: stack.resolveAuthority,
     resolveAuth: () => ({
       authenticated: true,
       subject: principal.subject,
@@ -66,7 +69,10 @@ export async function createWorkerLocalSlashPort(
   })
   return {
     stack,
-    port: createTuiOperatorSlashPort(stack.interceptor, { config: stack.mutationPorts.config }),
+    port: createTuiOperatorSlashPort(stack.interceptor, {
+      config: stack.mutationPorts.config,
+      resolveAuthority: stack.resolveAuthority,
+    }),
   }
 }
 

@@ -53,7 +53,7 @@ import type {
 } from "@opencode-ai/protocol/semantic/commands"
 
 /** The project-scope `Config.Service` authority the semantic registry document lives under (mirrors pools `routing`). */
-const AUTHORITY = "semantic" as const
+export const AUTHORITY = "semantic" as const
 
 /** A bounded `SecretRef` coordinate string (`backend:name[@vN]`); anything else is treated as a plaintext leak (FR11). */
 const SECRET_REF_PATTERN = /^[A-Za-z0-9._-]+:[^@\s]+(?:@v[1-9]\d*)?$/

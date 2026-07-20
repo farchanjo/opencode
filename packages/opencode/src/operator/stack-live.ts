@@ -8,7 +8,6 @@
  */
 import path from "path"
 import { mkdir } from "fs/promises"
-import { Database as BunDatabase } from "bun:sqlite"
 import { Effect } from "effect"
 import { Global } from "@opencode-ai/core/global"
 import {
@@ -56,8 +55,8 @@ import { LangLockBackendLive } from "./langlock/backend-live"
 import { LangLockPersistence } from "@/langlock/persistence"
 import { OutputSpoolStackWiring } from "./outputspool/stack-wiring"
 import { OutputSpoolBackendLive } from "./outputspool/backend-live"
-import { ControlStore } from "@/outputspool/control-store"
-import { SessionSpoolWriter } from "@/session/output-spool-writer"
+import { SpoolProcessWriter } from "@/outputspool/spool-process-writer"
+import { createOperatorAuthorityResolver } from "./application/command-authority"
 import { SemanticStackWiring } from "./semantic/stack-wiring"
 import { SemanticBackendLive } from "./semantic/backend-live"
 import type { MilvusBinding } from "./semantic/milvus-binding"
@@ -105,6 +104,11 @@ export type LiveOperatorStack = {
   /** Fresh flag from Config+env (same-process enable/disable). */
   readonly resolveFeatureEnabled: () => Promise<boolean>
   readonly resolveConnectivity: () => Promise<"online" | "offline">
+  /** Preflight authority resolution — the authority a command's plan will commit to (command-authority.ts). */
+  readonly resolveAuthority: (
+    commandId: string,
+    scope: { readonly scopeKind: string; readonly scopeRef: string | null },
+  ) => string | null
   readonly dispose: () => void
 }
 
@@ -425,8 +429,9 @@ export async function createLiveOperatorStack(input: CreateLiveOperatorStackInpu
   // gate is bound (Security 1). Feature 007 stays the sole command-registration
   // authority — this override replaces the not_implemented stub and adds no ids
   // (the reserved langlock.* ids already live in the catalog).
+  const langLockPersistence = LangLockPersistence.createLangLockPersistence({ config: store.config })
   const langLockBackend = LangLockBackendLive.createLiveLangLockBackend({
-    persistence: LangLockPersistence.createLangLockPersistence({ config: store.config }),
+    persistence: langLockPersistence,
   })
   const langLockWiring = LangLockStackWiring.createLangLockDomainWiring({ backend: langLockBackend })
 
@@ -444,34 +449,30 @@ export async function createLiveOperatorStack(input: CreateLiveOperatorStackInpu
   // Feature 007 stays the sole command-registration authority — this override
   // replaces the not_implemented stub and adds no ids (the reserved output.* ids
   // already live in the catalog at 1.3.0).
-  const spoolRoot = path.join(Global.Path.data, "outputspool")
-  let outputControlStore: ReturnType<typeof ControlStore.createControlStore> | undefined
-  try {
-    await mkdir(spoolRoot, { recursive: true })
-    outputControlStore = ControlStore.createControlStore(new BunDatabase(path.join(spoolRoot, "operator-control.db")))
-  } catch {
-    outputControlStore = undefined
-  }
+  // Feature 017 fix-round (ADR-0017): REUSE the process-wide production writer + control store
+  // (armed eagerly at server start, or on demand here for non-server contexts like CLI `op`).
+  // The operator reads the SAME populated `operator-control.db` and never opens a second
+  // connection or a duplicate GlobalBus subscription. Fail-open: an unopenable store leaves the
+  // reads a typed capability gap (FR6, FR10, FR14).
+  const sharedSpool = SpoolProcessWriter.ensureProcessSpoolWriter()
+  const outputControlStore = sharedSpool?.store
+  const spoolRoot = sharedSpool?.spoolRoot ?? path.join(Global.Path.data, "outputspool")
+  const retentionAuthorityFor = (scope: "global" | "project", scopeId: string) =>
+    scope === "global" ? "global:output.retention" : `output.retention/${scopeId || "project"}`
+  const quotaAuthorityFor = (scope: "global" | "project", scopeId: string) =>
+    scope === "global" ? "global:output.quota" : `output.quota/${scopeId || "project"}`
   const outputSpoolBackend = OutputSpoolBackendLive.createLiveOutputSpoolBackend({
     store: outputControlStore,
     spoolRoot,
-    retentionAuthorityFor: (scope, scopeId) =>
-      scope === "global" ? "global:output.retention" : `output.retention/${scopeId || "project"}`,
-    quotaAuthorityFor: (scope, scopeId) =>
-      scope === "global" ? "global:output.quota" : `output.quota/${scopeId || "project"}`,
-    // Feature 017 / T013, T014 — the store is now populated by the production writer below,
+    retentionAuthorityFor,
+    quotaAuthorityFor,
+    // Feature 017 / T013, T014 — the store is populated by the process-wide production writer,
     // so `follow` binds its cursor codec and `release`/`delete`/`purge` commit through the
     // store-scoped admin authority (FR8, FR9). Both stay typed gaps when the store is unbound.
     enableFollow: outputControlStore !== undefined,
     adminAuthority: OutputSpoolBackendLive.OUTPUT_ADMIN_AUTHORITY,
   })
   const outputSpoolWiring = OutputSpoolStackWiring.createOutputSpoolDomainWiring({ backend: outputSpoolBackend })
-  // Feature 017 / T011 (FR6, FR10) — subscribe the PRODUCTION writer at the session
-  // message-part seam so a session's output actually populates the control store the
-  // operator reads. Fails open (a spool write never breaks the session loop) and bounded.
-  const outputSpoolWriterUnsubscribe = outputControlStore
-    ? SessionSpoolWriter.subscribeSessionSpoolWriter({ store: outputControlStore, spoolRoot })
-    : undefined
 
   // === Feature 006 / 014 — semantic domain port composition =================
   // The typed 30 `semantic.*` operator ports. Feature 014 (T009) wires the
@@ -696,6 +697,15 @@ export async function createLiveOperatorStack(input: CreateLiveOperatorStackInpu
     surface: "live",
   })
 
+  // Feature 017 fix-round (ADR-0017): the preflight authority resolver, sourced from the SAME
+  // domain authorities/resolvers the backends commit under — so preflight returns the version of
+  // the authority the command actually writes (the shared globals no longer alias the id prefix).
+  const resolveAuthority = createOperatorAuthorityResolver({
+    langlockAuthorityFor: (scope, scopeId) => langLockPersistence.authorityFor(scope, scopeId),
+    retentionAuthorityFor,
+    quotaAuthorityFor,
+  })
+
   const interceptor = createSlashInterceptor({
     registry,
     dispatcher,
@@ -718,10 +728,12 @@ export async function createLiveOperatorStack(input: CreateLiveOperatorStackInpu
     config,
     resolveFeatureEnabled,
     resolveConnectivity: resolveConnectivityLive,
+    resolveAuthority,
     dispose: () => {
       lifecycleWiring.dispose()
       jobsWiring.dispose()
-      outputSpoolWriterUnsubscribe?.()
+      // The OutputSpool writer subscription is process-wide (SpoolProcessWriter), not owned by
+      // this stack — disposing the stack must not tear it down; a session keeps spooling.
       outputSpoolWiring.dispose()
       semanticWiring.dispose()
       mcpWiring.dispose()

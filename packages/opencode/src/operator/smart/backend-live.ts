@@ -37,7 +37,7 @@ const decodeRouting = Schema.decodeUnknownExit(RoutingConfig.Info)
 
 // The routing Config.Service authority keys per scope (mirrors config-adapter's
 // private AUTHORITY map; surfaced here only as the summary's authority label).
-const AUTHORITY: Record<RoutingConfigScope, string> = {
+export const AUTHORITY: Record<RoutingConfigScope, string> = {
   global: "global:routing",
   project: "routing",
 }

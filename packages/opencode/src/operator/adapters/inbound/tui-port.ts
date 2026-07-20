@@ -74,7 +74,18 @@ export type TuiOperatorSlashPort = {
 
 export function createTuiOperatorSlashPort(
   interceptor: SlashInterceptor,
-  options?: { readonly config?: ConfigPort },
+  options?: {
+    readonly config?: ConfigPort
+    /**
+     * Resolve the authority a command's plan commits to (command-authority.ts). When
+     * present the preflight reads the RIGHT version instead of the id prefix — so a second
+     * mutation of a shared global authority threads the correct CAS token (ADR-0017).
+     */
+    readonly resolveAuthority?: (
+      commandId: string,
+      scope: { readonly scopeKind: string; readonly scopeRef: string | null },
+    ) => string | null
+  },
 ): TuiOperatorSlashPort {
   return {
     cancelConfirmation(token) {
@@ -96,7 +107,11 @@ export function createTuiOperatorSlashPort(
       if (!scopeResult.ok) {
         return { ok: false, code: scopeResult.code, message: scopeResult.message }
       }
-      const authority = authorityKeyForCommandId(input.commandId)
+      const authority =
+        options.resolveAuthority?.(input.commandId, {
+          scopeKind: scopeResult.scope.kind,
+          scopeRef: scopeResult.scope.ref ?? null,
+        }) ?? authorityKeyForCommandId(input.commandId)
       const entry = await options.config.get(authority)
       return {
         ok: true,

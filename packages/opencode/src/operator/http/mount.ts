@@ -28,6 +28,11 @@ export type InjectedOperatorHttpStack = {
   readonly mutationPorts: MutationPorts
   readonly resolveFeatureEnabled?: () => boolean | Promise<boolean>
   readonly featureEnabled?: boolean
+  /** Preflight authority resolution (see command-authority.ts); optional for tests. */
+  readonly resolveAuthority?: (
+    commandId: string,
+    scope: { readonly scopeKind: string; readonly scopeRef: string | null },
+  ) => string | null
 }
 
 export type MountOperatorResult =
@@ -80,6 +85,7 @@ export function tryCreateOperatorHttpFetch(input: TryCreateOperatorHttpFetchInpu
       getProjectId: () => projectId,
       injectProjectScopeWhenOmitted: false,
       config: stack.mutationPorts.config,
+      resolveAuthority: stack.resolveAuthority,
       resolveFeatureEnabled: async () => {
         if (stack.resolveFeatureEnabled) return stack.resolveFeatureEnabled()
         if (typeof stack.featureEnabled === "boolean") return stack.featureEnabled
@@ -140,6 +146,7 @@ export function tryCreateOperatorHttpFetch(input: TryCreateOperatorHttpFetchInpu
         getProjectId: () => projectId,
         injectProjectScopeWhenOmitted: false,
         config: stack.mutationPorts.config,
+        resolveAuthority: stack.resolveAuthority,
         resolveFeatureEnabled: () => stack.resolveFeatureEnabled(),
         resolveAuth(req) {
           return resolveAuthFromHeaders({

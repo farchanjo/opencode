@@ -187,7 +187,9 @@ export function createHttpOperatorSlashPort(options: HttpSlashPortOptions): TuiO
                 : {}),
             ...(options.sandboxToken ? { "x-opencode-operator-token": options.sandboxToken } : {}),
           },
-          body: JSON.stringify({ commandId: input.commandId }),
+          // Send the resolved scope so preflight resolves the SAME (scope-dependent) authority
+          // the command will commit to — the version threaded back is then the right CAS token.
+          body: JSON.stringify({ commandId: input.commandId, scope: scopeResult.scope }),
         })
         if (!res.ok) {
           return {

@@ -7,6 +7,7 @@ import {
   failureResult,
   successResult,
   type CommandResult,
+  type ErrorCode,
   type OperatorCommandDescriptor,
   type CommandRequest,
 } from "@opencode-ai/core/operator"
@@ -24,13 +25,44 @@ export type QueryHandlerResult = {
 }
 
 /**
- * The authority + pure transform a domain backend hands to the dispatcher so
+ * The typed outcome of an `OperatorMutationPlan.effect` (ADR-0017 superseding
+ * decision). `ok:true` threads `value` into `apply` as its second argument;
+ * `ok:false` aborts `mutateAuthority` with the given typed envelope and commits
+ * NOTHING (no fabricated success, no phantom write).
+ */
+export type OperatorMutationEffectResult =
+  | { readonly ok: true; readonly value?: unknown }
+  | {
+      readonly ok: false
+      readonly code: ErrorCode
+      readonly message: string
+      readonly details?: Readonly<Record<string, string | number | boolean | null>>
+    }
+
+/**
+ * An irreversible side effect a store-scoped / live-service plan hands the
+ * dispatcher. `mutateAuthority` runs it EXACTLY ONCE, AFTER contract +
+ * idempotency-claim + CAS-precondition validation and BEFORE the committed CAS
+ * write — so a rejected mutation (missing CAS token, version conflict) or an
+ * idempotent replay never re-runs the destructive op (ADR-0017).
+ */
+export type OperatorMutationEffect = () => Promise<OperatorMutationEffectResult>
+
+/**
+ * The authority + transform a domain backend hands to the dispatcher so
  * `mutateAuthority` owns the single committed CAS write (never the backend itself).
+ *
  * `apply` is a pure function of the raw persisted payload — no I/O, no self-commit.
+ * When the verb has an irreversible side effect (a control-store op, a live MCP
+ * connection change, a credential clear) the plan carries an `effect`: the op is
+ * DEFERRED into it so `mutateAuthority` runs it only after every check passes; the
+ * effect's resolved `value` is threaded to `apply` as its second argument. Pure
+ * config-backed plans leave `effect` unset and stay pure.
  */
 export type OperatorMutationPlan = {
   readonly authority: string
-  readonly apply: (current: unknown) => unknown
+  readonly apply: (current: unknown, effectValue?: unknown) => unknown
+  readonly effect?: OperatorMutationEffect
 }
 
 /** Mutation plan executed only by dispatcher via mutateAuthority. */

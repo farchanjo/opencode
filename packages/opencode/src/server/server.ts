@@ -107,6 +107,16 @@ export async function listen(opts: ListenOptions): Promise<Listener> {
   // Operator: mount only on loopback bind; flag evaluated per request from Config (T041/R3).
   // Real client IP: Node IncomingMessage.socket.remoteAddress via emit intercept (R2).
   // Production path is NodeHttpServer (not Bun.serve); Bun requestIP adapter remains for Bun hosts.
+  // Feature 017 fix-round (ADR-0017): arm the process-wide OutputSpool production writer
+  // eagerly at server start — independent of the operator stack — so a session spools its
+  // output from process start even if the operator is never opened. Fail-open.
+  try {
+    const { SpoolProcessWriter } = await import("@/outputspool/spool-process-writer")
+    SpoolProcessWriter.ensureProcessSpoolWriter()
+  } catch {
+    // Spool bootstrap must never break server startup.
+  }
+
   const { tryCreateOperatorHttpFetch } = await import("@/operator/http/mount")
   const { setOperatorRequestIpResolver, resolveOperatorClientIp } = await import("@/operator/http/client-ip")
   const mount = tryCreateOperatorHttpFetch({

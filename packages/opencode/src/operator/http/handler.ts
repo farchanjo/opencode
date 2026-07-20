@@ -53,6 +53,16 @@ export type OperatorHttpDeps = {
     readonly get: (authority: string) => Promise<{ version?: string } | null>
   }
   /**
+   * Resolve the Config authority a mutating command's plan will commit to, so the
+   * preflight reads the RIGHT version (the shared globals never equal the id prefix).
+   * Returns null for an unknown/non-mutating id; the preflight then falls back to the
+   * `commandId` prefix. Sourced from the domain authorities (see command-authority.ts).
+   */
+  readonly resolveAuthority?: (
+    commandId: string,
+    scope: { readonly scopeKind: string; readonly scopeRef: string | null },
+  ) => string | null
+  /**
    * T041/R3: dynamic feature flag. When false, all routes (except already
    * blocked non-loopback) return unavailable/404. Evaluated per request.
    */
@@ -202,7 +212,21 @@ async function handlePreflight(request: Request, deps: OperatorHttpDeps): Promis
   const commandId = typeof record.commandId === "string" ? record.commandId : ""
   const idParse = parseCommandId(commandId)
   if (!idParse.ok) return badRequest(idParse.reason)
-  const authority = commandId.split(".")[0] ?? commandId
+  // Resolve the scope the client will dispatch under (same authority key derivation as the command):
+  // an explicit body scope, else the injected project scope, else global.
+  let scopeCtx: { scopeKind: string; scopeRef: string | null } = { scopeKind: "global", scopeRef: null }
+  if (record.scope !== undefined && record.scope !== null) {
+    const scopeParse = parseScope(record.scope)
+    if (!scopeParse.ok) return badRequest(scopeParse.reason)
+    scopeCtx = { scopeKind: scopeParse.value.kind, scopeRef: scopeParse.value.ref ?? null }
+  } else {
+    const projectId = deps.getProjectId?.(request) ?? null
+    if (deps.injectProjectScopeWhenOmitted && projectId) scopeCtx = { scopeKind: "project", scopeRef: projectId }
+  }
+  // Resolve the SAME authority the command's mutation plan commits to; fall back to the prefix
+  // only for ids the registry does not know (non-mutating / not yet mapped) — never a shared global.
+  const resolved = deps.resolveAuthority?.(commandId, scopeCtx) ?? null
+  const authority = resolved ?? commandId.split(".")[0] ?? commandId
   const entry = await deps.config.get(authority)
   return json(
     {

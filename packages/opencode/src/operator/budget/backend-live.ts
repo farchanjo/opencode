@@ -62,7 +62,7 @@ type RoutingBudget = RoutingConfig.Enforcement["budget"]
 const DEFAULT_BUDGET: RoutingBudget = DEFAULT_ROUTING_CONFIG.enforcement.budget
 
 /** The routing Config.Service authority keys per scope (mirrors config-adapter's private map). */
-const AUTHORITY: Record<RoutingConfigScope, string> = {
+export const AUTHORITY: Record<RoutingConfigScope, string> = {
   global: "global:routing",
   project: "routing",
 }

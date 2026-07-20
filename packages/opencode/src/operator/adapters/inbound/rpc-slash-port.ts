@@ -160,7 +160,8 @@ export function createWorkerRpcSlashPort(options: RpcOperatorSlashPortOptions): 
       try {
         const raw = await rpc("/operator/v1/preflight", {
           method: "POST",
-          body: JSON.stringify({ commandId: input.commandId }),
+          // Send the resolved scope so the worker resolves the SAME scope-dependent authority.
+          body: JSON.stringify({ commandId: input.commandId, scope: scopeResult.scope }),
           projectId: input.projectId,
           sessionId: input.sessionId,
         })

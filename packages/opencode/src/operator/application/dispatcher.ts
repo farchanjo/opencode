@@ -274,6 +274,9 @@ export function createDispatcher(options: DispatchOptions): Dispatcher {
           request,
           authority: plan.authority || options.authorityFor?.(descriptor) || descriptor.domain,
           apply: plan.apply,
+          // The irreversible op (control-store / live MCP action / credential clear)
+          // is deferred here so mutateAuthority runs it only after all checks pass.
+          effect: plan.effect,
           snapshotBefore: plan.snapshotBefore,
           cutoverDomain: plan.cutoverDomain,
           rollbackDomain: plan.rollbackDomain,

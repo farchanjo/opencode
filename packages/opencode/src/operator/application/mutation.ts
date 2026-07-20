@@ -12,6 +12,7 @@ import {
   snapshotMaxAgeMs,
   SNAPSHOT_MAX_COUNT,
 } from "@opencode-ai/core/operator"
+import type { OperatorMutationEffect } from "./handler"
 import type { ConfigPort } from "./ports/config-port"
 import type { EventPort } from "./ports/event-port"
 import type { IdempotencyPort } from "./ports/idempotency-port"
@@ -34,7 +35,15 @@ export type MutationPorts = {
 export type MutateAuthorityInput = {
   readonly request: CommandRequest
   readonly authority: string
-  readonly apply: (current: unknown) => unknown
+  readonly apply: (current: unknown, effectValue?: unknown) => unknown
+  /**
+   * Optional irreversible side effect (control-store op, live MCP action,
+   * credential clear). Run ONCE, AFTER contract + idempotency-claim + CAS
+   * precondition pass and BEFORE the committed CAS write; its `value` is threaded
+   * to `apply`. A typed failure aborts with an envelope and commits nothing
+   * (ADR-0017 no-phantom-write / no-replay-rerun superseding decision).
+   */
+  readonly effect?: OperatorMutationEffect
   readonly snapshotBefore?: boolean
   readonly cutoverDomain?: string
   readonly rollbackDomain?: string
@@ -224,7 +233,30 @@ export async function mutateAuthority(ports: MutationPorts, input: MutateAuthori
     })
   }
 
-  const nextPayload = input.apply(current?.payload ?? null)
+  // Effectful plans (control-store / live-service verbs): run the irreversible op
+  // ONLY now — after contract + idempotency claim + CAS precondition all pass, so a
+  // rejected mutation or an idempotent replay never re-runs the destructive op
+  // (ADR-0017 superseding decision). A typed failure aborts BEFORE any config write;
+  // an unexpected throw degrades to a typed `unavailable`. Neither records success.
+  let effectValue: unknown
+  if (input.effect) {
+    let outcome
+    try {
+      outcome = await input.effect()
+    } catch (error) {
+      return failureResult({
+        id,
+        code: "unavailable",
+        message: error instanceof Error ? error.message : "mutation side effect failed",
+      })
+    }
+    if (!outcome.ok) {
+      return failureResult({ id, code: outcome.code, message: outcome.message, details: outcome.details })
+    }
+    effectValue = outcome.value
+  }
+
+  const nextPayload = input.apply(current?.payload ?? null, effectValue)
   // R1/H1/H3: payload + optional snapshot + rollback slot + audit intent in ONE CAS write
   const cas = await ports.config.compareAndSet({
     authority: input.authority,

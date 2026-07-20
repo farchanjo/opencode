@@ -64,7 +64,7 @@ import type { Paging } from "@opencode-ai/core/outputspool/paging"
 import { PageReader } from "@/outputspool/page-reader"
 import { SessionSpoolWriter } from "@/session/output-spool-writer"
 import type { ControlStore } from "@/outputspool/control-store"
-import type { OperatorMutationPlan } from "@/operator/application/handler"
+import type { OperatorMutationEffectResult, OperatorMutationPlan } from "@/operator/application/handler"
 import type { OutputSpoolBackend } from "./outputspool-port"
 
 /** Resolves the config authority a scope/scopeId maps to (mirrors LangLockPersistence.authorityFor). */
@@ -268,11 +268,13 @@ const followMethod = (
 })
 
 /**
- * Feature 017 / T014 (FR9, ADR-0017) — the store-scoped admin edge. Each verb runs the REAL
- * control-store op at plan-build time (a rejection fails BEFORE any op, so no phantom write),
- * then returns a plan whose `apply` records the admin outcome — including the real control-store
- * `generation`, NEVER a fabricated config CAS version — under the store-scoped authority; the
- * dispatcher's `mutateAuthority` commits the record and emits the Feature 007 audit correlation.
+ * Feature 017 / T014 (FR9, ADR-0017 superseding decision) — the store-scoped admin edge. Only
+ * the NON-destructive record read happens at plan-build time (so a not_found/store-outage fails
+ * BEFORE any op). The irreversible control-store op is DEFERRED into the plan's `effect`, which
+ * `mutateAuthority` runs exactly once AFTER contract + idempotency-claim + CAS precondition pass —
+ * so a rejected mutation or an idempotent replay never destroys data. `apply` then records the
+ * admin outcome (the real control-store `generation`, NEVER a fabricated config CAS version) under
+ * the store-scoped authority, and the dispatcher emits the Feature 007 audit correlation.
  */
 const adminMethods = (
   deps: LiveOutputSpoolBackendDeps,
@@ -288,18 +290,28 @@ const adminMethods = (
       Effect.flatMap((record) => (record ? Effect.succeed(record) : Effect.fail<AdminError>({ type: "not_found", outputRef }))),
     )
 
-  /** Run one control-store admin op at plan time, then record the settled generation under the store-scoped authority. */
+  /**
+   * Read the record (non-destructive; not_found/outage fails here with no op), then return a plan
+   * whose `effect` DEFERS the irreversible control-store op to `mutateAuthority` (run only after all
+   * checks pass), and whose `apply` records the settled generation under the store-scoped authority.
+   */
   const runAdmin = (
     outputRef: string,
     action: "release" | "delete" | "purge",
     op: (record: ControlStore.GenerationRecord) => void,
   ): Effect.Effect<OperatorMutationPlan, AdminError> =>
     require(outputRef).pipe(
-      Effect.flatMap((record) =>
-        Effect.try({ try: () => op(record), catch: (e) => adminUnavailable(String(e)) }).pipe(Effect.as(record)),
-      ),
       Effect.map((record) => ({
         authority,
+        // Deferred: the destructive op runs inside mutateAuthority's effect phase, never at plan build.
+        effect: async (): Promise<OperatorMutationEffectResult> => {
+          try {
+            op(record)
+            return { ok: true }
+          } catch (e) {
+            return { ok: false, code: "unavailable", message: String(e) }
+          }
+        },
         apply: (current: unknown) => {
           const map = current && typeof current === "object" && !Array.isArray(current) ? { ...(current as Record<string, unknown>) } : {}
           // The settled version is the control-store generation, never a fabricated config CAS version (FR9).

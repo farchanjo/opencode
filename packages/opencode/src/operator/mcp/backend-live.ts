@@ -33,7 +33,7 @@ import type {
   McpResourceDescriptor,
   McpResourceTemplateDescriptor,
 } from "@opencode-ai/protocol/mcp/commands"
-import type { OperatorMutationPlan } from "@/operator/application/handler"
+import type { OperatorMutationEffectResult, OperatorMutationPlan } from "@/operator/application/handler"
 import type { ConfigPort } from "@/operator/application/ports/config-port"
 import type {
   LiveServerRead,
@@ -278,11 +278,11 @@ export function liveServerReader(source: McpLiveServerSource): McpLiveServerRead
 // =============================================================================
 
 /** The operator SSOT authority the config-backed mcp verbs persist through `mutateAuthority`. */
-const MCP_CONFIG_AUTHORITY = "global:mcp" as const
+export const MCP_CONFIG_AUTHORITY = "global:mcp" as const
 /** The store-scoped authority the live-service actions record their resulting connection outcome under. */
-const MCP_CONNECTIONS_AUTHORITY = "global:mcp-connections" as const
+export const MCP_CONNECTIONS_AUTHORITY = "global:mcp-connections" as const
 /** The store-scoped authority `auth.remove` records its local credential-clear outcome under. */
-const MCP_AUTH_AUTHORITY = "global:mcp-auth" as const
+export const MCP_AUTH_AUTHORITY = "global:mcp-auth" as const
 
 const TRANSPORT_KINDS: ReadonlySet<string> = new Set(["stdio", "streamable-http", "sse"])
 const LOG_LEVELS: ReadonlySet<string> = new Set(["debug", "info", "notice", "warning", "error", "critical", "alert", "emergency"])
@@ -484,7 +484,13 @@ export function createMcpMutations(deps: McpMutationDeps): McpMutationBackend {
       })
     })
 
-  /** Run one live-service connection action and, on success, record the resulting outcome (T009, FR4). */
+  /**
+   * Validate the request, then return a plan whose `effect` DEFERS the live-service connection
+   * action to `mutateAuthority` (run only after all checks pass, T009, FR4, ADR-0017). The op is
+   * never performed at plan-build time, so a rejected mutation or an idempotent replay never
+   * re-runs connect/disconnect/reconnect. `apply` records the resulting status; a `not_found`/
+   * unreachable service is a typed effect failure that commits nothing.
+   */
   const liveActionPlan = (
     serverId: string,
     action: "connect" | "disconnect" | "reconnect",
@@ -493,16 +499,23 @@ export function createMcpMutations(deps: McpMutationDeps): McpMutationBackend {
     Effect.gen(function* () {
       if (!serverId) return yield* Effect.fail(invalidArg("serverId", "server id is required"))
       if (!run) return yield* Effect.fail<McpMutationError>({ type: "mcp_unavailable", reason: "mcp live service is not bound" })
-      const outcome = yield* Effect.tryPromise({
-        try: () => run(serverId),
-        catch: () => ({ type: "mcp_unavailable" as const, reason: "mcp live service is unreachable" }),
-      })
-      if (outcome.kind === "not_found") return yield* Effect.fail<McpMutationError>({ type: "not_found", id: serverId })
+      const action_ = action
       return {
         authority: MCP_CONNECTIONS_AUTHORITY,
-        apply: (current: unknown) => {
+        effect: async (): Promise<OperatorMutationEffectResult> => {
+          let outcome: McpLiveActionOutcome
+          try {
+            outcome = await run(serverId)
+          } catch {
+            return { ok: false, code: "unavailable", message: "mcp live service is unreachable" }
+          }
+          if (outcome.kind === "not_found")
+            return { ok: false, code: "invalid_argument", message: `server not found: ${serverId}`, details: { field: "id" } }
+          return { ok: true, value: outcome.status }
+        },
+        apply: (current: unknown, effectValue?: unknown) => {
           const map = parseMap(current)
-          map[serverId] = { action, status: outcome.status, updatedAtMs: now() }
+          map[serverId] = { action: action_, status: typeof effectValue === "string" ? effectValue : "unknown", updatedAtMs: now() }
           return map
         },
       }
@@ -520,15 +533,23 @@ export function createMcpMutations(deps: McpMutationDeps): McpMutationBackend {
       if (!input.serverId) return yield* Effect.fail(invalidArg("serverId", "server id is required"))
       if (!deps.authClear)
         return yield* Effect.fail<McpMutationError>({ type: "mcp_unavailable", reason: "mcp credential store is not bound" })
-      yield* Effect.tryPromise({
-        try: () => deps.authClear!.remove(input.serverId),
-        catch: () => ({ type: "mcp_unavailable" as const, reason: "mcp credential store is unreachable" }),
-      })
+      const authClear = deps.authClear
+      const serverId = input.serverId
       return {
         authority: MCP_AUTH_AUTHORITY,
+        // Deferred: the local credential clear runs inside mutateAuthority's effect phase, never at
+        // plan build — so a rejected mutation or an idempotent replay never re-clears the credential.
+        effect: async (): Promise<OperatorMutationEffectResult> => {
+          try {
+            await authClear.remove(serverId)
+            return { ok: true }
+          } catch {
+            return { ok: false, code: "unavailable", message: "mcp credential store is unreachable" }
+          }
+        },
         apply: (current: unknown) => {
           const map = parseMap(current)
-          map[input.serverId] = { action: "remove", updatedAtMs: now() }
+          map[serverId] = { action: "remove", updatedAtMs: now() }
           return map
         },
       }

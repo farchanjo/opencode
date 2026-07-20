@@ -44,7 +44,7 @@ import type { TelemetryBackend, TelemetryProbe } from "./telemetry-port"
  * is prefixed so the durable store routes it to the global document; effective
  * reads still shadow project → global → default via `resolveEffectiveTelemetryConfig`.
  */
-const AUTHORITY = "global:telemetry" as const
+export const AUTHORITY = "global:telemetry" as const
 
 /** The canonical export-header key a `SecretRef` is persisted under (never a plaintext value). */
 const EXPORT_HEADER_KEY = "authorization" as const

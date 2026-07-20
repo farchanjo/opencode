@@ -41,7 +41,7 @@ import type {
 import type { PoolsBackend } from "./pools-port"
 
 // The `project` routing Config.Service authority key (mirrors ConfigAdapter AUTHORITY.project).
-const PROJECT_AUTHORITY = "routing"
+export const PROJECT_AUTHORITY = "routing"
 
 export interface LivePoolsBackendDeps {
   readonly config: ConfigPort
