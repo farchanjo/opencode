@@ -313,14 +313,27 @@ const DESCRIPTORS: readonly EditFieldListDescriptor[] = [
     compose: (v) => composeBindingsPayload(asBindingRows(v.bindings)),
   },
   {
+    // Feature 029 — Mode is OPTIONAL. The backend `routing.configure` accepts an
+    // enabled-only payload and partial-merges it, preserving the stored mode; but it
+    // rejects a `mode: ""` placeholder with `invalid_argument`. So an unselected Mode
+    // (the "— select —" placeholder) must be OMITTED from the payload, never sent as
+    // an empty string — a Save that only flips Enabled succeeds and leaves Mode as-is.
+    // The picker itself can only ever yield a real always/auto/never value, so the
+    // placeholder is a display-only "leave unchanged" affordance, not a settable mode.
     commandId: "routing.configure",
     readId: "routing.status",
     fields: [
       { key: "enabled", label: "Enabled", kind: "toggle", required: false, prefill: prefillScalar("enabled") },
-      { key: "mode", label: "Mode", kind: "picker", required: true, options: ROUTING_MODES, prefill: prefillString("mode") },
+      { key: "mode", label: "Mode", kind: "picker", required: false, options: ROUTING_MODES, prefill: prefillString("mode") },
       { key: "advanced", label: "Advanced policy (JSON)", kind: "advanced_json", required: false, placeholder: '{"budgetPolicy":{…}}', parse: optionalJsonObject("Advanced policy") },
     ],
-    compose: (v) => ({ enabled: v.enabled, mode: v.mode, ...asSpread(v.advanced) }),
+    // Omit an absent enabled/mode (composePayload drops an optional-blank field) so the
+    // placeholder never rides the wire as `mode: ""` (the backend `invalid_argument`).
+    compose: (v) => ({
+      ...(v.enabled !== undefined ? { enabled: v.enabled } : {}),
+      ...(v.mode !== undefined ? { mode: v.mode } : {}),
+      ...asSpread(v.advanced),
+    }),
   },
   {
     commandId: "mcp.server.add",
