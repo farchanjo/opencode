@@ -148,6 +148,62 @@ describe("T032 CLI command parse + registry", () => {
     expect(scope.ok).toBe(false)
   })
 
+  test("explicit --scope global on a GP command forces global (ref null) over a bound project (Feature 034)", () => {
+    const registry = createSeededOperatorCommandRegistry()
+    const d = registry.lookup("pools.set")!
+    const scope = resolveCliScope({
+      descriptor: d,
+      ctx: principalCtx({ projectId: "proj_a" }),
+      flags: { scope: "global" },
+    })
+    expect(scope.ok).toBe(true)
+    if (scope.ok) expect(scope.scope).toEqual({ kind: "global", ref: null })
+  })
+
+  test("explicit --scope global on a project-only descriptor → ok:false (Feature 034)", () => {
+    const registry = createSeededOperatorCommandRegistry()
+    const projectOnly = registry.list().find((x) => x.scopesAllowed.includes("project") && !x.scopesAllowed.includes("global"))!
+    const scope = resolveCliScope({
+      descriptor: projectOnly,
+      ctx: principalCtx({ projectId: "proj_a" }),
+      flags: { scope: "global" },
+    })
+    expect(scope.ok).toBe(false)
+    if (!scope.ok) expect(scope.reason).toContain("does not allow global scope")
+  })
+
+  test("no --scope flag keeps the project-preferred default (back-compat, Feature 034)", () => {
+    const registry = createSeededOperatorCommandRegistry()
+    const d = registry.lookup("pools.set")!
+    const scope = resolveCliScope({
+      descriptor: d,
+      ctx: principalCtx({ projectId: "proj_a" }),
+      flags: {},
+    })
+    expect(scope.ok).toBe(true)
+    if (scope.ok) expect(scope.scope).toEqual({ kind: "project", ref: "proj_a" })
+  })
+
+  test("unknown --scope value is rejected with a clean reason (Feature 034)", () => {
+    const registry = createSeededOperatorCommandRegistry()
+    const d = registry.lookup("pools.set")!
+    const scope = resolveCliScope({ descriptor: d, ctx: principalCtx(), flags: { scope: "planet" } })
+    expect(scope.ok).toBe(false)
+    if (!scope.ok) expect(scope.reason).toContain("unknown scope kind")
+  })
+
+  test("--scope global conflicting with an explicit --project ref is rejected (Feature 034)", () => {
+    const registry = createSeededOperatorCommandRegistry()
+    const d = registry.lookup("pools.set")!
+    const scope = resolveCliScope({
+      descriptor: d,
+      ctx: principalCtx({ projectId: "proj_a" }),
+      flags: { scope: "global", project: "proj_a" },
+    })
+    expect(scope.ok).toBe(false)
+    if (!scope.ok) expect(scope.reason).toContain("conflicts with --project")
+  })
+
   test("parse invocation rejects mutation without idempotency/version", () => {
     const registry = createSeededOperatorCommandRegistry()
     const r = parseCliInvocation({

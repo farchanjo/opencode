@@ -41,6 +41,13 @@ export type CliParseFlags = {
   readonly session?: string
   readonly project?: string
   readonly rootTree?: string
+  /**
+   * Explicit authority scope (Feature 034): `global | project | session | root-tree`.
+   * Forces the request to that kind when the command allows it, OVERRIDING the ambient
+   * project preference; an unknown value or a kind the command forbids is a clean scope
+   * error. Absent → the resolver keeps its project-preferred behavior (full back-compat).
+   */
+  readonly scope?: string
   readonly yes?: boolean
   readonly json?: boolean
   /** Raw JSON string (bounded before parse). */
@@ -128,6 +135,15 @@ export function resolveCliScope(input: {
   const sessionId = input.flags.session?.trim() || input.ctx.sessionId || null
   const rootTreeRef = input.flags.rootTree?.trim() || input.ctx.rootTreeRef || null
 
+  // Feature 034 — an explicit `--scope <kind>` selects the authority scope directly,
+  // OVERRIDING the ambient-project preference (the only way to request global while a
+  // project is bound to the cwd). It takes precedence over the ref-only flags; a
+  // conflicting ref flag of a different kind is rejected rather than silently ignored.
+  const explicitScope = input.flags.scope?.trim()
+  if (explicitScope) {
+    return resolveExplicitCliScope(explicitScope, { descriptor: input.descriptor, ctx: input.ctx, flags: input.flags, allowed })
+  }
+
   // Explicit flag forces kind if allowed
   if (input.flags.session?.trim()) {
     if (!allowed.includes("session")) {
@@ -182,6 +198,64 @@ export function resolveCliScope(input: {
     return { ok: true, scope: { kind: "root-tree", ref: rootTreeRef ?? "local" } }
   }
   return { ok: false, reason: `no allowed scope for ${input.descriptor.id}` }
+}
+
+/** The closed set of explicit `--scope` kinds accepted by the CLI (Feature 034). */
+const CLI_SCOPE_KINDS: readonly ScopeKind[] = ["global", "project", "session", "root-tree"]
+
+/**
+ * Resolve an explicit `--scope <kind>` selection (Feature 034). Validates the kind
+ * against the closed `ScopeKind` set, rejects a conflicting explicit ref flag of a
+ * different kind, enforces the descriptor's `scopesAllowed`, and binds the ref the kind
+ * needs (`global` carries none). Returns a clean `{ok:false, reason}` — surfaced as the
+ * SAME `forbidden_scope` envelope the ambient path produces — on any violation.
+ */
+function resolveExplicitCliScope(
+  raw: string,
+  input: {
+    readonly descriptor: OperatorCommandDescriptor
+    readonly ctx: CliPrincipalContext
+    readonly flags: CliParseFlags
+    readonly allowed: readonly ScopeKind[]
+  },
+): { ok: true; scope: OperatorScope } | { ok: false; reason: string } {
+  const kind = raw.toLowerCase() as ScopeKind
+  if (!CLI_SCOPE_KINDS.includes(kind)) {
+    return { ok: false, reason: `unknown scope kind: ${raw} (expected global|project|session|root-tree)` }
+  }
+  // Reject a conflicting explicit ref flag of a DIFFERENT kind (least-surprising: the two
+  // selectors must agree, so a mistaken `--scope global --project p` is an error not a silent win).
+  if (input.flags.session?.trim() && kind !== "session")
+    return { ok: false, reason: `--scope ${kind} conflicts with --session` }
+  if (input.flags.project?.trim() && kind !== "project")
+    return { ok: false, reason: `--scope ${kind} conflicts with --project` }
+  if (input.flags.rootTree?.trim() && kind !== "root-tree")
+    return { ok: false, reason: `--scope ${kind} conflicts with --root-tree` }
+  if (!input.allowed.includes(kind)) {
+    return { ok: false, reason: `command ${input.descriptor.id} does not allow ${kind} scope` }
+  }
+  switch (kind) {
+    case "global":
+      return { ok: true, scope: { kind: "global", ref: null } }
+    case "project": {
+      const ref = input.flags.project?.trim() || input.ctx.projectId || null
+      if (!ref) return { ok: false, reason: `command ${input.descriptor.id} project scope requires a project ref` }
+      if (input.ctx.projectId && ref !== input.ctx.projectId && input.ctx.projectId !== "local") {
+        return { ok: false, reason: `cross-project scope denied (cwd=${input.ctx.projectId}, requested=${ref})` }
+      }
+      return { ok: true, scope: { kind: "project", ref } }
+    }
+    case "session": {
+      const ref = input.flags.session?.trim() || input.ctx.sessionId || null
+      if (!ref) return { ok: false, reason: `command ${input.descriptor.id} session scope requires a session ref` }
+      return { ok: true, scope: { kind: "session", ref } }
+    }
+    case "root-tree": {
+      const ref = input.flags.rootTree?.trim() || input.ctx.rootTreeRef || null
+      if (!ref) return { ok: false, reason: `command ${input.descriptor.id} root-tree scope requires a root-tree ref` }
+      return { ok: true, scope: { kind: "root-tree", ref } }
+    }
+  }
 }
 
 /** HTTP-parity JSON depth/size bound (arrays ≤1000, keys ≤200, depth ≤12). */

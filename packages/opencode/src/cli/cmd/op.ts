@@ -21,6 +21,7 @@ type OpArgs = {
   session?: string
   project?: string
   rootTree?: string
+  scope?: string
   payload?: string
   payloadFile?: string
   directory?: string
@@ -65,6 +66,10 @@ export const OpCommand = effectCmd({
       })
       .option("root-tree", {
         describe: "root-tree scope ref",
+        type: "string",
+      })
+      .option("scope", {
+        describe: "explicit authority scope: global|project|session|root-tree (only when the command allows it)",
         type: "string",
       })
       .option("payload", {
@@ -241,6 +246,7 @@ export const OpCommand = effectCmd({
           session: args.session,
           project: args.project,
           rootTree: args.rootTree,
+          scope: args.scope,
         },
         ctx: {
           projectId,
