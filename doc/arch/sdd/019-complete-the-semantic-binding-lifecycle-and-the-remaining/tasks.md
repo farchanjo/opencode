@@ -38,11 +38,11 @@ it needs no Milvus and unblocks the archive the embedding rollback also reads.
 - [x] T010 — Delegate `mcp.auth.start`/`finish` for the interactive TUI; headless keeps the gap
 - [x] T011 — `mcp.resource.admin.subscribe`/`unsubscribe` over the dual-authority machine
 - [x] T012 — Truthful experimental/extension badges from the config-backed flag state
-- [ ] T013 — Compose an eager, fail-open, process-singleton OTLP export pipeline
-- [ ] T014 — Real transport + bounded queue + drop policy + retry-budget enforcement
-- [ ] T015 — Redaction defaults enforced on every exported signal
-- [ ] T016 — Pull-based re-arm on server start / `telemetry.*` dispatch; disabled → no fiber
-- [ ] T017 — Env-gated live validation (Milvus endpoint + OTLP collector)
+- [x] T013 — Compose an eager, fail-open, process-singleton OTLP export pipeline
+- [x] T014 — Real transport + bounded queue + drop policy + retry-budget enforcement
+- [x] T015 — Redaction defaults enforced on every exported signal
+- [x] T016 — Pull-based re-arm on server start / `telemetry.*` dispatch; disabled → no fiber
+- [x] T017 — Env-gated live validation (Milvus endpoint + OTLP collector)
 - [ ] T018 — Palette availability flip to the composed truth
 - [ ] T019 — Group A tests (registry routing, archive, gates)
 - [ ] T020 — Group B tests (Milvus port, generation build, reconcile, live Milvus)
@@ -349,7 +349,16 @@ it needs no Milvus and unblocks the archive the embedding rollback also reads.
 - **Acceptance:** the pipeline arms eagerly and fails open on a fault; a second call reuses the
   armed instance; a disabled config leaves it disarmed.
 - **Verification:** `bun test packages/opencode/test/routing/** packages/opencode/test/operator/**`.
-- **Evidence:** _(reserved)_
+- **Evidence:** 2026-07-20 — `packages/opencode/src/routing/telemetry-export.ts`
+  `ensureTelemetryExport` (`:236-259`) is the process-singleton (`singleton`/`pending`/`attempted`
+  state) mirroring `ensureExecutorComposition`: eager, idempotent (a second call returns the same
+  instance), FAIL-OPEN (a build fault degrades to `disarmed(reason)` — `armPipeline`/`disarmed` at
+  `:118-192`). `server.ts` (`:134-146`) arms it fire-and-forget at `listen()`
+  (`void TelemetryExport.ensureTelemetryExport().catch(...)`), independent of the operator stack.
+  `telemetry-export-live.ts` builds the SAME live `store.config` + `SecretPort` seams the operator
+  stack binds (no parallel store). A disabled config → `disarmed` with NO interval, NO adapter, NO
+  network (`buildPipeline` `:280-297`). Tests: `test/routing/telemetry-export.test.ts` T013 block
+  (armed/idempotent/disabled-disarmed) green.
 
 - [ ] **T014 — Real transport + bounded queue + drop policy + retry-budget enforcement**
 - **Depends:** T013
@@ -361,7 +370,21 @@ it needs no Milvus and unblocks the archive the embedding rollback also reads.
 - **Acceptance:** an enabled pipeline sends a batch over the real transport; overflow applies the
   drop policy; a failed send retries within the budget then drops; the session loop never blocks.
 - **Verification:** `bun test packages/opencode/test/routing/**` (fake transport unit tests).
-- **Evidence:** _(reserved)_
+- **Evidence:** 2026-07-20 — Transport chosen: **`http/protobuf` via `fetch` with spec-valid
+  OTLP/JSON** (`content-type: application/json`), no new dependency (ADR-0019 decision 8
+  implement-time note). `packages/opencode/src/routing/adapters/outbound/otlp-transport.ts`
+  `createHttpOtlpTransport` groups a drained batch by kind and POSTs each to
+  `<endpoint>/v1/{metrics,logs,traces}`; metrics → single-point Gauge (numeric `value` = the point,
+  the rest content-free labels), logs → `logRecords`, traces → spans (random 16-byte trace / 8-byte
+  span ids). `retry_budget` is honored (transient 5xx/429/network retried within budget + bounded
+  backoff; permanent 4xx not retried); every request is bounded by `export_timeout_ms`
+  (`AbortController`) and NEVER throws into the caller (`{ok:false,reason}`). `grpc` stays a typed
+  boundary → the pipeline disarms with a typed reason. The pipeline flush drains the reused Feature
+  001 `BoundedExportQueue` (capacity/batch/drop policy) over the transport, isolating export errors.
+  Tests: `test/routing/otlp-transport.test.ts` (encoding per kind; retry-within-budget; give-up after
+  budget; 4xx-no-retry; network-throw → `{ok:false}`; empty-batch no-op; probe) + `telemetry-export.test.ts`
+  T014 block (flush ships content-free instruments; timer-driven flush non-blocking; drop policy sheds
+  overflow; failing transport isolates the error) green (21 pass across the two files).
 
 - [ ] **T015 — Redaction defaults enforced on every exported signal**
 - **Depends:** T014
@@ -373,7 +396,16 @@ it needs no Milvus and unblocks the archive the embedding rollback also reads.
 - **Acceptance:** a signal carrying a redacted category is stripped before export; a unit test
   asserts no sensitive field crosses the transport.
 - **Verification:** `bun test packages/opencode/test/routing/** packages/opencode/test/telemetry/**`.
-- **Evidence:** _(reserved)_
+- **Evidence:** 2026-07-20 — Redaction is enforced in the OTLP adapter `offer`
+  (`otlp-adapter.ts:119-131`, `redactAttributes` over `redactionPolicyFromConfig`) BEFORE a signal is
+  queued, so nothing sensitive can reach the transport. The exported signal set is a small, honest,
+  **content-free** in-process meter (queue/export instruments + `opencode_operator_mutation_total`
+  bumped by the dispatcher post-commit hook + `opencode_session_count`), each a numeric-`value` point
+  only. Pinned by a hostile-attribute-set test: `test/routing/telemetry-export.test.ts` T015 offers a
+  bag carrying `prompt`/`apiKey`/`homePath`/`arguments`/`content` + a bounded `routing.task_class`;
+  after flush the wire JSON contains none of the sensitive substrings, the sensitive keys are
+  `[redacted]`, and only the bounded routing label survives (existing `test/telemetry/redaction.test.ts`
+  + `otlp-pipeline.test.ts` content-free assertions still green). Defensive posture per FR12/Security.
 
 - [ ] **T016 — Pull-based re-arm on server start / `telemetry.*` dispatch; disabled → no fiber**
 - **Depends:** T013
@@ -385,7 +417,19 @@ it needs no Milvus and unblocks the archive the embedding rollback also reads.
 - **Acceptance:** enabling telemetry arms the pipeline at the next tick; disabling stops it;
   disabled → no fiber/network.
 - **Verification:** `bun test packages/opencode/test/operator/**` (re-arm cases).
-- **Evidence:** _(reserved)_
+- **Evidence:** 2026-07-20 — Pull-based re-arm (ADR-0019 decision 8 — no push seam). Server start arms
+  the singleton (`server.ts` `ensureTelemetryExport`); a `telemetry.*` mutation commit pokes
+  `rearmTelemetryExport` through a NEW generic dispatcher post-commit hook: `DispatchOptions.onCommitted`
+  (`dispatcher.ts:56-66`) fires only after a successful CAS commit (`result.ok`), and `stack-live.ts`
+  wires it to `TelemetryExport.recordOperatorMutation()` + (when `descriptor.domain === "telemetry"`)
+  `void rearmTelemetryExport()`. `rearmTelemetryExport` (`telemetry-export.ts:305-311`) disposes the
+  current timer, re-resolves the effective config, and re-arms — enabling arms a real transport,
+  disabling disposes the interval and goes silent. `telemetry.test` stays the reachability probe
+  (unchanged). A disabled config runs NO fiber/network (pinned). Tests:
+  `test/routing/telemetry-export.test.ts` T016 block (disabled→enabled re-arm ships a batch;
+  enabled→disabled disposes the timer + disarmed flush touches no network; grpc → disarmed typed
+  boundary) green; `bun test test/operator/` 472 pass / 2 skip (dispatcher `onCommitted` addition
+  regression-free).
 
 - [ ] **T017 — Env-gated live validation (Milvus endpoint + OTLP collector)**
 - **Depends:** T007, T014
@@ -399,7 +443,23 @@ it needs no Milvus and unblocks the archive the embedding rollback also reads.
   CI is green without the endpoints.
 - **Verification:** env-gated `bun test`; manual acceptance against a live Milvus endpoint and a
   live OTLP collector.
-- **Evidence:** 2026-07-20 — **Milvus half done** (OTLP half pending Group D). `feature019-milvus-live.test.ts`
+- **Evidence (OTLP half):** 2026-07-20 — **DONE.** `packages/opencode/test/routing/telemetry-live.test.ts`
+  is env-gated (`test.skipIf(OPENCODE_TELEMETRY_LIVE !== "1")`): it drives the real
+  `createHttpOtlpTransport` against a live OTLP collector (`OPENCODE_TELEMETRY_ENDPOINT`, default the
+  operator's persisted collector `http://vm.services:4318` — Grafana Alloy), emits a uniquely-named,
+  content-free metric `opencode_telemetry_live_check{run_id="t017_<hex>"}` (numeric point + bounded
+  run-id label only), then polls the downstream Mimir Prometheus query API
+  (`http://vm.services:9009/prometheus/api/v1/query`) until ingested. RAW run
+  (`OPENCODE_TELEMETRY_LIVE=1 bun test test/routing/telemetry-live.test.ts` = `1 pass`):
+  `[T017] send: {"ok":true,"reason":null}` → `[T017] ingested after 2s:
+  {"status":"success","data":{"resultType":"vector","result":[{"metric":{"__name__":"opencode_telemetry_live_check","job":"opencode","run_id":"t017_74a16383"},"value":[1784526812.612,"1"]}]}}`
+  — the OTLP/JSON metric encoded by our transport was accepted by Alloy at `:4318/v1/metrics`,
+  forwarded to Mimir, and queried back with the exact `run_id` label within 2s. Collector + Mimir
+  reachability pre-confirmed (`curl` → `otlp 200`, `mimir 200` on `query=up`). No persisted operator
+  telemetry config was mutated (the test uses the transport directly; persisted state stays
+  `enabled=false`, endpoint unchanged). Without `OPENCODE_TELEMETRY_LIVE=1` the test SKIPS so CI stays
+  green (`bun test test/routing/ test/telemetry/` = 270 pass / 1 skip).
+- **Evidence (Milvus half):** 2026-07-20 — **Milvus half done.** `feature019-milvus-live.test.ts`
   is env-gated (`test.skipIf(!OPENCODE_SEMANTIC_MILVUS_ADDRESS)`) and exercises health →
   buildGeneration → upsert → enumerate → swapAliases against a live endpoint over the REST client,
   with an `opencode_test__…`-prefixed throwaway collection ALWAYS dropped in `finally`. Raw run against

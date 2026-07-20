@@ -122,6 +122,32 @@ Key decisions recorded:
    (`ConfigPort` has no `subscribe`), so the re-arm is pull-based, mirroring
    `ensureProcessSpoolWriter`/`ensureExecutorComposition`. Disabled runs no fiber and no
    network; an export failure never affects the session loop.
+   - **Implement-time transport/encoding decision (T013–T014).** The real transport is
+     `http/protobuf` via `fetch`, encoding each drained `TelemetrySignal` batch as
+     **spec-valid OTLP/JSON** (`content-type: application/json`, accepted by the OTLP/HTTP
+     spec) and POSTing per kind to `<endpoint>/v1/{metrics,logs,traces}` — a small,
+     self-contained encoder in `routing/adapters/outbound/otlp-transport.ts` with **no new
+     dependency**. Metrics encode as single-point Gauges (the numeric `value` attribute is
+     the point; the rest are content-free labels), logs as `logRecords` (name = body), and
+     traces as spans with random 16-byte trace / 8-byte span ids. The `grpc` transport stays
+     a **typed boundary** (no clean dependency-free gRPC client under Bun): a `grpc` config
+     degrades the pipeline to disarmed with a typed reason. Each request is bounded by
+     `export_timeout_ms` (`AbortController`) and honors `retry_budget` (transient 5xx/429/
+     network faults retried within budget with bounded backoff; a permanent 4xx is not
+     retried). The exported signal set is a small, honest, **content-free** in-process meter:
+     the pipeline's own queue/export instruments (`opencode_telemetry_queue_depth`/
+     `_queue_capacity`/`_drop_total`/`_export_error_total`/`_flush_total`) plus
+     `opencode_operator_mutation_total` (bumped by the dispatcher post-commit hook) and
+     `opencode_session_count`. The redaction defaults run in the adapter's `offer` before any
+     signal is queued, so no prompt/secret/path/content/payload can reach the transport.
+   - **Header-material boundary.** The public `SecretPort` deliberately hides material
+     (`resolveMaterial` yields a redacted marker), so an **authenticated** collector requires
+     the composition root's internal accessor; the safe production default omits export
+     headers (the local/unauthenticated profile exports fine). This is a documented boundary.
+   - **Live validation (T017).** The env-gated path (`OPENCODE_TELEMETRY_LIVE=1`) emitted a
+     uniquely-named, run-id-labelled metric to a live OTLP collector and confirmed downstream
+     ingestion via the Mimir Prometheus query API within seconds; unit tests use a fake
+     transport and CI never requires the live endpoint.
 9. **Live validation is env-gated (Group B, Group D).** Integration paths gated on
    `OPENCODE_SEMANTIC_MILVUS_ADDRESS` / a telemetry endpoint exercise the composition against a
    live Milvus endpoint and a live OTLP collector; unit tests use fake ports/transports and CI
