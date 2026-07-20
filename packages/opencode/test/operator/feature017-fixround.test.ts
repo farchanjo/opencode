@@ -289,7 +289,7 @@ async function preflight(handler: (r: Request) => Promise<Response>, commandId: 
 }
 
 describe("ROOT MECHANISM — end-to-end second mutation threads the resolved CAS token", () => {
-  test("telemetry.configure (pre-existing 014 verb): preflight without the resolver mis-resolves; with it, the 2nd mutation succeeds", async () => {
+  test("telemetry.configure (pre-existing 014 verb): the hardened fallback AND the resolver both resolve the real authority; the 2nd mutation succeeds", async () => {
     const mp = mutationPorts()
     const telemetryPlan = (): HandlerResult => ({
       kind: "mutation_plan",
@@ -306,12 +306,14 @@ describe("ROOT MECHANISM — end-to-end second mutation threads the resolved CAS
     const first = await dispatch(dispatcher, "telemetry.configure", {})
     expect(first.ok).toBe(true)
 
-    // Bug reproduction: the prefix fallback reads authority "telemetry" (never written) → null.
-    const buggy = await preflight(httpHandler(dispatcher, mp.config), "telemetry.configure")
-    expect(buggy.authority).toBe("telemetry")
-    expect(buggy.currentVersion).toBeNull()
+    // Feature 021 FR-A: the degraded fallback (NO resolver threaded) now consults the SAME
+    // domain SSOT, so it resolves the REAL "global:telemetry" authority — the pre-021 prefix
+    // "telemetry" (never written → null) bug is closed at the root, correct-by-construction.
+    const fallback = await preflight(httpHandler(dispatcher, mp.config), "telemetry.configure")
+    expect(fallback.authority).toBe("global:telemetry")
+    expect(fallback.currentVersion).toBe(first.version!)
 
-    // Fix: the resolver reads the REAL "global:telemetry" authority → the committed version.
+    // The wired resolver resolves the SAME "global:telemetry" authority → the committed version.
     const fixed = await preflight(httpHandler(dispatcher, mp.config, resolver), "telemetry.configure")
     expect(fixed.authority).toBe("global:telemetry")
     expect(fixed.currentVersion).toBe(first.version!)

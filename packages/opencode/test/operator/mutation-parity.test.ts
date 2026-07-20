@@ -6,14 +6,21 @@ import { describe, expect, test } from "bun:test"
 import {
   createDispatcher,
   createHandlerMap,
+  createProcessMutexLockPort,
   createSeededOperatorCommandRegistry,
+  mutateAuthority,
   type HandlerResult,
 } from "@/operator/application"
 import {
+  createDurableOperatorStore,
+  createFakeConfigService,
+  createMemoryEventPort,
+  createMemoryOutboxPort,
   createSlashInterceptor,
   createTuiOperatorSlashPort,
   createCliRunner,
 } from "@/operator/adapters"
+import type { CommandRequest } from "@opencode-ai/core/operator"
 import { createOperatorHttpHandler } from "@/operator/http/handler"
 import { createTestOperatorStack } from "@/operator/stack-test"
 import { listOperatorPaletteEntries, isOperatorSecretMutationId } from "@opencode-ai/core/operator"
@@ -22,7 +29,10 @@ import { executeOperatorCommand } from "../../../tui/src/operator/execute"
 function telemetryOnPlan(): HandlerResult {
   return {
     kind: "mutation_plan",
-    authority: "telemetry",
+    // The REAL telemetry commit authority (telemetry/backend-live AUTHORITY = "global:telemetry").
+    // Feature 021 FR-A: the degraded preflight fallback resolves this same authority from the
+    // domain SSOT even with no resolver threaded, so the fixture must commit where preflight reads.
+    authority: "global:telemetry",
     apply: (current) => ({
       ...(typeof current === "object" && current ? current : {}),
       enabled: true,
@@ -189,5 +199,63 @@ describe("T037 mutation parity", () => {
     })
     expect(result.outcome).toBe("unavailable")
     expect(toasts.some((t) => t.toLowerCase().includes("preflight"))).toBe(true)
+  })
+})
+
+/**
+ * Feature 021 FR-C — the optimistic-concurrency (CAS) guard is PRESERVED verbatim. The
+ * fix is correct preflight authority (FR-A), NEVER a weakening of the guard: no path
+ * auto-resolves a missing token or defaults an absent version to the current version at
+ * mutate time. These pins fail if a future change smuggles in lost-update-losing behavior.
+ */
+describe("Feature 021 FR-C — the CAS guard is unchanged (no auto-resolve, no token defaulting)", () => {
+  function ports() {
+    const store = createDurableOperatorStore({ config: createFakeConfigService(), lock: createProcessMutexLockPort() })
+    return {
+      config: store.config,
+      idempotency: store.idempotency,
+      rollback: store.rollback,
+      events: createMemoryEventPort(),
+      requireAudit: false,
+      outbox: store.outbox,
+    }
+  }
+  let seq = 0
+  const req = (over: Partial<CommandRequest> = {}): CommandRequest =>
+    ({
+      id: "telemetry.on",
+      principal: { kind: "operator", subject: "op_1", projectBinding: "proj_c" },
+      scope: { kind: "project", ref: "proj_c" },
+      source: "cli",
+      payload: {},
+      idempotencyKey: `idem_frc_${seq++}`,
+      ...over,
+    }) as CommandRequest
+
+  test("a mutation with NO version on an EXISTING authority is rejected 'mutations require version' (never auto-resolved)", async () => {
+    const mp = ports()
+    const first = await mutateAuthority(mp, { request: req({ version: undefined }), authority: "global:telemetry", apply: () => ({ enabled: true }) })
+    expect(first.ok).toBe(true)
+
+    // Second write, authority now exists, version === undefined → the guard MUST reject.
+    const second = await mutateAuthority(mp, { request: req({ version: undefined }), authority: "global:telemetry", apply: () => ({ enabled: false }) })
+    expect(second.ok).toBe(false)
+    expect(second.outcome).toBe("invalid_argument")
+    expect(JSON.stringify(second)).toContain("mutations require version (CAS token) when authority already exists")
+  })
+
+  test("a mutation with a STALE version is rejected 'CAS version conflict' (lost-update protection intact)", async () => {
+    const mp = ports()
+    const first = await mutateAuthority(mp, { request: req({ version: undefined }), authority: "global:telemetry", apply: () => ({ enabled: true }) })
+    expect(first.ok).toBe(true)
+
+    const stale = await mutateAuthority(mp, { request: req({ version: "cas_stale" }), authority: "global:telemetry", apply: () => ({ enabled: false }) })
+    expect(stale.ok).toBe(false)
+    expect(stale.outcome).toBe("conflict")
+    expect(JSON.stringify(stale)).toContain("CAS version conflict")
+
+    // The rejected writes never applied: the committed value is unchanged (no silent overwrite).
+    const current = await mp.config.get("global:telemetry")
+    expect(current?.version).toBe(first.version!)
   })
 })
