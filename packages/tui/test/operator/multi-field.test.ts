@@ -20,9 +20,33 @@ import {
   type BindingRow,
 } from "../../src/operator/form/field-list"
 import { createMultiFieldState } from "../../src/operator/form/multi-field-modal"
+import { buildConnectedModelOptions } from "../../src/operator/form/model-picker"
+import { resolveOperatorFormField } from "../../src/operator/form"
 import { toDetailTree } from "../../src/operator/status"
 import { toStatusNodes } from "../../src/operator/status"
 import { createSpyPort, createFakeToast, createFakeDialog } from "./harness"
+
+/** A minimal connected catalog — only the fields the picker option builder reads. */
+function fakeCatalog(): any[] {
+  return [
+    {
+      id: "anthropic",
+      name: "Anthropic",
+      models: {
+        "claude-opus": { name: "Claude Opus", status: "active", cost: { input: 15 } },
+        "claude-sonnet": { name: "Claude Sonnet", status: "active", cost: { input: 3 } },
+      },
+    },
+    {
+      id: "opencode",
+      name: "opencode",
+      models: {
+        "grok-free": { name: "Grok Free", status: "active", cost: { input: 0 } },
+        "legacy": { name: "Legacy", status: "deprecated", cost: { input: 1 } },
+      },
+    },
+  ]
+}
 
 const BY_ID = new Map(listOperatorPaletteEntries().map((e) => [e.id, e]))
 function entry(id: string): OperatorPaletteEntry {
@@ -322,5 +346,62 @@ describe("T006 — detail view tree, bounded + honest, distinct from the compact
     expect(toDetailTree("hello")).toEqual([{ depth: 0, label: "", value: "hello", branch: false, truncation: false }])
     expect(toDetailTree({ items: [] })).toContainEqual({ depth: 0, label: "items", value: "(empty)", branch: false, truncation: false })
     expect(toDetailTree(undefined)).toEqual([])
+  })
+})
+
+describe("020 T001 — connected-models option memo over sync.data.provider (FR1)", () => {
+  test("flat-maps the connected catalog into provider/model options, grouped + sorted by provider", () => {
+    const options = buildConnectedModelOptions(fakeCatalog())
+    // Providers sorted by name (Anthropic before opencode), models by title within each.
+    expect(options.map((o) => o.modelId)).toEqual([
+      "anthropic/claude-opus",
+      "anthropic/claude-sonnet",
+      "opencode/grok-free",
+    ])
+    const sonnet = options.find((o) => o.modelId === "anthropic/claude-sonnet")!
+    expect(sonnet.title).toBe("Claude Sonnet")
+    expect(sonnet.provider).toBe("Anthropic")
+    expect(sonnet.category).toBe("Anthropic")
+  })
+
+  test("a zero-input-cost model is flagged Free; a deprecated model is dropped (mirrors DialogModel)", () => {
+    const options = buildConnectedModelOptions(fakeCatalog())
+    expect(options.find((o) => o.modelId === "opencode/grok-free")!.free).toBe(true)
+    expect(options.find((o) => o.modelId === "anthropic/claude-sonnet")!.free).toBe(false)
+    // The deprecated opencode/legacy is not offered — the catalog is honest.
+    expect(options.some((o) => o.modelId === "opencode/legacy")).toBe(false)
+  })
+
+  test("an already-selected id is marked so the picker skips it (no silent duplicate, FR2)", () => {
+    const options = buildConnectedModelOptions(fakeCatalog(), new Set(["anthropic/claude-sonnet"]))
+    expect(options.find((o) => o.modelId === "anthropic/claude-sonnet")!.alreadySelected).toBe(true)
+    expect(options.find((o) => o.modelId === "anthropic/claude-opus")!.alreadySelected).toBe(false)
+  })
+
+  test("an empty catalog yields no model options — the Custom id… escape hatch is the picker's own action (FR6)", () => {
+    expect(buildConnectedModelOptions([])).toEqual([])
+  })
+
+  test("no option fabricates a model or provider absent from the catalog (FR1)", () => {
+    const options = buildConnectedModelOptions(fakeCatalog())
+    for (const option of options) {
+      const [providerId] = option.modelId.split("/")
+      expect(fakeCatalog().some((p) => p.id === providerId)).toBe(true)
+    }
+  })
+})
+
+describe("020 T004 — semantic.model.disable resolves the shared model picker (FR3)", () => {
+  test("the Model id field is a model_picker, not a bare text_input", () => {
+    const field = resolveOperatorFormField(entry("semantic.model.disable"))
+    expect(field?.mode).toBe("model_picker")
+  })
+
+  test("the picker composes the UNCHANGED { id: 'provider/model' } payload (FR3, FR5)", () => {
+    const field = resolveOperatorFormField(entry("semantic.model.disable"))
+    if (field?.mode !== "model_picker") throw new Error("expected a model_picker field")
+    expect(field.toPayload("anthropic/claude-sonnet")).toEqual({ id: "anthropic/claude-sonnet" })
+    // The escape-hatch raw string composes the same shape — nothing regresses (FR4).
+    expect(field.toPayload("registered/but-offline")).toEqual({ id: "registered/but-offline" })
   })
 })

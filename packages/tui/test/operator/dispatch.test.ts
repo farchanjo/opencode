@@ -100,7 +100,11 @@ describe("Feature 014 — Configure form payload matches the port contract (FR12
     // `secretRef`) reached the port as "" → not_found / not_validated.
     expect(builtPayload("semantic.provider.disable", "prov_123")).toEqual({ id: "prov_123" })
     expect(builtPayload("semantic.provider.delete", "prov_123")).toEqual({ id: "prov_123" })
-    expect(builtPayload("semantic.model.disable", "model_123")).toEqual({ id: "model_123" })
+    // semantic.model.disable now resolves the shared connected-models picker (Feature
+    // 020 FR3), but composes the SAME canonical { id } payload — contract unchanged (FR5).
+    const disable = resolveOperatorFormField(entry("semantic.model.disable"))
+    if (disable?.mode !== "model_picker") throw new Error("expected model_picker field for semantic.model.disable")
+    expect(disable.toPayload("model_123")).toEqual({ id: "model_123" })
     expect(builtPayload("semantic.embedding.select", "model_123")).toEqual({ modelDescriptorId: "model_123" })
     expect(builtPayload("semantic.reranker.select", "model_123")).toEqual({ modelDescriptorId: "model_123" })
     expect(builtPayload("semantic.provider.rotate-secret", "keychain:k@v2")).toEqual({ newSecretRef: "keychain:k@v2" })
