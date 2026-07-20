@@ -1,7 +1,6 @@
 import path from "path"
-import { Global } from "@opencode-ai/core/global"
-import { Flag } from "@opencode-ai/core/flag/flag"
 import { Filesystem } from "@/util/filesystem"
+import { ConfigRoot } from "./config-root"
 
 /**
  * Feature 027: per-project opencode-persisted data lives OUT of the working tree.
@@ -28,10 +27,11 @@ const PROFILES_DIR = "profiles"
  * The operative config root: the `OPENCODE_CONFIG_DIR` override when set, else the
  * default global config dir. Mirrors `Global.make()` (core/global.ts) so the profile
  * store lives under the same root a caller selected for the global config.
+ *
+ * Feature 031: extracted to the shared `./config-root` module (also used by `config.ts`
+ * and `tui.ts`) to DRY the definition that used to be duplicated here.
  */
-function configRoot(): string {
-  return Flag.OPENCODE_CONFIG_DIR ?? Global.Path.config
-}
+const configRoot = ConfigRoot.configRoot
 
 /**
  * Encode an absolute project path into a readable, reversible-ish profile key.

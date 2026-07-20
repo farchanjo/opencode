@@ -31,6 +31,7 @@ import { ConfigCommand } from "./command"
 import { ConfigManaged } from "./managed"
 import { ConfigParse } from "./parse"
 import { ConfigPaths } from "./paths"
+import { ConfigRoot } from "./config-root"
 import { ProjectProfile } from "./project-profile"
 import { ConfigPlugin } from "./plugin"
 import { ConfigVariable } from "./variable"
@@ -141,10 +142,12 @@ export const use = serviceUse(Service)
  * Feature 028/030: the operative config root for the GLOBAL config WRITE target.
  *
  * The raw `Global.Path.config` is the fixed XDG dir (`~/.config/opencode`) and does
- * NOT honor `OPENCODE_CONFIG_DIR`. `configRoot()` mirrors `Global.make()` (core/global.ts)
- * and the per-project profile store (Feature 027): when `OPENCODE_CONFIG_DIR` is set it
- * points there, so an isolated profile (e.g. `~/.opencodedev`) captures global config
- * WRITES without mutating the real global dir; when unset it is `Global.Path.config`.
+ * NOT honor `OPENCODE_CONFIG_DIR`. `configRoot()` (Feature 031: extracted to the shared
+ * `./config-root` module — see that file for the full contract, now also reused by
+ * `project-profile.ts` and `tui.ts`) mirrors `Global.make()` (core/global.ts) and the
+ * per-project profile store (Feature 027): when `OPENCODE_CONFIG_DIR` is set it points
+ * there, so an isolated profile (e.g. `~/.opencodedev`) captures global config WRITES
+ * without mutating the real global dir; when unset it is `Global.Path.config`.
  *
  * Feature 030 (correction to 028): the global config READ is NO LONGER anchored solely
  * here — that replaced the base and stopped the real global config from loading whenever
@@ -157,9 +160,7 @@ export const use = serviceUse(Service)
  * Scope: this governs the config-file resolution only. Auth material (`auth.json`)
  * lives under `Global.Path.data`, never under the config root, and is untouched.
  */
-function configRoot(): string {
-  return Flag.OPENCODE_CONFIG_DIR ?? Global.Path.config
-}
+const configRoot = ConfigRoot.configRoot
 
 function globalConfigFile() {
   const candidates = ["opencode.jsonc", "opencode.json", "config.json"].map((file) => path.join(configRoot(), file))

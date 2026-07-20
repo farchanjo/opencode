@@ -7,6 +7,7 @@ import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { Cause, Context, Effect, Fiber, Layer } from "effect"
 import { ConfigParse } from "@/config/parse"
 import * as ConfigPaths from "@/config/paths"
+import { ConfigRoot } from "@/config/config-root"
 import { migrateTuiConfig } from "./tui-migrate"
 import { resolveHostAttentionSoundPaths } from "./tui-host-attention"
 import { Flag } from "@opencode-ai/core/flag/flag"
@@ -185,25 +186,42 @@ const loadState = Effect.fn("TuiConfig.loadState")(function* (ctx: { directory: 
     yield* mergeFile(acc, file)
   }
 
-  // 2. Explicit OPENCODE_TUI_CONFIG override, if set.
+  // 2. OPENCODE_CONFIG_DIR profile override layer (Feature 031). A middle layer, above
+  // the base and below project discovery, matching the corrected project > profile >
+  // global-real precedence (ADR-0030/0031 — see ../../../doc/arch/adr/0031-*.md).
+  // Guarded on configRoot() differing from the base so an unset override adds no second
+  // layer (byte-for-byte base-only default behavior). Loaded exactly once here — it is
+  // no longer re-merged inside the `.opencode` discovery loop below.
+  const profileRoot = ConfigRoot.configRoot()
+  const hasProfile = profileRoot !== Global.Path.config
+  if (hasProfile) {
+    for (const file of ConfigPaths.fileInDirectory(profileRoot, "tui")) {
+      yield* mergeFile(acc, file)
+    }
+  }
+
+  // 3. Explicit OPENCODE_TUI_CONFIG override, if set — kept at the highest of the
+  // non-project-tree tiers so it still wins over both the base and the profile,
+  // matching its existing escape-hatch role. Project discovery (tiers 4-5) still wins
+  // over it, unchanged.
   if (Flag.OPENCODE_TUI_CONFIG) {
     const configFile = Flag.OPENCODE_TUI_CONFIG
     yield* mergeFile(acc, configFile)
     yield* Effect.logDebug("loaded custom tui config", { path: configFile })
   }
 
-  // 3. Project tui files, applied root-first so the closest file wins.
+  // 4. Project tui files, applied root-first so the closest file wins.
   for (const file of projectFiles) {
     yield* mergeFile(acc, file)
   }
 
-  // 4. `.opencode` directories (and OPENCODE_CONFIG_DIR) discovered while
-  // walking up the tree. Also returned below so callers can install plugin
-  // dependencies from each location.
-  const dirs = unique(directories).filter((dir) => dir.endsWith(".opencode") || dir === Flag.OPENCODE_CONFIG_DIR)
+  // 5. Real project `.opencode` directories discovered while walking up the tree
+  // (highest precedence). OPENCODE_CONFIG_DIR is EXCLUDED here — it is merged exactly
+  // once, as its own middle layer, in step 2 above; including it in this tier was the
+  // Feature 031 bug (a profile then outranked a project `.opencode` dir).
+  const dirs = unique(directories).filter((dir) => dir.endsWith(".opencode"))
 
   for (const dir of dirs) {
-    if (!dir.endsWith(".opencode") && dir !== Flag.OPENCODE_CONFIG_DIR) continue
     for (const file of ConfigPaths.fileInDirectory(dir, "tui")) {
       yield* mergeFile(acc, file)
     }
@@ -218,10 +236,15 @@ const loadState = Effect.fn("TuiConfig.loadState")(function* (ctx: { directory: 
     },
   )
 
+  // Plugin dependency install targets: the project `.opencode` dirs plus the profile
+  // dir (when set), so plugins declared in either location still get installed even
+  // though the profile no longer shares the project-discovery merge tier.
+  const installDirs = hasProfile ? unique([...dirs, profileRoot]) : dirs
+
   return {
     config: result,
     pluginOrigins: acc.plugin_origins,
-    dirs: result.plugin?.length ? dirs : [],
+    dirs: result.plugin?.length ? installDirs : [],
   }
 })
 
