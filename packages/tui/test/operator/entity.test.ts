@@ -86,13 +86,17 @@ describe("Feature 015 T014 — jobs item actions (FR12)", () => {
     expect(disabledToggle).toMatchObject({ interaction: "toggle", id: "jobs.enable", verb: "enable" })
   })
 
-  test("the item offers edit(modal), reschedule(modal), delete(confirm), run-now(typed gap)", () => {
+  test("the item offers edit(modal), reschedule(modal), delete(confirm), run-now(now composed)", () => {
     const byVerb = new Map(buildOperatorEntityActions("job", enabledJob).map((a) => [a.verb, a]))
     expect(byVerb.get("edit")).toMatchObject({ id: "jobs.update", interaction: "modal" })
     expect(byVerb.get("reschedule")).toMatchObject({ id: "jobs.reschedule", interaction: "modal" })
     expect(byVerb.get("delete")).toMatchObject({ id: "jobs.delete", interaction: "confirm" })
-    // run-now stays a marked typed gap even though the jobs domain persists (FR15).
-    expect(byVerb.get("run_now")).toMatchObject({ id: "jobs.run-now", availability: "unavailable" })
+    // Feature 018 (FR11): jobs.run-now composed the scheduled executor — it now
+    // enqueues an immediate occurrence through mutateAuthority and commits, so the
+    // verb genuinely works and no longer reads a marked typed gap. It still rides
+    // the canonical id and surfaces the typed envelope, never a fabricated success.
+    expect(byVerb.get("run_now")).toMatchObject({ id: "jobs.run-now" })
+    expect(byVerb.get("run_now")!.availability).not.toBe("unavailable")
     expect(byVerb.get("edit")!.availability).not.toBe("unavailable")
   })
 })

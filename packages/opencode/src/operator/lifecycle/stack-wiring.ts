@@ -49,6 +49,7 @@ import { EventBus } from "@opencode-ai/core/lifecycle/event-bus"
 import { ProcessTable } from "@opencode-ai/core/lifecycle/process-table"
 import { Watchdog } from "@opencode-ai/core/lifecycle/watchdog"
 import { AdmissionController } from "@opencode-ai/core/lifecycle/admission/admission-controller"
+import { SessionInterruptRegistry } from "@opencode-ai/core/session/interrupt-registry"
 import { EventV2Adapter } from "@/lifecycle/eventv2-adapter"
 import { ObservationService } from "@/lifecycle/observation-service"
 import { Cancel } from "@/lifecycle/cancel"
@@ -269,23 +270,33 @@ export async function createLifecycleDomainWiring(): Promise<LifecycleDomainWiri
   }, Watchdog.DEFAULT_SWEEP_INTERVAL_MS)
   sweepTimer.unref?.()
 
-  // Native root-tree cancel — honest-unavailable forced-abort posture (C17).
-  // The FIRST-press path (publish one `lifecycle.cancel_requested` per active
-  // descendant + fence root admission) is fully wired and real below. The
-  // SECOND-press FORCED LOCAL ABORT drives `SessionRunCoordinator.interrupt`,
-  // which lives in the core `SessionExecution` layer — but the operator stack's
-  // `AppRuntime` provides only the opencode `Session` facade, which neither
-  // exposes `interrupt` nor depends on `SessionExecution`, so that coordinator is
-  // NOT reachable from stack-live. Rather than FAKE a stop, the interrupt seam
-  // records the unavailability and issues nothing; cancel surfaces the honest
-  // `unconfirmed` outcome (its documented "no remote kill/reversal is promised"
-  // contract). See data-model.md "Resolved Parameters".
+  // Native root-tree cancel — real forced-abort over the narrow interrupt edge
+  // (C17, Feature 018 FR9/FR10). The FIRST-press path (publish one
+  // `lifecycle.cancel_requested` per active descendant + fence root admission) is
+  // fully wired and real below and is UNCHANGED. The SECOND-press FORCED LOCAL
+  // ABORT now drives the live `SessionRunCoordinator.interrupt` through the
+  // process-singleton `SessionInterruptRegistry` — the SMALLEST edge, NOT a broad
+  // operator→`SessionExecution` dependency. The core execution layer registers the
+  // active root run into that registry at run start; here we consult it by root
+  // key. When a live run IS registered in this process, its coordinator interrupt
+  // runs (disposition `interrupted`); when the run is not owned by this process (or
+  // the execution layer never registered), the registry degrades to the honest
+  // `unconfirmed` disposition and issues nothing — never a fabricated stop. Either
+  // way the operator-facing cancel outcome stays `unconfirmed`: no remote kill,
+  // reversal, or mutation rollback is ever promised. See data-model.md
+  // "Resolved Parameters".
   const rootInterruptor: Cancel.RootInterruptor = {
     interrupt: (key) =>
-      Effect.logDebug("lifecycle.cancel.forced_abort_unavailable", {
-        rootKey: key,
-        reason: "SessionRunCoordinator interrupt seam not reachable from the operator AppRuntime",
-      }),
+      SessionInterruptRegistry.interrupt(key).pipe(
+        Effect.tap((outcome) =>
+          Effect.logDebug("lifecycle.cancel.forced_abort", {
+            rootKey: outcome.rootKey,
+            disposition: outcome.disposition,
+            reason: outcome.reason,
+          }),
+        ),
+        Effect.asVoid,
+      ),
   }
 
   const cancelService = Cancel.createCancelService({

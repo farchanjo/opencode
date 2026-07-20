@@ -84,11 +84,17 @@ const VERB_LABEL: Readonly<Record<OperatorEntityVerb, string>> = {
 
 /**
  * Presentation-layer typed capability gaps that stay marked + inert even though
- * their domain persists (Feature 014 FR9/FR10). `jobs.run-now` has no runtime
- * backend; it dispatches the canonical id and surfaces the typed envelope, never a
- * fabricated success (FR15).
+ * their domain persists (Feature 014 FR9/FR10). Feature 018 composed the scheduled
+ * executor into the live runtime: `jobs.run-now` now enqueues an immediate
+ * occurrence through `mutateAuthority` (the effect runs once after the CAS checks)
+ * and commits, so the verb genuinely works and no longer reads `unavailable`
+ * (FR11). A disarmed executor or an overlap rejection still surfaces the typed
+ * envelope, and the occurrence's own goal-bearing execution honestly degrades to a
+ * typed terminal when a headless session cannot satisfy it (ADR-0018 decision 3) —
+ * both are honest runtime outcomes of a working verb, not a catalog-level gap. The
+ * set stays as the seam for any future presentation-only gap; it is empty today.
  */
-const TYPED_GAP_IDS: ReadonlySet<string> = new Set(["jobs.run-now"])
+const TYPED_GAP_IDS: ReadonlySet<string> = new Set<string>()
 
 const ENTRY_BY_ID = new Map(listOperatorPaletteEntries().map((entry) => [entry.id, entry]))
 
