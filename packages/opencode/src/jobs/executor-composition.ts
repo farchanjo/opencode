@@ -471,6 +471,7 @@ function runnerFault(error: TriggerError): OccurrenceRunResult {
 // =============================================================================
 
 let singleton: ExecutorComposition | undefined
+let pending: Promise<ExecutorComposition> | undefined
 let attempted = false
 
 const disarmed = (reason: string): ExecutorComposition => ({
@@ -501,19 +502,33 @@ function boundedReason(cause: unknown): string {
  * `arm()` (the reconcile startup sweep) is run fire-and-forget so a slow
  * persistence read never blocks `server.listen()`.
  */
-export function ensureExecutorComposition(deps?: ExecutorCompositionDeps): ExecutorComposition {
-  if (singleton) return singleton
-  if (attempted && !deps) return disarmed("executor composition previously failed to arm")
+export function ensureExecutorComposition(deps?: ExecutorCompositionDeps): Promise<ExecutorComposition> {
+  if (singleton) return Promise.resolve(singleton)
+  if (pending) return pending
+  if (attempted && !deps) return Promise.resolve(disarmed("executor composition previously failed to arm"))
   attempted = true
+  pending = armExecutorComposition(deps)
+  return pending
+}
+
+/**
+ * Compose + arm the process singleton exactly once (idempotent, fail-open). Split
+ * out from `ensureExecutorComposition` so the accessor can return the in-flight
+ * `pending` promise and dedupe concurrent callers across the async load boundary —
+ * the sync accessor got exactly-once for free, the async one needs the guard.
+ */
+async function armExecutorComposition(deps?: ExecutorCompositionDeps): Promise<ExecutorComposition> {
   try {
-    const resolved = deps ?? loadLiveDeps()
+    const resolved = deps ?? (await loadLiveDeps())
     const composition = buildExecutorComposition(resolved)
     const runFork = resolved.runFork ?? ((effect) => void Effect.runPromise(effect).catch(() => {}))
     runFork(composition.arm())
     singleton = composition
+    pending = undefined
     return composition
   } catch (cause) {
     singleton = disarmed(boundedReason(cause))
+    pending = undefined
     return singleton
   }
 }
@@ -524,14 +539,20 @@ export function currentExecutorComposition(): ExecutorComposition | undefined {
 }
 
 /**
- * Lazily load the real production seams. Kept a function (not a module import) so
- * importing this module never dereferences the Bun global or the AppRuntime — the
- * composition stays importable under a non-Bun test runner that injects fakes. A
- * throw here is caught by `ensureExecutorComposition` (fail-open).
+ * Lazily load the real production seams. Kept a function (not a static top-level
+ * import) so importing this module never dereferences the Bun global or the
+ * AppRuntime — the composition stays importable under a non-Bun test runner that
+ * injects fakes. A throw here is caught by `armExecutorComposition` (fail-open).
+ *
+ * Feature 022 (ADR-0022): a DYNAMIC `await import(...)` — NOT a synchronous
+ * `require(...)` — because `./executor-composition-live` transitively imports
+ * `@/config/config` → `@opencode-ai/core/global`, which contains a top-level
+ * `await`. `bun build --compile` rejects a `require()` of a TLA-bearing module but
+ * permits a dynamic import; the eager-arm-at-listen semantics are unchanged (the
+ * arm still fires from `ensureExecutorComposition`, one microtask later).
  */
-function loadLiveDeps(): ExecutorCompositionDeps {
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const live = require("./executor-composition-live") as typeof import("./executor-composition-live")
+async function loadLiveDeps(): Promise<ExecutorCompositionDeps> {
+  const live = await import("./executor-composition-live")
   return live.ExecutorCompositionLive.createLiveExecutorCompositionDeps()
 }
 
@@ -539,5 +560,6 @@ function loadLiveDeps(): ExecutorCompositionDeps {
 export function __resetExecutorCompositionForTests(): void {
   singleton?.dispose()
   singleton = undefined
+  pending = undefined
   attempted = false
 }

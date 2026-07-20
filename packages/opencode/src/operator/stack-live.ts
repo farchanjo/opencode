@@ -421,17 +421,23 @@ export async function createLiveOperatorStack(input: CreateLiveOperatorStackInpu
   // seam (armed at server start, or lazily here for CLI `op` contexts). A disarmed
   // executor degrades run-now to a typed `unavailable`; never a fabricated occurrence.
   const jobsRunNow: JobsBackendLive.RunNowEnqueuePort = (request) =>
-    ExecutorComposition.ensureExecutorComposition().enqueueImmediate({
-      jobDefinitionId: request.jobDefinitionId,
-      scheduleId: request.scheduleId,
-      overlapPolicy: request.overlapPolicy,
-      overlapCapabilities: ExecutorReconcile.IN_PROCESS_OVERLAP,
-      // Definition-keyed durable aggregate: a run-now occurrence roots on its
-      // definition, so its events land under the `jobDefinitionId` aggregate the
-      // occurrence projection reads (Group C).
-      rootSessionId: request.jobDefinitionId,
-      generation: 0,
-    })
+    // Feature 022 (ADR-0022): `ensureExecutorComposition` is now async (its live
+    // deps load via a dynamic import for `bun build --compile`); chain through the
+    // resolved composition. A disarmed executor still degrades run-now to a typed
+    // `unavailable` — the fail-open contract is unchanged, only load timing.
+    ExecutorComposition.ensureExecutorComposition().then((composition) =>
+      composition.enqueueImmediate({
+        jobDefinitionId: request.jobDefinitionId,
+        scheduleId: request.scheduleId,
+        overlapPolicy: request.overlapPolicy,
+        overlapCapabilities: ExecutorReconcile.IN_PROCESS_OVERLAP,
+        // Definition-keyed durable aggregate: a run-now occurrence roots on its
+        // definition, so its events land under the `jobDefinitionId` aggregate the
+        // occurrence projection reads (Group C).
+        rootSessionId: request.jobDefinitionId,
+        generation: 0,
+      }),
+    )
   const jobsBackend = JobsBackendLive.createLiveJobsBackend({
     persistence: OperatorJobPersistence.createOperatorJobPersistence({ config: store.config }),
     occurrences: JobOccurrenceProjection.createJobOccurrenceProjection(jobOccurrenceSource),

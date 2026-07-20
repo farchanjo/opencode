@@ -126,7 +126,11 @@ export async function listen(opts: ListenOptions): Promise<Listener> {
   // schedule/run-now verbs stay at their typed gap.
   try {
     const { ExecutorComposition } = await import("@/jobs/executor-composition")
-    ExecutorComposition.ensureExecutorComposition()
+    // Feature 022 (ADR-0022): `ensureExecutorComposition` is now async (its live
+    // deps load via a dynamic import so `bun build --compile` accepts the seam).
+    // Fire-and-forget + fail-open — the accessor catches internally, the `.catch`
+    // only guards against an unhandled rejection; arming stays eager at listen().
+    void ExecutorComposition.ensureExecutorComposition().catch(() => {})
   } catch {
     // Executor-composition bootstrap must never break server startup.
   }

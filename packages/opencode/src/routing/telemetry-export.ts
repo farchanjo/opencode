@@ -296,13 +296,20 @@ export function recordSession(): void {
 
 /**
  * Lazily load the real production seams (a live ConfigPort + SecretPort). Kept a
- * function (never a static import) so importing this module never dereferences the
- * Bun global or the AppRuntime — the pipeline core stays importable under a non-Bun
- * test runner that injects fakes. A throw here is caught by `ensureTelemetryExport`.
+ * function (never a static top-level import) so importing this module never
+ * dereferences the Bun global or the AppRuntime — the pipeline core stays
+ * importable under a non-Bun test runner that injects fakes. A throw here is
+ * caught by `ensureTelemetryExport`.
+ *
+ * Feature 022 (ADR-0022): a DYNAMIC `await import(...)` — NOT a synchronous
+ * `require(...)` — because `./telemetry-export-live` transitively imports
+ * `@opencode-ai/core/global`, which contains a top-level `await`. `bun build
+ * --compile` rejects a `require()` of a TLA-bearing module but permits a dynamic
+ * import; the deferred-arming semantics are unchanged (this accessor was already
+ * async), only the module-load mechanism differs.
  */
-function loadLiveDeps(): Promise<TelemetryExportDeps> {
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const live = require("./telemetry-export-live") as typeof import("./telemetry-export-live")
+async function loadLiveDeps(): Promise<TelemetryExportDeps> {
+  const live = await import("./telemetry-export-live")
   return live.TelemetryExportLive.createLiveTelemetryExportDeps()
 }
 
