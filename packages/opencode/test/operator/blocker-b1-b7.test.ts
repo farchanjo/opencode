@@ -56,7 +56,10 @@ describe("B1/B6/B7 Flock-locked durable Config", () => {
     await fs.mkdir(lockDir, { recursive: true })
     const lock = await createFlockLockPort({ dir: lockDir })
     const svc = createFakeConfigService()
-    // preserve sibling keys
+    // Feature 032 follow-up: the project-profile write is wholesale-replace (the file is
+    // 100% operator-owned — see config-service.ts mergeOperator), so it never preserves
+    // sibling keys by design; sibling preservation is asserted below on the GLOBAL write,
+    // which legitimately shares its file with user-authored config.
     await svc.update({ theme: "dark", other: { nested: true } })
 
     const store1 = createDurableOperatorStore({ config: svc, lock })
@@ -71,9 +74,21 @@ describe("B1/B6/B7 Flock-locked durable Config", () => {
     const store2 = createDurableOperatorStore({ config: svc, lock })
     const got = await store2.config.get("langlock")
     expect(got?.payload).toEqual({ language: "en" })
-    // sibling keys preserved
-    expect(svc.dump().project.theme).toBe("dark")
-    expect(svc.dump().project.other).toEqual({ nested: true })
+    // The project profile write dropped the pre-existing sibling keys (wholesale replace).
+    expect(svc.dump().project.theme).toBeUndefined()
+    expect(svc.dump().project.other).toBeUndefined()
+
+    // A GLOBAL authority write still deep-merges: pre-existing global sibling keys survive.
+    await svc.updateGlobal({ theme: "dark", other: { nested: true } })
+    const globalCas = await store1.config.compareAndSet({
+      authority: "global:langlock",
+      expectedVersion: null,
+      payload: { language: "en" },
+      nowMs: 2,
+    })
+    expect(globalCas.ok).toBe(true)
+    expect(svc.dump().global.theme).toBe("dark")
+    expect(svc.dump().global.other).toEqual({ nested: true })
   })
 
   test("two processes contend same version: exactly one success", async () => {

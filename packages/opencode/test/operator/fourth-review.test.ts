@@ -98,8 +98,12 @@ describe("shared document lock (finding 1)", () => {
         stderr: "pipe",
       })
 
-    const a = spawn("langlock", "en")
-    const b = spawn("telemetry", "on")
+    // Feature 032 follow-up: the (non-global) project-profile write is now wholesale-replace
+    // (the file is 100% operator-owned), so sibling preservation under concurrent writers is
+    // only guaranteed for GLOBAL authorities, whose write target legitimately shares its file
+    // with user-authored config (see config-service.ts mergeOperator).
+    const a = spawn("global:langlock", "en")
+    const b = spawn("global:telemetry", "on")
     const [outA, errA, codeA] = await Promise.all([
       new Response(a.stdout).text(),
       new Response(a.stderr).text(),
@@ -124,8 +128,8 @@ describe("shared document lock (finding 1)", () => {
     expect(doc.theme).toBe("dark")
     expect(doc.plugin).toEqual(["a"])
     // Both authorities present (no lost update under document lock)
-    expect(doc.operator.authorities.langlock?.payload.v).toBe("en")
-    expect(doc.operator.authorities.telemetry?.payload.v).toBe("on")
+    expect(doc.operator.authorities["global:langlock"]?.payload.v).toBe("en")
+    expect(doc.operator.authorities["global:telemetry"]?.payload.v).toBe("on")
   })
 })
 

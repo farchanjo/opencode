@@ -38,6 +38,11 @@ import { ProjectV2 } from "@opencode-ai/core/project"
 import { Filesystem } from "@/util/filesystem"
 import { ConfigPlugin } from "@/config/plugin"
 import { ProjectProfile } from "@/config/project-profile"
+import {
+  createDurableOperatorStore,
+  type ConfigServiceLike,
+} from "@/operator/adapters/outbound/config-service"
+import { createProcessMutexLockPort } from "@/operator/application"
 import { ConfigPluginV1 } from "@opencode-ai/core/v1/config/plugin"
 import { AccountTest } from "../fake/account"
 import { AuthTest } from "../fake/auth"
@@ -1395,6 +1400,293 @@ describe("Feature 030 — OPENCODE_CONFIG_DIR layers over the base global config
         ),
       )
     }).pipe(Effect.provide(testInstanceStoreLayer), Effect.provide(LayerNode.compile(CrossSpawnSpawner.node))),
+  )
+})
+
+// Feature 032 — an operator write to a per-project profile file must persist ONLY the
+// project-owned operator namespace, never the inherited base layer. Post-Feature-030 the
+// operator store reads the FULL effective (layered) config to compute the current authority
+// state; before this fix it then serialized that WHOLE merged document into the profile
+// config.json, copying base-layer mcp/provider secrets verbatim into a brand-new plaintext
+// file. This proves the leak is closed while the CAS authority round-trips intact.
+describe("Feature 032 — operator profile writes never copy the inherited base (secret leak)", () => {
+  const FAKE_SECRET = "SECRET-BASE-DO-NOT-LEAK"
+
+  it.effect("an operator mutation persists only the operator namespace — no base secret leaks", () =>
+    Effect.gen(function* () {
+      const base = yield* tmpdirScoped()
+      const profile = yield* tmpdirScoped()
+      const projectDir = yield* tmpdirScoped()
+      // BASE (~/.config/opencode): the user's REAL global config with a third-party MCP server
+      // whose auth header carries a plaintext secret — exactly the base-layer material that
+      // must NEVER be copied into a per-project profile file.
+      yield* writeConfigEffect(
+        base,
+        schemaConfig({
+          mcp: {
+            leaky: {
+              type: "remote",
+              url: "https://mcp.example.invalid",
+              headers: { Authorization: `Bearer ${FAKE_SECRET}` },
+            },
+          },
+        }),
+        "config.json",
+      )
+
+      yield* withGlobalConfigDir(
+        base,
+        withProcessEnv(
+          "OPENCODE_CONFIG_DIR",
+          profile,
+          Effect.gen(function* () {
+            yield* clearEffect(true)
+
+            // Sanity: the leak vector is real — the effective (layered) config the operator
+            // store reads DOES carry the base secret.
+            const effective = yield* Config.use.get().pipe(provideInstanceEffect(projectDir))
+            expect(JSON.stringify(effective)).toContain(FAKE_SECRET)
+
+            // A durable operator store over the REAL Config.Service (each op re-enters the
+            // runtime with the same project instance), exactly as the live stack composes it.
+            const run = <A, E>(eff: Effect.Effect<A, E, any>): Promise<A> =>
+              Effect.runPromise(
+                eff.pipe(
+                  provideInstanceEffect(projectDir),
+                  Effect.provide(testInstanceStoreLayer),
+                  Effect.provide(LayerNode.compile(CrossSpawnSpawner.node)),
+                  Effect.scoped,
+                  Effect.provide(layer),
+                ) as unknown as Effect.Effect<A, E>,
+              )
+            const configLike: ConfigServiceLike = {
+              get: () => run(Config.Service.use((svc) => svc.get())) as Promise<Record<string, unknown>>,
+              getGlobal: () => run(Config.Service.use((svc) => svc.getGlobal())) as Promise<Record<string, unknown>>,
+              update: (patch, options) => run(Config.Service.use((svc) => svc.update(patch as never, options))),
+              updateGlobal: (patch) =>
+                run(Config.Service.use((svc) => svc.updateGlobal(patch as never))).then((r) => ({ changed: r.changed })),
+            }
+            const store = createDurableOperatorStore({ config: configLike, lock: createProcessMutexLockPort() })
+
+            // The operator mutation (pools.set) commits to the project "routing" authority.
+            const payload = { models: { role_pools: { reviewer: ["gpt-5"] } } }
+            const cas = yield* Effect.promise(() =>
+              store.config.compareAndSet({
+                authority: "routing",
+                expectedVersion: null,
+                payload,
+                nowMs: 1_700_000_000_000,
+              }),
+            )
+            expect(cas.ok).toBe(true)
+            if (!cas.ok) return
+
+            // Read the RAW persisted per-project profile config.json.
+            const profileFile = ProjectProfile.projectOperatorConfigPath(projectDir)
+            const raw = yield* FSUtil.use.readFileString(profileFile)
+
+            // THE guarantee: the base secret is NOWHERE in the persisted project file.
+            expect(raw).not.toContain(FAKE_SECRET)
+
+            const parsed = JSON.parse(raw) as Record<string, unknown>
+            // Persisted top-level keys are limited to the project-owned set — no base noise.
+            expect(new Set(Object.keys(parsed))).toEqual(new Set(["$schema", "operator"]))
+            for (const key of ["mcp", "provider", "agent", "command", "mode", "tools", "permission", "username"]) {
+              expect(parsed[key]).toBeUndefined()
+            }
+
+            // The operator authority IS present and reads back — CAS state preserved.
+            const authorities = (
+              parsed.operator as { authorities?: Record<string, { version?: string; payload?: unknown }> }
+            )?.authorities
+            expect(authorities?.routing?.version).toBe(cas.version)
+            expect(authorities?.routing?.payload).toEqual(payload)
+
+            // Round-trip through the store: the same authority/version reads back (CAS honored).
+            const readback = yield* Effect.promise(() => store.config.get("routing"))
+            expect(readback?.version).toBe(cas.version)
+
+            // The layered read still inherits the base — the file just stopped DUPLICATING it.
+            const afterEffective = yield* Config.use.get().pipe(provideInstanceEffect(projectDir))
+            expect(afterEffective.mcp?.["leaky"]).toBeDefined()
+          }),
+        ),
+      )
+    }).pipe(Effect.provide(testInstanceStoreLayer), Effect.provide(LayerNode.compile(CrossSpawnSpawner.node))),
+  )
+
+  // Follow-up (adversarial review, MEDIUM residual): the fix above stops NEW leaks, but a
+  // deep-merge write never REMOVES keys, so a profile file already leaked by the shipped
+  // pre-fix code (a stale base `mcp`/`provider` secret sitting alongside a legitimate
+  // operator authority) stayed leaked forever. The per-project profile file is 100%
+  // operator-owned, so its write now REPLACES the file wholesale with `{$schema, operator}`
+  // instead of deep-merging — this self-heals a leaked file on its very next mutation.
+  const STALE_SECRET = "SECRET-STALE-DO-NOT-LEAK"
+
+  it.effect(
+    "stale-file remediation: a profile file already leaked by the pre-fix code is scrubbed by the next operator mutation",
+    () =>
+      Effect.gen(function* () {
+        const base = yield* tmpdirScoped()
+        const profile = yield* tmpdirScoped()
+        const projectDir = yield* tmpdirScoped()
+
+        yield* withGlobalConfigDir(
+          base,
+          withProcessEnv(
+            "OPENCODE_CONFIG_DIR",
+            profile,
+            Effect.gen(function* () {
+              yield* clearEffect(true)
+
+              // Simulate a profile file written by the OLD (pre-Feature-032) code: a stale
+              // top-level `mcp` secret sitting next to a legitimate pre-existing authority.
+              const profileFile = ProjectProfile.projectOperatorConfigPath(projectDir)
+              yield* FSUtil.use.writeWithDirs(
+                profileFile,
+                JSON.stringify({
+                  $schema: "https://opencode.ai/config.json",
+                  mcp: {
+                    leaky: {
+                      type: "remote",
+                      url: "https://mcp.example.invalid",
+                      headers: { Authorization: `Bearer ${STALE_SECRET}` },
+                    },
+                  },
+                  operator: {
+                    authorities: {
+                      existing: { version: "cas_v1", payload: { foo: "bar" }, updatedAtMs: 1, snapshots: [] },
+                    },
+                    idempotency: {},
+                    rollback: {},
+                    auditOutbox: [],
+                  },
+                }),
+              )
+
+              const run = <A, E>(eff: Effect.Effect<A, E, any>): Promise<A> =>
+                Effect.runPromise(
+                  eff.pipe(
+                    provideInstanceEffect(projectDir),
+                    Effect.provide(testInstanceStoreLayer),
+                    Effect.provide(LayerNode.compile(CrossSpawnSpawner.node)),
+                    Effect.scoped,
+                    Effect.provide(layer),
+                  ) as unknown as Effect.Effect<A, E>,
+                )
+              const configLike: ConfigServiceLike = {
+                get: () => run(Config.Service.use((svc) => svc.get())) as Promise<Record<string, unknown>>,
+                getGlobal: () => run(Config.Service.use((svc) => svc.getGlobal())) as Promise<Record<string, unknown>>,
+                update: (patch, options) => run(Config.Service.use((svc) => svc.update(patch as never, options))),
+                updateGlobal: (patch) =>
+                  run(Config.Service.use((svc) => svc.updateGlobal(patch as never))).then((r) => ({
+                    changed: r.changed,
+                  })),
+              }
+              const store = createDurableOperatorStore({ config: configLike, lock: createProcessMutexLockPort() })
+
+              // A fresh operator mutation on a DIFFERENT authority than the pre-existing one.
+              const payload = { models: { role_pools: { reviewer: ["gpt-5"] } } }
+              const cas = yield* Effect.promise(() =>
+                store.config.compareAndSet({
+                  authority: "routing",
+                  expectedVersion: null,
+                  payload,
+                  nowMs: 1_700_000_000_001,
+                }),
+              )
+              expect(cas.ok).toBe(true)
+              if (!cas.ok) return
+
+              const raw = yield* FSUtil.use.readFileString(profileFile)
+
+              // THE guarantee: the stale secret is scrubbed, not merely no-longer-duplicated.
+              expect(raw).not.toContain(STALE_SECRET)
+
+              const parsed = JSON.parse(raw) as Record<string, unknown>
+              expect(new Set(Object.keys(parsed))).toEqual(new Set(["$schema", "operator"]))
+
+              const authorities = (
+                parsed.operator as { authorities?: Record<string, { version?: string; payload?: unknown }> }
+              )?.authorities
+              // The pre-existing authority survives — only the stale sibling was dropped.
+              expect(authorities?.existing?.version).toBe("cas_v1")
+              expect(authorities?.existing?.payload).toEqual({ foo: "bar" })
+              // The new authority CAS round-trips correctly.
+              expect(authorities?.routing?.version).toBe(cas.version)
+              expect(authorities?.routing?.payload).toEqual(payload)
+            }),
+          ),
+        )
+      }).pipe(Effect.provide(testInstanceStoreLayer), Effect.provide(LayerNode.compile(CrossSpawnSpawner.node))),
+  )
+
+  it.effect(
+    "global writes still deep-merge — a user-authored sibling (provider) survives an operator global-authority mutation",
+    () =>
+      Effect.gen(function* () {
+        const base = yield* tmpdirScoped()
+        const projectDir = yield* tmpdirScoped()
+        const PROVIDER_KEY = "fake-provider-key-not-a-real-secret"
+
+        // Base global config (OPENCODE_CONFIG_DIR unset — this IS the write target for a
+        // global operator authority): a user-authored `provider` sibling that a global
+        // operator mutation must never drop.
+        yield* writeConfigEffect(
+          base,
+          schemaConfig({ provider: { anthropic: { options: { apiKey: PROVIDER_KEY } } } }),
+          "config.json",
+        )
+
+        yield* withGlobalConfigDir(
+          base,
+          Effect.gen(function* () {
+            yield* clearEffect(true)
+
+            const run = <A, E>(eff: Effect.Effect<A, E, any>): Promise<A> =>
+              Effect.runPromise(
+                eff.pipe(
+                  provideInstanceEffect(projectDir),
+                  Effect.provide(testInstanceStoreLayer),
+                  Effect.provide(LayerNode.compile(CrossSpawnSpawner.node)),
+                  Effect.scoped,
+                  Effect.provide(layer),
+                ) as unknown as Effect.Effect<A, E>,
+              )
+            const configLike: ConfigServiceLike = {
+              get: () => run(Config.Service.use((svc) => svc.get())) as Promise<Record<string, unknown>>,
+              getGlobal: () => run(Config.Service.use((svc) => svc.getGlobal())) as Promise<Record<string, unknown>>,
+              update: (patch, options) => run(Config.Service.use((svc) => svc.update(patch as never, options))),
+              updateGlobal: (patch) =>
+                run(Config.Service.use((svc) => svc.updateGlobal(patch as never))).then((r) => ({
+                  changed: r.changed,
+                })),
+            }
+            const store = createDurableOperatorStore({ config: configLike, lock: createProcessMutexLockPort() })
+
+            const cas = yield* Effect.promise(() =>
+              store.config.compareAndSet({
+                authority: "global:routing",
+                expectedVersion: null,
+                payload: { models: { role_pools: { reviewer: ["gpt-5"] } } },
+                nowMs: 1_700_000_000_002,
+              }),
+            )
+            expect(cas.ok).toBe(true)
+
+            const raw = yield* FSUtil.use.readFileString(path.join(base, "config.json"))
+            // The sibling survives — the global write deep-merges, never replaces wholesale.
+            expect(raw).toContain(PROVIDER_KEY)
+
+            const parsed = JSON.parse(raw) as {
+              provider?: unknown
+              operator?: { authorities?: Record<string, unknown> }
+            }
+            expect(parsed.provider).toBeDefined()
+            expect(parsed.operator?.authorities?.["global:routing"]).toBeDefined()
+          }),
+        )
+      }).pipe(Effect.provide(testInstanceStoreLayer), Effect.provide(LayerNode.compile(CrossSpawnSpawner.node))),
   )
 })
 
