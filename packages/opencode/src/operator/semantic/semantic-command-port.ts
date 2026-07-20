@@ -97,6 +97,8 @@ function mapError(error: { readonly type: string }): { outcome: SemanticAuditEve
   if (type === "denied") return { outcome: "denied", failure: fail("unauthorized", "denied") }
   if (type === "confirmation_required") return { outcome: "rejected", failure: fail("invalid_argument", "interactive confirmation is required") }
   if (type === "version_conflict" || type === "cas_conflict") return { outcome: "conflict", failure: fail("invalid_argument", `conflict: ${type}`) }
+  // Feature 019 (FR3) — honest reranker/embedding activation gates carry a typed, secret-free reason.
+  if (type === "not_validated" || type === "no_archived_prior" || type === "no_candidate_staged") return { outcome: "rejected", failure: fail("invalid_argument", type) }
   if (type === "not_implemented") return { outcome: "rejected", failure: fail("not_implemented", "operation is not implemented") }
   if (type.endsWith("unavailable")) return { outcome: "unavailable", failure: fail("unavailable", type) }
   return { outcome: "rejected", failure: fail("invalid_argument", type) }
@@ -236,12 +238,18 @@ function rerankerInvoke(port: SemanticPort, c: Ctx): Promise<HandlerResult> | nu
   const cas = str(c.payload, ["casToken", "cas_token"]) ?? ""
   const select = { slot: "reranker" as const, modelDescriptorId: (str(c.payload, ["modelDescriptorId", "model_descriptor_id"]) ?? "") as never, compatibilityMode: (str(c.payload, ["compatibilityMode", "compatibility_mode"]) ?? "native-rerank") as RerankProfile, principal: c.principal }
   switch (c.id) {
-    // show/select ride the registry round-trip; validate/cutover/rollback stay the gated Milvus ops.
+    // show/select/cutover/rollback ride the config-backed registry (no Milvus, FR1); validate stays the gated Milvus probe.
     case "semantic.reranker.show": return reg ? c.io.run(reg.showReranker({ scope: c.scope, scopeId: c.scopeId }), query) : c.io.run(b.showReranker({ scope: c.scope, scopeId: c.scopeId }), query)
     case "semantic.reranker.select": return reg ? c.io.plan(reg.planSelectReranker(select)) : c.io.run(b.selectReranker(select), query)
     case "semantic.reranker.validate": return c.io.run(b.validateReranker({ id: id as never, principal: c.principal }), query)
-    case "semantic.reranker.cutover": return c.io.run(b.cutoverReranker({ id: id as never, casToken: cas as never, confirmed: bool(c.payload, "confirmed"), principal: c.principal }), query)
-    case "semantic.reranker.rollback": return c.io.run(b.rollbackReranker({ slot: "reranker", targetBindingVersion: num(c.payload, ["targetBindingVersion", "target_binding_version"]) ?? 0, casToken: cas as never, confirmed: bool(c.payload, "confirmed"), principal: c.principal }), query)
+    case "semantic.reranker.cutover":
+      return reg
+        ? c.io.plan(reg.planCutoverReranker({ confirmed: bool(c.payload, "confirmed"), principal: c.principal }))
+        : c.io.run(b.cutoverReranker({ id: id as never, casToken: cas as never, confirmed: bool(c.payload, "confirmed"), principal: c.principal }), query)
+    case "semantic.reranker.rollback":
+      return reg
+        ? c.io.plan(reg.planRollbackReranker({ targetBindingVersion: num(c.payload, ["targetBindingVersion", "target_binding_version"]), confirmed: bool(c.payload, "confirmed"), principal: c.principal }))
+        : c.io.run(b.rollbackReranker({ slot: "reranker", targetBindingVersion: num(c.payload, ["targetBindingVersion", "target_binding_version"]) ?? 0, casToken: cas as never, confirmed: bool(c.payload, "confirmed"), principal: c.principal }), query)
     default: return null
   }
 }

@@ -746,6 +746,7 @@ export type BindingError =
   | { readonly type: "cas_conflict"; readonly expectedGeneration: string; readonly actualGeneration: string } // guards C12
   | { readonly type: "confirmation_required" } // guards cutover/rollback, C15
   | { readonly type: "no_candidate_staged" } // guards cutover without a validated `staged` binding
+  | { readonly type: "no_archived_prior"; readonly slot: BindingSlot } // guards a rollback whose slot archive holds no superseded prior (Feature 019 FR3)
   | { readonly type: "reranker_not_eligible"; readonly reason: string } // guards FR30, C16 — profile C never eligible
   | { readonly type: "denied"; readonly reason: string }
   | { readonly type: "unavailable"; readonly reason: string }

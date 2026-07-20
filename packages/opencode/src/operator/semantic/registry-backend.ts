@@ -22,6 +22,9 @@ export * as SemanticRegistryBackend from "./registry-backend"
 
 import { Effect, Exit, Schema } from "effect"
 import { findPlaintextSecretFields } from "@opencode-ai/core/operator/secret"
+import { BindingLifecycle } from "@opencode-ai/core/semantic/binding-lifecycle"
+import type { BindingState } from "@opencode-ai/core/semantic/binding-lifecycle"
+import { CutoverExecutor } from "@/semantic/cutover-executor"
 import { UrlGuard } from "@/semantic/url-guard"
 import { type ConfigPort } from "@/operator/application/ports/config-port"
 import type { OperatorMutationPlan } from "@/operator/application/handler"
@@ -30,6 +33,7 @@ import type {
   BindingError,
   BindingHistoryInput,
   BindingHistoryOutput,
+  BindingSlot,
   BindingStatusInput,
   BindingStatusOutput,
   DeleteProviderInput,
@@ -40,6 +44,7 @@ import type {
   ListProvidersInput,
   ListProvidersOutput,
   ModelError,
+  OperatorPrincipal,
   ProviderError,
   RegisterModelInput,
   RotateSecretInput,
@@ -98,27 +103,70 @@ const RegistryBinding = Schema.Struct({
   version: Schema.Number,
   selectedBy: Schema.String,
   selectedAt: Schema.String,
+  /**
+   * Feature 019 (FR3) — whether the staged candidate passed a deterministic validate
+   * before a cutover. Optional so a pre-019 record decodes losslessly (absent → not
+   * validated); a cutover on an unvalidated candidate is a typed `not_validated`.
+   */
+  validated: Schema.optional(Schema.Boolean),
 })
 type RegistryBinding = Schema.Schema.Type<typeof RegistryBinding>
 
+/**
+ * Feature 019 (FR2) — the operator `RegistryDocument` carries a per-slot binding
+ * VERSION ARCHIVE (ADR-0019 decision 3): the live `embedding`/`reranker` entry is the
+ * current binding, `*Staged` is the in-flight candidate a `select` stages (kept apart
+ * from the live one so a cutover can move the outgoing active into the archive), and
+ * `*Archive` is the slot's superseded priors (newest-first) a rollback targets. Every
+ * new field is `optional` so a pre-019 document round-trips losslessly (absent →
+ * normalized to `null`/`[]`/`0`), never dropping providers/models on the first read.
+ */
 const RegistryDocument = Schema.Struct({
   providers: Schema.Array(RegistryProvider),
   models: Schema.Array(RegistryModel),
   embedding: Schema.NullOr(RegistryBinding),
   reranker: Schema.NullOr(RegistryBinding),
+  embeddingStaged: Schema.optional(Schema.NullOr(RegistryBinding)),
+  rerankerStaged: Schema.optional(Schema.NullOr(RegistryBinding)),
+  embeddingArchive: Schema.optional(Schema.Array(RegistryBinding)),
+  rerankerArchive: Schema.optional(Schema.Array(RegistryBinding)),
+  /** Monotonic rerank cache/eval version; a reranker cutover/rollback bumps it (reEmbedded stays false, FR1). */
+  rerankEvalVersion: Schema.optional(Schema.Number),
 })
 type RegistryDocument = Schema.Schema.Type<typeof RegistryDocument>
 
-const EMPTY_DOCUMENT: RegistryDocument = { providers: [], models: [], embedding: null, reranker: null }
+const EMPTY_DOCUMENT: RegistryDocument = {
+  providers: [],
+  models: [],
+  embedding: null,
+  reranker: null,
+  embeddingStaged: null,
+  rerankerStaged: null,
+  embeddingArchive: [],
+  rerankerArchive: [],
+  rerankEvalVersion: 0,
+}
 
 const decodeDocument = Schema.decodeUnknownExit(RegistryDocument)
 const encodeDocument = Schema.encodeSync(RegistryDocument)
+
+/** Normalize the optional archive fields to their defaults so downstream transforms never branch on `undefined`. */
+function normalizeDocument(doc: RegistryDocument): RegistryDocument {
+  return {
+    ...doc,
+    embeddingStaged: doc.embeddingStaged ?? null,
+    rerankerStaged: doc.rerankerStaged ?? null,
+    embeddingArchive: doc.embeddingArchive ?? [],
+    rerankerArchive: doc.rerankerArchive ?? [],
+    rerankEvalVersion: doc.rerankEvalVersion ?? 0,
+  }
+}
 
 /** Decode a persisted authority payload into a registry document; the empty document when absent/undecodable. */
 function parseDocument(payload: unknown): RegistryDocument {
   if (payload === null || payload === undefined) return EMPTY_DOCUMENT
   const exit = decodeDocument(payload, { errors: "all" })
-  return Exit.isSuccess(exit) ? exit.value : EMPTY_DOCUMENT
+  return normalizeDocument(Exit.isSuccess(exit) ? exit.value : EMPTY_DOCUMENT)
 }
 
 // =============================================================================
@@ -147,6 +195,30 @@ export interface SemanticRegistryBackend {
   readonly planDisableModel: (input: DisableModelInput) => Effect.Effect<OperatorMutationPlan, ModelError>
   readonly planSelectEmbedding: (input: SelectBindingInput) => Effect.Effect<OperatorMutationPlan, BindingError>
   readonly planSelectReranker: (input: SelectBindingInput) => Effect.Effect<OperatorMutationPlan, BindingError>
+  readonly planCutoverReranker: (input: RerankerCutoverPlanInput) => Effect.Effect<OperatorMutationPlan, BindingError>
+  readonly planRollbackReranker: (input: RerankerRollbackPlanInput) => Effect.Effect<OperatorMutationPlan, BindingError>
+}
+
+/**
+ * Feature 019 (FR1) — a config-backed reranker cutover. It carries no `MilvusPort`
+ * and no domain version: the authority CAS token (the dispatcher `version`) is the
+ * single compare-and-swap gate, and the pure `cutoverReranker` supplies the
+ * confirmation gate + `reEmbedded:false` invariant.
+ */
+export interface RerankerCutoverPlanInput {
+  readonly confirmed: boolean
+  readonly principal: OperatorPrincipal
+}
+
+/**
+ * Feature 019 (FR3) — a config-backed reranker rollback. `targetBindingVersion`
+ * selects a specific superseded prior; unset resolves the most recent archived
+ * version. An empty archive is a typed `no_archived_prior`, never a fabricated swap.
+ */
+export interface RerankerRollbackPlanInput {
+  readonly targetBindingVersion?: number
+  readonly confirmed: boolean
+  readonly principal: OperatorPrincipal
 }
 
 export interface ConfigBackedRegistryDeps {
@@ -205,6 +277,56 @@ function toBinding(b: RegistryBinding, providerRef: string): SemanticModelBindin
 /** The provider ref that backs a binding's model, or empty when the model is gone. */
 function providerRefOf(doc: RegistryDocument, modelDescriptorId: string): string {
   return doc.models.find((m) => m.id === modelDescriptorId)?.providerProfileId ?? ""
+}
+
+// =============================================================================
+// Per-slot binding version archive (Feature 019, FR2) — current + superseded
+// =============================================================================
+
+type Slot = "embedding" | "reranker"
+
+/** The live (current) binding for a slot, or `null` when none is active/selected. */
+function currentOf(doc: RegistryDocument, slot: Slot): RegistryBinding | null {
+  return (slot === "reranker" ? doc.reranker : doc.embedding) ?? null
+}
+
+/** The in-flight candidate a `select` staged for a slot, kept apart from the live binding. */
+function stagedOf(doc: RegistryDocument, slot: Slot): RegistryBinding | null {
+  return (slot === "reranker" ? doc.rerankerStaged : doc.embeddingStaged) ?? null
+}
+
+/** The slot's superseded priors (newest-first); each is a real rollback target. */
+function archiveOf(doc: RegistryDocument, slot: Slot): readonly RegistryBinding[] {
+  return (slot === "reranker" ? doc.rerankerArchive : doc.embeddingArchive) ?? []
+}
+
+/** The next monotonic binding version for a slot: one past the highest known across current/staged/archive. */
+function nextBindingVersion(doc: RegistryDocument, slot: Slot): number {
+  const known = [currentOf(doc, slot), stagedOf(doc, slot), ...archiveOf(doc, slot)]
+  return known.reduce((max, b) => (b && b.version > max ? b.version : max), 0) + 1
+}
+
+/** The honest degradation rung derived from real state: an active embedding binding is `full_semantic`, else the `catalog_lexical` floor. */
+function degradationRung(doc: RegistryDocument): BindingStatusOutput["degradation"] {
+  const rung = doc.embedding && doc.embedding.state === "active" ? "full_semantic" : "catalog_lexical"
+  return { rung } as BindingStatusOutput["degradation"]
+}
+
+/** Compose a slot's version history newest-first: the staged candidate, the live binding, then the superseded archive. */
+function slotHistory(doc: RegistryDocument, slot: Slot): readonly RegistryBinding[] {
+  return [stagedOf(doc, slot), currentOf(doc, slot), ...archiveOf(doc, slot)].filter(
+    (b): b is RegistryBinding => b !== null,
+  )
+}
+
+/** Resolve the rollback target from a slot archive: an explicit version, else the most recent prior; `undefined` when none. */
+function resolveRollbackTarget(
+  archive: readonly RegistryBinding[],
+  targetVersion: number | undefined,
+): RegistryBinding | undefined {
+  if (archive.length === 0) return undefined
+  if (targetVersion === undefined) return archive[0]
+  return archive.find((b) => b.version === targetVersion)
 }
 
 // =============================================================================
@@ -268,26 +390,39 @@ export function createConfigBackedRegistry(deps: ConfigBackedRegistryDeps): Sema
       ),
 
     showEmbedding: () =>
-      readDoc(bindingUnavailable).pipe(Effect.map((doc) => ({ binding: doc.embedding ? toBinding(doc.embedding, providerRefOf(doc, doc.embedding.modelDescriptorId)) : undefined }))),
+      readDoc(bindingUnavailable).pipe(
+        Effect.map((doc) => {
+          const binding = currentOf(doc, "embedding") ?? stagedOf(doc, "embedding")
+          return { binding: binding ? toBinding(binding, providerRefOf(doc, binding.modelDescriptorId)) : undefined }
+        }),
+      ),
 
     showReranker: () =>
-      readDoc(bindingUnavailable).pipe(Effect.map((doc) => ({ binding: doc.reranker ? toBinding(doc.reranker, providerRefOf(doc, doc.reranker.modelDescriptorId)) : undefined }))),
+      readDoc(bindingUnavailable).pipe(
+        Effect.map((doc) => {
+          const binding = currentOf(doc, "reranker") ?? stagedOf(doc, "reranker")
+          return { binding: binding ? toBinding(binding, providerRefOf(doc, binding.modelDescriptorId)) : undefined }
+        }),
+      ),
 
+    // The degradation rung is now DERIVED from real binding state, not hardcoded (FR2).
     bindingStatus: () =>
       readDoc(bindingUnavailable).pipe(
         Effect.map((doc) => ({
           embedding: doc.embedding ? toBinding(doc.embedding, providerRefOf(doc, doc.embedding.modelDescriptorId)) : undefined,
           reranker: doc.reranker ? toBinding(doc.reranker, providerRefOf(doc, doc.reranker.modelDescriptorId)) : undefined,
-          degradation: { rung: "full_semantic" } as BindingStatusOutput["degradation"],
+          degradation: degradationRung(doc),
         })),
       ),
 
+    // The real per-slot archive (staged + current + superseded), not a single entry (FR2).
     bindingHistory: (input) =>
       readDoc(bindingUnavailable).pipe(
-        Effect.map((doc) => {
-          const slot = input.slot === "reranker" ? doc.reranker : doc.embedding
-          return { versions: slot ? [toBinding(slot, providerRefOf(doc, slot.modelDescriptorId))].slice(0, input.limit) : [] }
-        }),
+        Effect.map((doc) => ({
+          versions: slotHistory(doc, input.slot === "reranker" ? "reranker" : "embedding")
+            .slice(0, input.limit)
+            .map((b) => toBinding(b, providerRefOf(doc, b.modelDescriptorId))),
+        })),
       ),
 
     planAddProvider: (input) =>
@@ -375,6 +510,8 @@ export function createConfigBackedRegistry(deps: ConfigBackedRegistryDeps): Sema
 
     planSelectEmbedding: (input) => planSelect(input, "embedding"),
     planSelectReranker: (input) => planSelect(input, "reranker"),
+    planCutoverReranker: (input) => planCutoverReranker(input),
+    planRollbackReranker: (input) => planRollbackReranker(input),
   }
 
   /** Run a pure transform through the plaintext guard and hand back the plan (shared by every mutation). */
@@ -399,22 +536,108 @@ export function createConfigBackedRegistry(deps: ConfigBackedRegistryDeps): Sema
     })
   }
 
-  /** Stage a draft binding for one slot; the model must already be registered (FR32, C12). */
-  function planSelect(input: SelectBindingInput, slot: "embedding" | "reranker"): Effect.Effect<OperatorMutationPlan, BindingError> {
+  /**
+   * Stage a draft candidate for one slot; the model must already be registered
+   * (FR32, C12). The candidate goes to the `*Staged` pointer, NOT the live binding,
+   * so a later cutover can move the outgoing active version into the per-slot archive
+   * (Feature 019 FR2). The version is monotonic across current/staged/archive.
+   */
+  function planSelect(input: SelectBindingInput, slot: Slot): Effect.Effect<OperatorMutationPlan, BindingError> {
     return Effect.gen(function* () {
       const doc = yield* readDoc(bindingUnavailable)
       if (!doc.models.some((m) => m.id === input.modelDescriptorId)) return yield* Effect.fail<BindingError>({ type: "not_validated", id: input.modelDescriptorId })
-      const record: RegistryBinding = {
-        slot,
-        modelDescriptorId: input.modelDescriptorId,
-        compatibilityMode: input.compatibilityMode,
-        state: "draft",
-        version: (slot === "embedding" ? doc.embedding?.version ?? 0 : doc.reranker?.version ?? 0) + 1,
-        selectedBy: input.principal.id,
-        selectedAt: new Date(clock()).toISOString(),
+      const stage = (d: RegistryDocument): RegistryDocument => {
+        const record: RegistryBinding = {
+          slot,
+          modelDescriptorId: input.modelDescriptorId,
+          compatibilityMode: input.compatibilityMode,
+          state: "draft",
+          version: nextBindingVersion(d, slot),
+          selectedBy: input.principal.id,
+          selectedAt: new Date(clock()).toISOString(),
+          validated: false,
+        }
+        return slot === "reranker" ? { ...d, rerankerStaged: record } : { ...d, embeddingStaged: record }
       }
-      return yield* guardedPlan<BindingError>((d) => ({ ...d, [slot]: record }), bindingUnavailable)
+      return yield* guardedPlan<BindingError>(stage, bindingUnavailable)
     })
+  }
+
+  /**
+   * Feature 019 (FR1, FR3) — activate a validated staged reranker candidate through
+   * the config-backed registry, with NO Milvus dependency. The pure `cutoverReranker`
+   * supplies the confirmation gate and the `reEmbedded:false` invariant; the transform
+   * promotes the staged candidate to `active`, moves the outgoing active into the
+   * per-slot superseded archive, clears the staged pointer, and bumps the rerank
+   * cache/eval version. The authority CAS token (dispatcher `version`) is the single
+   * compare-and-swap gate, so a contention swaps nothing (`cas_conflict`); an
+   * unvalidated / illegal candidate is a typed `not_validated`.
+   */
+  function planCutoverReranker(input: RerankerCutoverPlanInput): Effect.Effect<OperatorMutationPlan, BindingError> {
+    return Effect.gen(function* () {
+      const doc = yield* readDoc(bindingUnavailable)
+      const staged = stagedOf(doc, "reranker")
+      if (staged === null || staged.validated !== true) {
+        return yield* Effect.fail<BindingError>({ type: "not_validated", id: staged?.modelDescriptorId ?? "" })
+      }
+      // The binding machine must permit `staged --cutover--> active`; a draft/active candidate is illegal (FR3).
+      if (BindingLifecycle.apply(staged.state as BindingState, "cutover").kind !== "transition") {
+        return yield* Effect.fail<BindingError>({ type: "not_validated", id: staged.modelDescriptorId })
+      }
+      const outcome = CutoverExecutor.cutoverReranker({ confirmed: input.confirmed, bindingVersion: staged.version })
+      if (outcome.kind === "confirmation_required") return yield* Effect.fail<BindingError>({ type: "confirmation_required" })
+      return yield* guardedPlan<BindingError>((d) => activateReranker(d, input.principal.id), bindingUnavailable)
+    })
+  }
+
+  /**
+   * Feature 019 (FR3) — restore a superseded prior for the reranker slot. The target
+   * resolves from the per-slot archive; an empty archive (or an unknown version) is a
+   * typed `no_archived_prior` rejection — never a fabricated swap. On success the
+   * outgoing active is archived, the prior is restored `active`, and the rerank
+   * cache/eval version is bumped under the authority CAS + operator confirmation.
+   */
+  function planRollbackReranker(input: RerankerRollbackPlanInput): Effect.Effect<OperatorMutationPlan, BindingError> {
+    return Effect.gen(function* () {
+      const doc = yield* readDoc(bindingUnavailable)
+      if (resolveRollbackTarget(archiveOf(doc, "reranker"), input.targetBindingVersion) === undefined) {
+        return yield* Effect.fail<BindingError>({ type: "no_archived_prior", slot: "reranker" as BindingSlot })
+      }
+      if (!input.confirmed) return yield* Effect.fail<BindingError>({ type: "confirmation_required" })
+      return yield* guardedPlan<BindingError>((d) => restoreReranker(d, input.targetBindingVersion), bindingUnavailable)
+    })
+  }
+
+  /** Promote the staged reranker candidate to `active`, archiving the outgoing active version (FR1, FR2). */
+  function activateReranker(d: RegistryDocument, activatedBy: string): RegistryDocument {
+    const staged = stagedOf(d, "reranker")
+    if (staged === null) return d // defensive — the plan gate already required a validated candidate
+    const outgoing = currentOf(d, "reranker")
+    const archive = archiveOf(d, "reranker")
+    const nextArchive = outgoing && outgoing.state === "active" ? [outgoing, ...archive] : archive
+    return {
+      ...d,
+      reranker: { ...staged, state: "active", selectedBy: activatedBy, selectedAt: new Date(clock()).toISOString() },
+      rerankerStaged: null,
+      rerankerArchive: nextArchive,
+      rerankEvalVersion: (d.rerankEvalVersion ?? 0) + 1,
+    }
+  }
+
+  /** Restore an archived reranker prior to `active`, archiving the outgoing active version (FR3). */
+  function restoreReranker(d: RegistryDocument, targetVersion: number | undefined): RegistryDocument {
+    const archive = archiveOf(d, "reranker")
+    const target = resolveRollbackTarget(archive, targetVersion)
+    if (target === undefined) return d // defensive — the plan gate already required a prior
+    const remaining = archive.filter((b) => b.version !== target.version)
+    const outgoing = currentOf(d, "reranker")
+    const nextArchive = outgoing && outgoing.state === "active" ? [outgoing, ...remaining] : remaining
+    return {
+      ...d,
+      reranker: { ...target, state: "active" },
+      rerankerArchive: nextArchive,
+      rerankEvalVersion: (d.rerankEvalVersion ?? 0) + 1,
+    }
   }
 }
 
