@@ -27,7 +27,7 @@ import type { ConfigPort } from "@/operator/application/ports/config-port"
 import type { MilvusPort } from "@/semantic/milvus-adapter"
 import type { MetricKind } from "@opencode-ai/protocol/semantic/commands"
 import type { SemanticBackend } from "./semantic-port"
-import type { SemanticRegistryBackend } from "./registry-backend"
+import type { RerankValidationProbe, SemanticRegistryBackend } from "./registry-backend"
 
 export interface LiveSemanticBackendDeps {
   /** Real per-port implementations the composition root injects as the stack is bound; unset falls back to the honest gap. */
@@ -52,6 +52,14 @@ export interface LiveSemanticBackendDeps {
    * physically build a generation + swap the alias; absent → the `milvus_unavailable` floor.
    */
   readonly milvusPort?: MilvusPort
+  /**
+   * Feature 019 (FR3, FR32) — the reranker validation probe threaded into the
+   * config-backed registry so `semantic.reranker.validate` runs a real provider probe
+   * and promotes the staged candidate to `validated`. Absent → the verb is the honest
+   * typed gap (the provider stack is not composed from the operator runtime in this
+   * wave), never a fabricated `validated`.
+   */
+  readonly rerankProbe?: RerankValidationProbe
   /** The vector dimension/metric a generation build declares (defaults 1024 / cosine). */
   readonly generationDimension?: number
   readonly generationMetric?: MetricKind
@@ -123,6 +131,7 @@ export const createLiveSemanticBackend = (deps: LiveSemanticBackendDeps = {}): S
       ? createConfigBackedRegistry({
           config: deps.config,
           milvus: deps.milvusPort ?? deps.milvus?.port,
+          rerankProbe: deps.rerankProbe,
           defaultDimension: deps.generationDimension,
           defaultMetric: deps.generationMetric,
         })

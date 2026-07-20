@@ -160,13 +160,24 @@ const ENTRIES: readonly EntrySpec[] = [
   { id: "semantic.model.disable", mutates: true, scopesAllowed: P, offlineCapable: true },
   { id: "semantic.embedding.show", mutates: false, scopesAllowed: GP, offlineCapable: true },
   { id: "semantic.embedding.select", mutates: true, scopesAllowed: P, offlineCapable: true },
-  { id: "semantic.embedding.validate", mutates: false, scopesAllowed: GP, offlineCapable: false },
+  // Feature 019 (FR3, FR32) — validate PERSISTS the `validated` binding flag through the
+  // config-backed registry (the ONLY producer of a validated candidate a cutover may
+  // activate), so it is a project-scoped mutation, not a read-only probe. The original
+  // `mutates:false` was overstated: a read cannot record the validate transition the
+  // lifecycle requires. Offline-incapable — the embedding slot needs a reindex-built Milvus
+  // generation first. No new id / no catalog version bump (the reserved id set is unchanged).
+  { id: "semantic.embedding.validate", mutates: true, scopesAllowed: P, offlineCapable: false },
   { id: "semantic.embedding.reindex", mutates: true, scopesAllowed: P, offlineCapable: false },
   { id: "semantic.embedding.cutover", mutates: true, scopesAllowed: P, offlineCapable: true },
   { id: "semantic.embedding.rollback", mutates: true, scopesAllowed: P, offlineCapable: true },
   { id: "semantic.reranker.show", mutates: false, scopesAllowed: GP, offlineCapable: true },
   { id: "semantic.reranker.select", mutates: true, scopesAllowed: P, offlineCapable: true },
-  { id: "semantic.reranker.validate", mutates: false, scopesAllowed: GP, offlineCapable: false },
+  // Feature 019 (FR3, FR32) — validate PERSISTS the `validated` binding flag through the
+  // config-backed registry after a passing provider probe (the ONLY producer of a validated
+  // reranker candidate a cutover may activate), so it is a project-scoped mutation, not a
+  // read-only probe. Offline-incapable — it runs a live provider rerank probe in the plan
+  // effect. No new id / no catalog version bump (the reserved id set is unchanged).
+  { id: "semantic.reranker.validate", mutates: true, scopesAllowed: P, offlineCapable: false },
   { id: "semantic.reranker.cutover", mutates: true, scopesAllowed: P, offlineCapable: true },
   { id: "semantic.reranker.rollback", mutates: true, scopesAllowed: P, offlineCapable: true },
   { id: "semantic.binding.status", mutates: false, scopesAllowed: GP, offlineCapable: true },

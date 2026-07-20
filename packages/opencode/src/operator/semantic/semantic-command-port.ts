@@ -226,7 +226,11 @@ function embeddingInvoke(port: SemanticPort, c: Ctx): Promise<HandlerResult> | n
     // floor — never a config-only alias flip.
     case "semantic.embedding.show": return reg ? c.io.run(reg.showEmbedding({ scope: c.scope, scopeId: c.scopeId }), query) : c.io.run(b.showEmbedding({ scope: c.scope, scopeId: c.scopeId }), query)
     case "semantic.embedding.select": return reg ? c.io.plan(reg.planSelectEmbedding(select)) : c.io.run(b.selectEmbedding(select), query)
-    case "semantic.embedding.validate": return c.io.run(b.validateEmbedding({ id: id as never, principal: c.principal }), query)
+    // validate promotes the staged candidate to `validated` through the config-backed registry
+    // (the ONLY path that produces a validated candidate a cutover may activate, FR3/FR32): the
+    // embedding slot requires a reindex-built Milvus generation first, else the typed gap. Unbound
+    // registry falls back to the gated Milvus probe.
+    case "semantic.embedding.validate": return reg ? c.io.plan(reg.planValidateEmbedding({ principal: c.principal })) : c.io.run(b.validateEmbedding({ id: id as never, principal: c.principal }), query)
     case "semantic.embedding.reindex":
       return reg
         ? c.io.plan(reg.planReindexEmbedding({ principal: c.principal }))
@@ -253,7 +257,11 @@ function rerankerInvoke(port: SemanticPort, c: Ctx): Promise<HandlerResult> | nu
     // show/select/cutover/rollback ride the config-backed registry (no Milvus, FR1); validate stays the gated Milvus probe.
     case "semantic.reranker.show": return reg ? c.io.run(reg.showReranker({ scope: c.scope, scopeId: c.scopeId }), query) : c.io.run(b.showReranker({ scope: c.scope, scopeId: c.scopeId }), query)
     case "semantic.reranker.select": return reg ? c.io.plan(reg.planSelectReranker(select)) : c.io.run(b.selectReranker(select), query)
-    case "semantic.reranker.validate": return c.io.run(b.validateReranker({ id: id as never, principal: c.principal }), query)
+    // validate runs the provider rerank probe in the plan effect and promotes the staged
+    // candidate to `validated` (the ONLY path that produces a validated reranker candidate a
+    // cutover may activate, FR3/FR32). No probe composed → the honest typed gap. Unbound
+    // registry falls back to the gated Milvus/provider probe.
+    case "semantic.reranker.validate": return reg ? c.io.plan(reg.planValidateReranker({ principal: c.principal })) : c.io.run(b.validateReranker({ id: id as never, principal: c.principal }), query)
     case "semantic.reranker.cutover":
       return reg
         ? c.io.plan(reg.planCutoverReranker({ confirmed: bool(c.payload, "confirmed"), principal: c.principal }))

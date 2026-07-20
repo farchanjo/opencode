@@ -25,6 +25,7 @@ import { findPlaintextSecretFields } from "@opencode-ai/core/operator/secret"
 import { BindingLifecycle } from "@opencode-ai/core/semantic/binding-lifecycle"
 import type { BindingState } from "@opencode-ai/core/semantic/binding-lifecycle"
 import { CutoverExecutor } from "@/semantic/cutover-executor"
+import { RerankClient } from "@/semantic/rerank-client"
 import { UrlGuard } from "@/semantic/url-guard"
 import { type ConfigPort } from "@/operator/application/ports/config-port"
 import type { MilvusPort } from "@/semantic/milvus-adapter"
@@ -50,6 +51,7 @@ import type {
   OperatorPrincipal,
   ProviderError,
   RegisterModelInput,
+  RerankProfile,
   RotateSecretInput,
   SelectBindingInput,
   SemanticModelBinding,
@@ -229,11 +231,41 @@ export interface SemanticRegistryBackend {
   readonly planDisableModel: (input: DisableModelInput) => Effect.Effect<OperatorMutationPlan, ModelError>
   readonly planSelectEmbedding: (input: SelectBindingInput) => Effect.Effect<OperatorMutationPlan, BindingError>
   readonly planSelectReranker: (input: SelectBindingInput) => Effect.Effect<OperatorMutationPlan, BindingError>
+  readonly planValidateReranker: (input: BindingValidatePlanInput) => Effect.Effect<OperatorMutationPlan, BindingError>
+  readonly planValidateEmbedding: (input: BindingValidatePlanInput) => Effect.Effect<OperatorMutationPlan, BindingError>
   readonly planCutoverReranker: (input: RerankerCutoverPlanInput) => Effect.Effect<OperatorMutationPlan, BindingError>
   readonly planRollbackReranker: (input: RerankerRollbackPlanInput) => Effect.Effect<OperatorMutationPlan, BindingError>
   readonly planReindexEmbedding: (input: EmbeddingReindexPlanInput) => Effect.Effect<OperatorMutationPlan, BindingError>
   readonly planCutoverEmbedding: (input: EmbeddingCutoverPlanInput) => Effect.Effect<OperatorMutationPlan, BindingError>
   readonly planRollbackEmbedding: (input: EmbeddingRollbackPlanInput) => Effect.Effect<OperatorMutationPlan, BindingError>
+}
+
+/**
+ * Feature 019 (FR3, FR32) — validate the staged candidate for one slot. There is no
+ * `id`: a slot has exactly one in-flight `*Staged` candidate (the one a `select`
+ * staged), so validate always targets it. On success it promotes the candidate to
+ * `{ state: "staged", validated: true }` (the machine `draft --validate--> staged`),
+ * the ONLY config-backed path that produces a validated candidate a cutover may
+ * activate. A rejected validate persists nothing (no fake `validated`).
+ */
+export interface BindingValidatePlanInput {
+  readonly principal: OperatorPrincipal
+}
+
+/**
+ * Feature 019 (FR3, FR32) — the reranker validation probe seam: the ONLY
+ * provider-network call in the reranker lifecycle. `run` executes the native/structured
+ * rerank probe (`rerank-client`) against the staged candidate's provider endpoint and
+ * reports pass/fail — never a document, a vector, or a secret. When ABSENT (no probe
+ * composed from the runtime) the config-backed `planValidateReranker` returns the honest
+ * typed gap, never a fabricated `validated` (cardinal honesty for the reranker slot).
+ */
+export interface RerankValidationProbe {
+  readonly run: (input: {
+    readonly baseUrl: string
+    readonly profile: RerankProfile
+    readonly modelDescriptorId: string
+  }) => Promise<{ readonly passed: boolean }>
 }
 
 /**
@@ -302,6 +334,15 @@ export interface ConfigBackedRegistryDeps {
    * `milvus_unavailable` floor — never a config-only alias flip (cardinal honesty).
    */
   readonly milvus?: MilvusPort
+  /**
+   * Feature 019 (FR3, FR32) — the reranker validation probe. When present,
+   * `planValidateReranker` runs it in the plan effect (after CAS, per the 017
+   * effectful-plan contract) and promotes the staged reranker candidate to
+   * `validated` only on a passing probe; when ABSENT the verb is the honest typed gap
+   * — never a fabricated `validated`. The reranker slot has NO Milvus dependency, so
+   * this probe is its only backend-readiness input.
+   */
+  readonly rerankProbe?: RerankValidationProbe
   /** The vector dimension a generation build declares when the staged model omits one (default 1024). */
   readonly defaultDimension?: number
   /** The vector metric a generation build declares when the staged model omits one (default `cosine`). */
@@ -606,6 +647,8 @@ export function createConfigBackedRegistry(deps: ConfigBackedRegistryDeps): Sema
 
     planSelectEmbedding: (input) => planSelect(input, "embedding"),
     planSelectReranker: (input) => planSelect(input, "reranker"),
+    planValidateReranker: (input) => planValidateReranker(input),
+    planValidateEmbedding: (input) => planValidateEmbedding(input),
     planCutoverReranker: (input) => planCutoverReranker(input),
     planRollbackReranker: (input) => planRollbackReranker(input),
     planReindexEmbedding: (input) => planReindexEmbedding(input),
@@ -652,8 +695,12 @@ export function createConfigBackedRegistry(deps: ConfigBackedRegistryDeps): Sema
       const port = deps.milvus
       if (port === undefined) return yield* Effect.fail<BindingError>({ type: "unavailable", reason: "milvus_unavailable" })
       const staged = stagedOf(doc, "embedding")
-      if (staged === null || staged.validated !== true) {
-        return yield* Effect.fail<BindingError>({ type: "not_validated", id: staged?.modelDescriptorId ?? "" })
+      // A generation is built for a SELECTED (draft) or re-staged candidate; reindex PRECEDES
+      // validate for the embedding slot (the built generation is what `validate` then requires),
+      // so reindex must NOT itself demand `validated`. An active/degraded slot is an illegal source.
+      if (staged === null) return yield* Effect.fail<BindingError>({ type: "no_candidate_staged" })
+      if (BindingLifecycle.apply(staged.state as BindingState, "reindex").kind === "illegal") {
+        return yield* Effect.fail<BindingError>({ type: "not_validated", id: staged.modelDescriptorId })
       }
       const generationId = `gen_${idGen()}`
       const model = doc.models.find((m) => m.id === staged.modelDescriptorId)
@@ -870,6 +917,106 @@ export function createConfigBackedRegistry(deps: ConfigBackedRegistryDeps): Sema
         return slot === "reranker" ? { ...d, rerankerStaged: record } : { ...d, embeddingStaged: record }
       }
       return yield* guardedPlan<BindingError>(stage, bindingUnavailable)
+    })
+  }
+
+  /** Promote the staged candidate for a slot to `{ state: "staged", validated: true }` (the ONLY validated writer). */
+  function markValidated(d: RegistryDocument, slot: Slot): RegistryDocument {
+    const staged = stagedOf(d, slot)
+    if (staged === null) return d // defensive — the plan gate already required a staged candidate
+    const validated: RegistryBinding = { ...staged, state: "staged", validated: true }
+    return slot === "reranker" ? { ...d, rerankerStaged: validated } : { ...d, embeddingStaged: validated }
+  }
+
+  /** The staged candidate's registered+enabled model, or a typed `not_validated` (untrusted declaration, C16). */
+  function coherentModel(doc: RegistryDocument, staged: RegistryBinding): RegistryModel | BindingError {
+    const model = doc.models.find((m) => m.id === staged.modelDescriptorId)
+    if (model === undefined || !model.enabled) return { type: "not_validated", id: staged.modelDescriptorId }
+    const provider = doc.providers.find((p) => p.id === model.providerProfileId)
+    if (provider === undefined || !provider.enabled) return { type: "not_validated", id: staged.modelDescriptorId }
+    return model
+  }
+
+  /**
+   * Feature 019 (FR3, FR32) — validate the staged RERANKER candidate through the
+   * config-backed registry and, on a passing provider probe, promote it to
+   * `{ state: "staged", validated: true }`. This is the ONLY config-backed path that
+   * produces a validated reranker candidate a cutover may activate (the review's missing
+   * transition). Pure coherence gates run first: a candidate must be staged from a
+   * `draft` (the machine `draft --validate--> staged`), an eligible rerank profile
+   * (profile C is refused, C16), and its model + provider must be registered, enabled,
+   * and secret-resolvable. The probe is the ONLY provider-network call and runs in the
+   * plan EFFECT (after CAS, per the 017 contract): a failed probe is a typed
+   * `validation_failed` that commits nothing; no probe composed (or no endpoint) is the
+   * honest typed gap — never a fabricated `validated`.
+   */
+  function planValidateReranker(input: BindingValidatePlanInput): Effect.Effect<OperatorMutationPlan, BindingError> {
+    void input
+    return Effect.gen(function* () {
+      const doc = yield* readDoc(bindingUnavailable)
+      const staged = stagedOf(doc, "reranker")
+      if (staged === null) return yield* Effect.fail<BindingError>({ type: "no_candidate_staged" })
+      if (BindingLifecycle.apply(staged.state as BindingState, "validate").kind !== "transition") {
+        return yield* Effect.fail<BindingError>({ type: "not_validated", id: staged.modelDescriptorId })
+      }
+      const eligibility = RerankClient.rejectForRerankerSlot(staged.compatibilityMode as RerankProfile)
+      if (eligibility !== null) return yield* Effect.fail<BindingError>({ type: "reranker_not_eligible", reason: eligibility.reason })
+      const model = coherentModel(doc, staged)
+      if ("type" in model) return yield* Effect.fail(model)
+      const provider = doc.providers.find((p) => p.id === model.providerProfileId)!
+      const ref = provider.secretRef ?? ""
+      if (ref.length === 0 || !SECRET_REF_PATTERN.test(ref)) return yield* Effect.fail<BindingError>({ type: "not_validated", id: staged.modelDescriptorId })
+      const probe = deps.rerankProbe
+      // No probe composed / no provider endpoint → honest typed gap; NEVER a fabricated validated.
+      if (probe === undefined || provider.baseUrl.length === 0) {
+        return yield* Effect.fail<BindingError>({ type: "unavailable", reason: "reranker validation probe is not composed" })
+      }
+      const profile = staged.compatibilityMode as RerankProfile
+      const baseUrl = provider.baseUrl
+      const plan: OperatorMutationPlan = {
+        authority: AUTHORITY,
+        effect: async (): Promise<OperatorMutationEffectResult> => {
+          try {
+            const result = await probe.run({ baseUrl, profile, modelDescriptorId: staged.modelDescriptorId })
+            if (!result.passed) return { ok: false, code: "invalid_argument", message: "validation_failed" }
+            return { ok: true }
+          } catch {
+            return { ok: false, code: "unavailable", message: "reranker validation probe unreachable" }
+          }
+        },
+        apply: (current) => encodeDocument(markValidated(parseDocument(current), "reranker")),
+      }
+      return plan
+    })
+  }
+
+  /**
+   * Feature 019 (FR3, FR5, FR32) — validate the staged EMBEDDING candidate through the
+   * config-backed registry and promote it to `{ state: "staged", validated: true }`.
+   * The cardinal honesty rule holds: an embedding candidate is validatable ONLY once a
+   * blue/green generation matching its version was physically built + validated in Milvus
+   * (`planReindexEmbedding`), so `validate` PRECEDES `cutover` and FOLLOWS `reindex`. An
+   * unbound Milvus port is the typed `milvus_unavailable` gap; a missing generation is a
+   * typed `not_validated` (reindex-first); an incoherent model/provider is `not_validated`.
+   * The transition is a pure config plan — the physical build already ran at reindex.
+   */
+  function planValidateEmbedding(input: BindingValidatePlanInput): Effect.Effect<OperatorMutationPlan, BindingError> {
+    void input
+    return Effect.gen(function* () {
+      const doc = yield* readDoc(bindingUnavailable)
+      const port = deps.milvus
+      if (port === undefined) return yield* Effect.fail<BindingError>({ type: "unavailable", reason: "milvus_unavailable" })
+      const staged = stagedOf(doc, "embedding")
+      if (staged === null) return yield* Effect.fail<BindingError>({ type: "no_candidate_staged" })
+      if (BindingLifecycle.apply(staged.state as BindingState, "validate").kind !== "transition") {
+        return yield* Effect.fail<BindingError>({ type: "not_validated", id: staged.modelDescriptorId })
+      }
+      const model = coherentModel(doc, staged)
+      if ("type" in model) return yield* Effect.fail(model)
+      // Reindex-first: a `validated` generation for THIS candidate version must already exist.
+      const generation = generationsOf(doc).find((g) => g.state === "validated" && g.bindingVersion === staged.version)
+      if (generation === undefined) return yield* Effect.fail<BindingError>({ type: "not_validated", id: staged.modelDescriptorId })
+      return asPlan((d) => markValidated(d, "embedding"))
     })
   }
 

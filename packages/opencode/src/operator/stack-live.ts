@@ -519,6 +519,13 @@ export async function createLiveOperatorStack(input: CreateLiveOperatorStackInpu
   // endpoint/credential never cross the result seam — only a bounded finding or a typed gap.
   // When unconfigured, NO port is bound and every index/binding verb degrades to the EXACT
   // same typed `milvus_unavailable` floor as today.
+  // Feature 019 (FR3, FR32) — `semantic.embedding.validate`/`reranker.validate` now route through the
+  // config-backed registry as PERSISTED transitions that promote a staged candidate to `validated`
+  // (the only producer of a validated candidate a cutover may activate). Embedding validate is
+  // Milvus-conditional (reindex-first). Reranker validate needs a live provider rerank probe; that
+  // probe is NOT composed from the operator runtime in this wave (the provider stack is unbound, the
+  // same honest boundary as `provider.test`), so `rerankProbe` is left unset and reranker validate
+  // returns the honest typed gap — never a fabricated `validated`.
   const milvusAddress = process.env["OPENCODE_SEMANTIC_MILVUS_ADDRESS"]?.trim()
   const insecureMilvus = process.env["OPENCODE_SEMANTIC_MILVUS_INSECURE"] === "1"
   const milvusPort =

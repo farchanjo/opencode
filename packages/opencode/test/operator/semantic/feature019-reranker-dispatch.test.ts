@@ -1,13 +1,16 @@
 /**
- * Feature 019 / T001-T003 (Group A, FR1-FR3) — the config-backed reranker cutover
+ * Feature 019 / T001-T003 (Group A, FR1-FR3) — the config-backed reranker lifecycle
  * dispatched end-to-end through the FULL Feature 007 pipeline (dispatchRequest →
  * confirm → contract → plan → `mutateAuthority`), wired exactly as `stack-live.ts`
  * composes the semantic domain over one shared `store.config` seam.
  *
- * Proves: a validated staged reranker candidate cuts over under CAS + confirmation,
- * bumps the authority version, and re-reads as `active` with the prior retained in the
- * superseded archive — with NO Milvus dependency (the reranker path is config-backed).
- * An unvalidated candidate is honestly rejected and audited, committing nothing.
+ * Proves the REAL driven chain with NO injected `validated` state: `select` stages a
+ * draft candidate, `validate` runs the wired provider probe and promotes it to
+ * validated, `cutover` activates it under CAS + confirmation (bumping the authority
+ * version, retaining the prior in the superseded archive), and `rollback` restores the
+ * prior — all config-backed with NO Milvus dependency. The honest gates reject + audit
+ * and commit nothing: an unvalidated candidate, a failing probe, and an unconfirmed
+ * cutover each fail without a phantom write.
  */
 import { describe, expect, test } from "bun:test"
 import { Effect } from "effect"
@@ -23,6 +26,7 @@ import { handlersFromDomainPorts, domainHandlerFor, wireDomainPorts } from "@/op
 import type { DomainPorts } from "@/operator/application/ports/domain-ports"
 import { SemanticStackWiring } from "@/operator/semantic/stack-wiring"
 import { SemanticBackendLive } from "@/operator/semantic/backend-live"
+import type { RerankValidationProbe } from "@/operator/semantic/registry-backend"
 
 const SEMANTIC_AUTHORITY = "semantic"
 
@@ -39,11 +43,14 @@ function mutationPorts(): MutationPorts {
   }
 }
 
-function harness() {
+/** A passing (default) / failing rerank probe double the composition threads into the registry. */
+const probeThat = (passed: boolean): RerankValidationProbe => ({ run: async () => ({ passed }) })
+
+function harness(opts: { probePasses?: boolean } = {}) {
   const registry = createSeededOperatorCommandRegistry()
   const mp = mutationPorts()
   const audited: string[] = []
-  const semantic = SemanticBackendLive.createLiveSemanticBackend({ config: mp.config })
+  const semantic = SemanticBackendLive.createLiveSemanticBackend({ config: mp.config, rerankProbe: probeThat(opts.probePasses ?? true) })
   const domainPorts: DomainPorts = wireDomainPorts({
     ...SemanticStackWiring.createSemanticDomainWiring({
       backend: semantic,
@@ -79,23 +86,21 @@ const dispatch = (
     { cliInteractiveConfirmed: opts.interactive ?? true },
   )
 
-/** A validated staged reranker candidate seeded directly into the `semantic` authority document. */
+/** A registered provider + model so `select`/`validate` coherence passes; NO staged candidate. */
 const seedDoc = (over: Record<string, unknown> = {}) => ({
-  providers: [],
-  models: [],
+  providers: [{
+    id: "p1", version: 1, name: "rerank-prov", baseUrl: "https://rerank.local", tlsRequired: true,
+    allowInsecureLocalProfile: false, residency: "remote", secretRef: "vault:rr@v1", enabled: true,
+    createdAt: "t", updatedAt: "t", selectedBy: "op_1",
+  }],
+  models: [{
+    id: "m_new", providerProfileId: "p1", version: 1, displayName: "rr", endpointMode: "rerank",
+    declaredCapabilityKinds: ["rerank"], enabled: true, validationStatus: "declared",
+  }],
   embedding: null,
   reranker: null,
   embeddingStaged: null,
-  rerankerStaged: {
-    slot: "reranker",
-    modelDescriptorId: "m_new",
-    compatibilityMode: "native-rerank",
-    state: "staged",
-    version: 2,
-    selectedBy: "op_1",
-    selectedAt: "2026-01-01T00:00:00.000Z",
-    validated: true,
-  },
+  rerankerStaged: null,
   embeddingArchive: [],
   rerankerArchive: [],
   rerankEvalVersion: 0,
@@ -113,44 +118,84 @@ const readReranker = async (dispatcher: ReturnType<typeof harness>["dispatcher"]
   return (r.effective as { versions: ReadonlyArray<{ bindingVersion: number; state: string; modelDescriptorId: string }> }).versions
 }
 
-describe("T001-T003 — reranker cutover dispatches config-backed end-to-end (FR1-FR3)", () => {
-  test("a validated staged candidate cuts over under CAS + confirmation, bumps the version, and re-reads active", async () => {
-    const { dispatcher, config } = harness()
-    // seed a prior active reranker + a validated staged candidate replacing it
-    const version = await seed(config, seedDoc({
+describe("T001-T003 — the reranker lifecycle dispatches config-backed end-to-end (FR1-FR3)", () => {
+  test("select → validate → cutover → rollback drives the real chain with NO injected validated state", async () => {
+    const { dispatcher, config } = harness({ probePasses: true })
+    // A prior active reranker; the new candidate replaces it through the driven chain.
+    let version = await seed(config, seedDoc({
       reranker: { slot: "reranker", modelDescriptorId: "m_old", compatibilityMode: "native-rerank", state: "active", version: 1, selectedBy: "op_1", selectedAt: "t", validated: true },
     }))
 
-    const cutover = await dispatch(dispatcher, "semantic.reranker.cutover", { confirmed: true }, { version })
-    expect(cutover.ok).toBe(true)
-    expect(cutover.version).not.toBe(version) // the authority CAS version advanced (audited commit)
+    // 1) select — stages a DRAFT candidate (validated:false).
+    const sel = await dispatch(dispatcher, "semantic.reranker.select", { modelDescriptorId: "m_new", compatibilityMode: "native-rerank" }, { version })
+    expect(sel.ok).toBe(true)
+    version = sel.version!
 
-    const versions = await readReranker(dispatcher)
-    // the staged candidate is now the active reranker; the prior is retained as a superseded archive entry
+    // 2) validate — runs the wired provider probe and promotes the candidate to validated.
+    const val = await dispatch(dispatcher, "semantic.reranker.validate", {}, { version })
+    expect(val.ok).toBe(true)
+    version = val.version!
+
+    // 3) cutover — activates the now-validated candidate under CAS + confirmation; the version advances.
+    const cut = await dispatch(dispatcher, "semantic.reranker.cutover", { confirmed: true }, { version })
+    expect(cut.ok).toBe(true)
+    expect(cut.version).not.toBe(version)
+    version = cut.version!
+
+    let versions = await readReranker(dispatcher)
     const active = versions.find((v) => v.state === "active" && v.modelDescriptorId === "m_new")
     expect(active?.bindingVersion).toBe(2)
-    expect(versions.some((v) => v.modelDescriptorId === "m_old")).toBe(true)
+    expect(versions.some((v) => v.modelDescriptorId === "m_old")).toBe(true) // prior retained in the archive
+
+    // 4) rollback — restores the archived prior under CAS + confirmation.
+    const rb = await dispatch(dispatcher, "semantic.reranker.rollback", { confirmed: true }, { version })
+    expect(rb.ok).toBe(true)
+    versions = await readReranker(dispatcher)
+    expect(versions.find((v) => v.state === "active")?.modelDescriptorId).toBe("m_old")
   })
 
-  test("an unvalidated candidate is rejected, audited, and commits nothing", async () => {
+  test("an unvalidated staged candidate is rejected at cutover, audited, and commits nothing", async () => {
     const { dispatcher, config, audited } = harness()
-    const version = await seed(config, seedDoc({
-      rerankerStaged: { slot: "reranker", modelDescriptorId: "m_new", compatibilityMode: "native-rerank", state: "staged", version: 2, selectedBy: "op_1", selectedAt: "t", validated: false },
-    }))
+    // select stages a draft; skip validate → cutover must reject.
+    let version = await seed(config, seedDoc())
+    const sel = await dispatch(dispatcher, "semantic.reranker.select", { modelDescriptorId: "m_new", compatibilityMode: "native-rerank" }, { version })
+    expect(sel.ok).toBe(true)
+    version = sel.version!
 
     const cutover = await dispatch(dispatcher, "semantic.reranker.cutover", { confirmed: true }, { version })
     expect(cutover.ok).toBe(false)
     expect(cutover.error?.message).toContain("not_validated")
     expect(audited).toContain("semantic.reranker.cutover:rejected")
 
-    // no phantom write: the staged candidate is still staged, no active reranker
     const versions = await readReranker(dispatcher)
-    expect(versions.every((v) => v.state !== "active")).toBe(true)
+    expect(versions.every((v) => v.state !== "active")).toBe(true) // no phantom write
+  })
+
+  test("a FAILING provider probe rejects validate (validation_failed) and never marks the candidate validated", async () => {
+    const { dispatcher, config } = harness({ probePasses: false })
+    let version = await seed(config, seedDoc())
+    const sel = await dispatch(dispatcher, "semantic.reranker.select", { modelDescriptorId: "m_new", compatibilityMode: "native-rerank" }, { version })
+    expect(sel.ok).toBe(true)
+    version = sel.version!
+
+    // The probe runs in the plan effect; a failure aborts the commit with the typed envelope, no phantom write.
+    const val = await dispatch(dispatcher, "semantic.reranker.validate", {}, { version })
+    expect(val.ok).toBe(false)
+    expect(val.error?.message).toContain("validation_failed")
+
+    // The candidate is still un-validated: a subsequent cutover is rejected not_validated.
+    const cut = await dispatch(dispatcher, "semantic.reranker.cutover", { confirmed: true }, { version: val.version ?? version })
+    expect(cut.ok).toBe(false)
+    expect(cut.error?.message).toContain("not_validated")
   })
 
   test("an unconfirmed cutover is rejected (confirmation_required), no Milvus involved", async () => {
     const { dispatcher, config } = harness()
-    const version = await seed(config, seedDoc())
+    let version = await seed(config, seedDoc())
+    const sel = await dispatch(dispatcher, "semantic.reranker.select", { modelDescriptorId: "m_new", compatibilityMode: "native-rerank" }, { version })
+    version = sel.version!
+    const val = await dispatch(dispatcher, "semantic.reranker.validate", {}, { version })
+    version = val.version!
     const cutover = await dispatch(dispatcher, "semantic.reranker.cutover", { confirmed: false }, { version, interactive: false })
     expect(cutover.ok).toBe(false)
   })
