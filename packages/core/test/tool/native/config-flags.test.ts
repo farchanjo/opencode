@@ -13,18 +13,18 @@ import { NativeLoader } from "@opencode-ai/core/tool/native/loader"
  * `Config.latest(entries, "experimental")`, exactly as `bash.ts` / `grep.ts` read them.
  */
 
-describe("experimental native flags default off (T017, C2)", () => {
-  test("no experimental block reads both native flags as off", () => {
+describe("experimental native flags are optional booleans (Feature 010 schema)", () => {
+  test("no experimental block reads both native flags as undefined (unset)", () => {
     const experimental = Config.latest([], "experimental")
-    expect(experimental?.native_tools ?? false).toBe(false)
-    expect(experimental?.native_pty ?? false).toBe(false)
+    expect(experimental?.native_tools).toBeUndefined()
+    expect(experimental?.native_pty).toBeUndefined()
   })
 
-  test("an empty experimental block is presence-inert (both flags off)", () => {
+  test("an empty experimental block leaves both flags unset", () => {
     const entries = [{ type: "document", info: { experimental: {} } } as never]
     const experimental = Config.latest(entries, "experimental")
-    expect(experimental?.native_tools ?? false).toBe(false)
-    expect(experimental?.native_pty ?? false).toBe(false)
+    expect(experimental?.native_tools).toBeUndefined()
+    expect(experimental?.native_pty).toBeUndefined()
   })
 
   test("both flags are read as on when explicitly enabled", () => {
@@ -32,6 +32,44 @@ describe("experimental native flags default off (T017, C2)", () => {
     const experimental = Config.latest(entries, "experimental")
     expect(experimental?.native_tools).toBe(true)
     expect(experimental?.native_pty).toBe(true)
+  })
+
+  test("both flags are read as false when explicitly disabled", () => {
+    const entries = [{ type: "document", info: { experimental: { native_tools: false, native_pty: false } } } as never]
+    const experimental = Config.latest(entries, "experimental")
+    expect(experimental?.native_tools).toBe(false)
+    expect(experimental?.native_pty).toBe(false)
+  })
+})
+
+/**
+ * Feature 023 FR-A — native is the DEFAULT. The glob/grep/bash gates read the flag as
+ * `!== false`, so an absent (or `true`) flag selects the native path and only an
+ * explicit `native_tools: false` / `native_pty: false` falls back to the TS/ripgrep/
+ * ChildProcess path. These tests assert the EXACT boolean the wired gates evaluate.
+ */
+describe("native tools default-on gate semantics (Feature 023 FR-A)", () => {
+  const toolsGate = (entries: never[]) => Config.latest(entries, "experimental")?.native_tools !== false
+  const ptyGate = (entries: never[]) => Config.latest(entries, "experimental")?.native_pty !== false
+
+  test("(a) absent flag → native path attempted (default on)", () => {
+    expect(toolsGate([])).toBe(true)
+    expect(ptyGate([])).toBe(true)
+    const empty = [{ type: "document", info: { experimental: {} } } as never]
+    expect(toolsGate(empty)).toBe(true)
+    expect(ptyGate(empty)).toBe(true)
+  })
+
+  test("(b) explicit false → TypeScript/ripgrep path (opt-out)", () => {
+    const off = [{ type: "document", info: { experimental: { native_tools: false, native_pty: false } } } as never]
+    expect(toolsGate(off)).toBe(false)
+    expect(ptyGate(off)).toBe(false)
+  })
+
+  test("explicit true keeps the native path (unchanged)", () => {
+    const on = [{ type: "document", info: { experimental: { native_tools: true, native_pty: true } } } as never]
+    expect(toolsGate(on)).toBe(true)
+    expect(ptyGate(on)).toBe(true)
   })
 })
 

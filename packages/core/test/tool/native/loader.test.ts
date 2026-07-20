@@ -6,6 +6,7 @@ import {
   isUnavailable,
   loadNative,
   NativeLoader,
+  probeNativeStatus,
   type BunFfi,
   type DlopenModule,
   type LoaderDeps,
@@ -99,6 +100,37 @@ describe("native loader — discovery ladder", () => {
     expect(isUnavailable(result) && result.gapReason).toBe("library_missing")
   })
 
+  test("Feature 023 FR-B: the compiled-binary execDir rung resolves the co-located dylib", () => {
+    // Simulate a `bun build --compile` layout: dylib next to the executable at
+    // `<execDir>/native/<platform>-<arch>/<stem>.<ext>`, and the dev bundled path absent.
+    const execDir = "/opt/opencodev2/bin"
+    const expected = path.join(execDir, "native", "darwin-arm64", "libopencode_tools_ffi.dylib")
+    const result = discover("tools", deps({ execDir, fileExists: (c) => c === expected }))
+    expect(result).toEqual({ path: expected })
+  })
+
+  test("Feature 023 FR-B: the execDir rung is inert in a dev checkout (no co-located dylib)", () => {
+    // execDir set (the Bun interpreter dir) but no dylib beside it → falls through to
+    // the bundled dev rung, exactly as a non-compiled `bun run` invocation does.
+    const bundled = path.join(BUNDLED, "darwin-arm64", "libopencode_tools_ffi.dylib")
+    const result = discover(
+      "tools",
+      deps({ execDir: "/usr/local/bin", fileExists: (c) => c === bundled }),
+    )
+    expect(result).toEqual({ path: bundled })
+  })
+
+  test("Feature 023 FR-B: per-crate env still wins over the execDir rung", () => {
+    const target = "/custom/libopencode_tools_ffi.dylib"
+    const execDir = "/opt/opencodev2/bin"
+    const colocated = path.join(execDir, "native", "darwin-arm64", "libopencode_tools_ffi.dylib")
+    const result = discover(
+      "tools",
+      deps({ env: { OPENCODE_TOOLS_FFI_PATH: target }, execDir, fileExists: (c) => c === target || c === colocated }),
+    )
+    expect(result).toEqual({ path: target })
+  })
+
   test("linux resolves the .so extension", () => {
     const expected = path.join(BUNDLED, "linux-x64", "libopencode_pty_ffi.so")
     const result = discover("pty", deps({ platform: "linux", arch: "x64", fileExists: (c) => c === expected }))
@@ -168,5 +200,24 @@ describe("native loader — caching + marshalling", () => {
     const envelope = invokeNative<{ content: string }>(loaded, "oc_read", { path: "/x" }, wrapped)
     expect(envelope).toEqual({ status: "ok", result: { content: "hi" } })
     expect(freed.length).toBe(1)
+  })
+})
+
+describe("native loader — probeNativeStatus diagnostic (Feature 023 FR-B)", () => {
+  test("reports loaded=true via the exec_colocated rung when the dylib sits by the executable", () => {
+    const execDir = "/opt/opencodev2/bin"
+    const colocated = path.join(execDir, "native", "darwin-arm64", "libopencode_tools_ffi.dylib")
+    const report = probeNativeStatus("tools", deps({ execDir, fileExists: (c) => c === colocated }))
+    expect(report.loaded).toBe(true)
+    expect(report.rung).toBe("exec_colocated")
+    expect(report.path).toBe(colocated)
+    expect(report.semver).toBe("0.1.0")
+  })
+
+  test("reports loaded=false with a library_missing gap when no artifact is present (fallback)", () => {
+    const report = probeNativeStatus("tools", deps({ fileExists: () => false }))
+    expect(report.loaded).toBe(false)
+    expect(report.rung).toBe("none")
+    expect(report.gapReason).toBe("library_missing")
   })
 })

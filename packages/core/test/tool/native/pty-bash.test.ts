@@ -33,7 +33,9 @@ const sessionID = SessionV2.ID.make("ses_pty_bash_test")
 const assertions: PermissionV2.AssertInput[] = []
 const runs: Array<{ readonly command: string }> = []
 let denyAction: string | undefined
-let nativePtyOn = false
+// Feature 023 FR-A: tri-state so the tests distinguish an ABSENT flag (now default ON)
+// from an EXPLICIT `native_pty: false` (the opt-out) from an explicit `true`.
+let nativePtySetting: boolean | undefined = undefined
 
 const permission = Layer.succeed(
   PermissionV2.Service,
@@ -77,7 +79,11 @@ const config = Layer.succeed(
   Config.Service,
   Config.Service.of({
     entries: () =>
-      Effect.succeed(nativePtyOn ? [{ type: "document", info: { experimental: { native_pty: true } } } as never] : []),
+      Effect.succeed(
+        nativePtySetting === undefined
+          ? []
+          : [{ type: "document", info: { experimental: { native_pty: nativePtySetting } } } as never],
+      ),
   }),
 )
 
@@ -85,7 +91,7 @@ const reset = () => {
   assertions.length = 0
   runs.length = 0
   denyAction = undefined
-  nativePtyOn = false
+  nativePtySetting = undefined
 }
 
 const withTool = <A, E, R>(directory: string, body: (registry: ToolRegistry.Interface) => Effect.Effect<A, E, R>) => {
@@ -139,16 +145,16 @@ describe("bash pty:true — default path unchanged (T016, AC16)", () => {
     ),
   )
 
-  it.live("pty:true with the flag OFF falls through to ChildProcess (presence inert)", () =>
+  it.live("pty:true with an explicit native_pty:false falls through to ChildProcess (opt-out, FR-A)", () =>
     Effect.acquireUseRelease(
       Effect.promise(() => tmpdir()),
       (tmp) => {
         reset()
-        nativePtyOn = false
+        nativePtySetting = false
         return withTool(tmp.path, (registry) => settleTool(registry, call({ command: "pwd", pty: true }))).pipe(
           Effect.andThen((settled) =>
             Effect.sync(() => {
-              // The native PTY was never selected: the ChildProcess path served the call.
+              // The native PTY was disabled explicitly: the ChildProcess path served the call.
               expect(runs).toHaveLength(1)
               expect(settled.output?.structured).toMatchObject({ exit: 0 })
             }),
@@ -167,7 +173,7 @@ describe("bash pty:true — permission gate first (T016, AC15)", () => {
       (tmp) =>
         Effect.gen(function* () {
           reset()
-          nativePtyOn = true
+          nativePtySetting = true
           denyAction = "bash"
           yield* withTool(tmp.path, (registry) => executeTool(registry, call({ command: "pwd", pty: true })))
           // permission.assert("bash") ran, and because it denied, nothing spawned:
@@ -187,7 +193,7 @@ if (process.platform !== "win32" && nativeReady) {
         Effect.promise(() => tmpdir()),
         (tmp) => {
           reset()
-          nativePtyOn = true
+          nativePtySetting = true
           return withTool(tmp.path, (registry) =>
             settleTool(registry, call({ command: "printf pty-ok", pty: true })),
           ).pipe(
@@ -199,6 +205,31 @@ if (process.platform !== "win32" && nativeReady) {
                 expect(runs).toEqual([])
                 const text = settled.output?.content?.[0]
                 expect(text).toMatchObject({ type: "text", text: expect.stringContaining("pty-ok") })
+              }),
+            ),
+          )
+        },
+        (tmp) => Effect.promise(() => tmp[Symbol.asyncDispose]()),
+      ),
+    )
+
+    it.live("Feature 023 FR-A: pty:true with the flag ABSENT selects native by default", () =>
+      Effect.acquireUseRelease(
+        Effect.promise(() => tmpdir()),
+        (tmp) => {
+          reset()
+          // No experimental block at all — the default is now ON, so native serves it.
+          nativePtySetting = undefined
+          return withTool(tmp.path, (registry) =>
+            settleTool(registry, call({ command: "printf pty-default-ok", pty: true })),
+          ).pipe(
+            Effect.andThen((settled) =>
+              Effect.sync(() => {
+                expect(assertions.map((item) => item.action)).toEqual(["bash"])
+                // Served natively by default — no ChildProcess run recorded.
+                expect(runs).toEqual([])
+                const text = settled.output?.content?.[0]
+                expect(text).toMatchObject({ type: "text", text: expect.stringContaining("pty-default-ok") })
               }),
             ),
           )
