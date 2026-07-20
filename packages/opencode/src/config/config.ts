@@ -137,10 +137,25 @@ export class Service extends Context.Service<Service, Interface>()("@opencode/Co
 
 export const use = serviceUse(Service)
 
+/**
+ * Feature 028: the operative config root for the GLOBAL config file resolution.
+ *
+ * The raw `Global.Path.config` is the fixed XDG dir (`~/.config/opencode`) and does
+ * NOT honor `OPENCODE_CONFIG_DIR`. Mirroring `Global.make()` (core/global.ts) and the
+ * per-project profile store (Feature 027), every global-config seam anchors here so an
+ * isolated profile (e.g. `~/.opencodedev`) owns its own global `config.json` /
+ * `opencode.json[c]` instead of leaking back into `~/.config/opencode`. When the
+ * override is unset, `configRoot() === Global.Path.config`, so behavior is unchanged.
+ *
+ * Scope: this governs the config-file resolution only. Auth material (`auth.json`)
+ * lives under `Global.Path.data`, never under the config root, and is untouched.
+ */
+function configRoot(): string {
+  return Flag.OPENCODE_CONFIG_DIR ?? Global.Path.config
+}
+
 function globalConfigFile() {
-  const candidates = ["opencode.jsonc", "opencode.json", "config.json"].map((file) =>
-    path.join(Global.Path.config, file),
-  )
+  const candidates = ["opencode.jsonc", "opencode.json", "config.json"].map((file) => path.join(configRoot(), file))
   for (const file of candidates) {
     if (existsSync(file)) return file
   }
@@ -301,11 +316,12 @@ const layer = Layer.effect(
             .pipe(Effect.catch(() => Effect.void))
         }
       }
-      result = mergeConfig(result, yield* loadFile(path.join(Global.Path.config, "config.json"), env))
-      result = mergeConfig(result, yield* loadFile(path.join(Global.Path.config, "opencode.json"), env))
-      result = mergeConfig(result, yield* loadFile(path.join(Global.Path.config, "opencode.jsonc"), env))
+      const root = configRoot()
+      result = mergeConfig(result, yield* loadFile(path.join(root, "config.json"), env))
+      result = mergeConfig(result, yield* loadFile(path.join(root, "opencode.json"), env))
+      result = mergeConfig(result, yield* loadFile(path.join(root, "opencode.jsonc"), env))
 
-      const legacy = path.join(Global.Path.config, "config")
+      const legacy = path.join(root, "config")
       if (existsSync(legacy)) {
         yield* Effect.promise(() =>
           import(pathToFileURL(legacy).href, { with: { type: "toml" } })
@@ -314,7 +330,7 @@ const layer = Layer.effect(
               if (provider && model) result.model = `${provider}/${model}`
               result["$schema"] = "https://opencode.ai/config.json"
               result = mergeConfig(result, rest)
-              await fsNode.writeFile(path.join(Global.Path.config, "config.json"), JSON.stringify(result, null, 2))
+              await fsNode.writeFile(path.join(root, "config.json"), JSON.stringify(result, null, 2))
               await fsNode.unlink(legacy)
             })
             .catch(() => {}),
@@ -442,7 +458,7 @@ const layer = Layer.effect(
         }
 
         const global = Object.keys(authEnv).length ? yield* loadGlobal(authEnv) : yield* getGlobal()
-        yield* merge(Global.Path.config, global, "global")
+        yield* merge(configRoot(), global, "global")
 
         if (Flag.OPENCODE_CONFIG) {
           yield* merge(Flag.OPENCODE_CONFIG, yield* loadFile(Flag.OPENCODE_CONFIG, authEnv))
@@ -494,8 +510,14 @@ const layer = Layer.effect(
 
         const deps: Fiber.Fiber<void>[] = []
 
+        const root = configRoot()
         for (const dir of directories) {
-          if (dir.endsWith(".opencode") || dir === Flag.OPENCODE_CONFIG_DIR) {
+          // Feature 028: the global loader (loadGlobal) now reads opencode.json/opencode.jsonc from
+          // the operative config root (`OPENCODE_CONFIG_DIR` when set). Skip re-loading those same two
+          // files here for that directory so they do not load twice — a double-load would re-run the
+          // merge/plugin-origin pass on identical content. The rest of the loop body (gitignore, npm
+          // install, command/agent/plugin discovery) still runs for the config root.
+          if ((dir.endsWith(".opencode") || dir === Flag.OPENCODE_CONFIG_DIR) && dir !== root) {
             for (const file of ["opencode.json", "opencode.jsonc"]) {
               const source = path.join(dir, file)
               yield* Effect.logDebug(`loading config from ${source}`)
