@@ -31,6 +31,7 @@ import { ConfigCommand } from "./command"
 import { ConfigManaged } from "./managed"
 import { ConfigParse } from "./parse"
 import { ConfigPaths } from "./paths"
+import { ProjectProfile } from "./project-profile"
 import { ConfigPlugin } from "./plugin"
 import { ConfigVariable } from "./variable"
 import { Npm } from "@opencode-ai/core/npm"
@@ -452,14 +453,30 @@ const layer = Layer.effect(
           for (const file of yield* ConfigPaths.files("opencode", ctx.directory, ctx.worktree).pipe(Effect.orDie)) {
             yield* merge(file, yield* loadFile(file, authEnv), "local")
           }
-          // Feature 014 (FR2): also consume the operator namespace persisted to
-          // <dir>/config.json by Config.update, so a project-scoped operator CAS
-          // mutation round-trips instead of orphaning in a file no reader loads.
-          // Global-scoped operator authorities travel through the global config file
-          // (loaded above) and are read via getGlobal; this only recovers the
-          // project-scoped authorities. Merged after the project files so the
-          // freshest persisted operator record wins.
-          const operatorNamespace = yield* loadOperatorNamespace(path.join(ctx.directory, "config.json"))
+          // Feature 014 (FR2): consume the operator namespace persisted by Config.update,
+          // so a project-scoped operator CAS mutation round-trips instead of orphaning in a
+          // file no reader loads. Feature 027: that namespace now lives OUT of the working
+          // tree, in the per-project profile store; global-scoped operator authorities still
+          // travel through the global config file (loaded above). Merged after the project
+          // files so the freshest persisted operator record wins.
+          const profilePath = ProjectProfile.projectOperatorConfigPath(ctx.directory)
+          let operatorNamespace = yield* loadOperatorNamespace(profilePath)
+          if (!operatorNamespace) {
+            // Feature 027 migration (best-effort, non-destructive): when the relocated
+            // namespace is absent but a legacy in-tree <dir>/config.json operator namespace
+            // exists, read it so existing projects keep working. The next Config.update
+            // persists to the profile store. The legacy file is NEVER auto-deleted (it may
+            // hold data we do not manage) — it is surfaced as a secret-leak vector to delete.
+            const legacyPath = path.join(ctx.directory, "config.json")
+            const legacy = yield* loadOperatorNamespace(legacyPath)
+            if (legacy) {
+              operatorNamespace = legacy
+              yield* Effect.logWarning(
+                "operator config found inside the project tree — this is a secret-leak vector; it will be relocated to the profile store on the next write. Delete the stray in-tree file.",
+                { legacy: legacyPath, profile: profilePath },
+              )
+            }
+          }
           if (operatorNamespace) {
             result.operator = mergeDeep(result.operator ?? {}, operatorNamespace) as Info["operator"]
           }
@@ -679,12 +696,14 @@ const layer = Layer.effect(
 
     const update = Effect.fn("Config.update")(function* (config: Info) {
       const dir = yield* InstanceState.directory
-      const file = path.join(dir, "config.json")
+      // Feature 027: persist per-project config to the profile store, out of the working
+      // tree. writeWithDirs creates the `profiles/<key>/` folder recursively before writing.
+      const file = ProjectProfile.projectOperatorConfigPath(dir)
       const existing = yield* loadFile(file)
       yield* fs
-        .writeFileString(file, JSON.stringify(mergeDeep(writable(existing), writable(config)), null, 2))
+        .writeWithDirs(file, JSON.stringify(mergeDeep(writable(existing), writable(config)), null, 2))
         .pipe(Effect.orDie)
-      // Feature 014 (FR3): a committed operator CAS mutation writes <dir>/config.json;
+      // Feature 014 (FR3): a committed operator CAS mutation writes the profile config;
       // invalidate this directory's cached instance config so an immediate in-process
       // re-read reflects the new operator namespace instead of the stale cached
       // document. Scoped to this directory's instance state — the global cache and
