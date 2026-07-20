@@ -95,8 +95,10 @@ export function createLiveJobsBackend(deps: LiveJobsBackendDeps): JobsBackend {
    * Loads the definition at PLAN time (typed `not_found`; a disabled definition is a
    * typed `invalid_argument` — never a fabricated occurrence), then defers the enqueue
    * into `effect` so `mutateAuthority` runs it exactly once after the CAS/idempotency
-   * checks. `apply` is identity — run-now records no definition mutation, so a
-   * rejected enqueue (overlap/disarmed) commits nothing (no phantom write, FR7).
+   * checks. The plan is `effectOnly` — run-now records no definition mutation, so a
+   * rejected enqueue commits nothing (no phantom write) AND a successful enqueue skips
+   * the CAS write, leaving the `jobs` authority version unchanged (no spurious conflict
+   * with a concurrent definition edit, ADR-0018) (FR7).
    */
   const planRunNow = (input: { readonly jobDefinitionId: string }): Effect.Effect<OperatorMutationPlan, JobsError> =>
     Effect.gen(function* () {
@@ -111,8 +113,12 @@ export function createLiveJobsBackend(deps: LiveJobsBackendDeps): JobsBackend {
       }
       const plan: OperatorMutationPlan = {
         authority: OperatorJobPersistence.AUTHORITY,
-        // Identity: run-now mutates no definition record — the settled token rides
-        // the `jobs` authority the effect commits through, without rewriting the doc.
+        // Effect-only: run-now mutates no definition record. `mutateAuthority` runs the
+        // enqueue once after the CAS/idempotency checks, then SKIPS the committed write,
+        // so a successful run-now leaves the `jobs` authority version UNCHANGED and never
+        // spuriously conflicts with a concurrent definition edit (ADR-0018). `apply` is
+        // identity for the effect-carrying (non-committing) plan shape.
+        effectOnly: true,
         apply: (current) => current ?? { definitions: {} },
         effect: async () => {
           const outcome = await runNow!(request)

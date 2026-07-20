@@ -63,6 +63,15 @@ export type OperatorMutationPlan = {
   readonly authority: string
   readonly apply: (current: unknown, effectValue?: unknown) => unknown
   readonly effect?: OperatorMutationEffect
+  /**
+   * When true, the plan carries an irreversible `effect` but records NO authority
+   * document mutation (e.g. `jobs.run-now` enqueues an occurrence but rewrites no
+   * definition). `mutateAuthority` runs the effect once after the contract +
+   * idempotency-claim + CAS-precondition checks, then SKIPS the committed CAS write
+   * — the authority version is unchanged, so a successful run never bumps the doc or
+   * spuriously conflicts with a concurrent edit (ADR-0018). Still idempotent + audited.
+   */
+  readonly effectOnly?: boolean
 }
 
 /** Mutation plan executed only by dispatcher via mutateAuthority. */

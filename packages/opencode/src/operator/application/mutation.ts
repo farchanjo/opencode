@@ -44,6 +44,14 @@ export type MutateAuthorityInput = {
    * (ADR-0017 no-phantom-write / no-replay-rerun superseding decision).
    */
   readonly effect?: OperatorMutationEffect
+  /**
+   * Effect-only plan: run the irreversible `effect` after the contract/idempotency/
+   * CAS-precondition checks, then SKIP the committed CAS write (no authority document
+   * mutation, version unchanged). Used by verbs whose side effect is external to the
+   * authority doc (e.g. `jobs.run-now` enqueue) so a successful run never bumps the
+   * doc or conflicts with a concurrent edit (ADR-0018). Still idempotent + audited.
+   */
+  readonly effectOnly?: boolean
   readonly snapshotBefore?: boolean
   readonly cutoverDomain?: string
   readonly rollbackDomain?: string
@@ -254,6 +262,16 @@ export async function mutateAuthority(ports: MutationPorts, input: MutateAuthori
       return failureResult({ id, code: outcome.code, message: outcome.message, details: outcome.details })
     }
     effectValue = outcome.value
+  }
+
+  // Effect-only plan: the irreversible op already ran EXACTLY ONCE after every check;
+  // it records no authority document mutation, so skip the CAS write entirely — the
+  // authority version is unchanged (no doc bump, no spurious conflict with a
+  // concurrent edit, ADR-0018). Still recorded as idempotent + audited via finalize.
+  if (input.effectOnly) {
+    const version = current?.version ?? null
+    const result = successResult({ id, version: version ?? undefined, effective: effectValue ?? null })
+    return finalize(ports, input.request, result, version, version, nowMs, key, requestHash)
   }
 
   const nextPayload = input.apply(current?.payload ?? null, effectValue)

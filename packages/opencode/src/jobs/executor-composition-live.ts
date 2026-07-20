@@ -12,14 +12,24 @@
  * secret-free envelope — never a fabricated success (FR13).
  *
  * Honest current envelope (recorded in ADR-0018 decision 3 and the Feature 018
- * tasks.md): a scheduled session is created as a REAL Feature 002 session tagged
- * `owner_kind: "scheduled-job"` and its occurrence-owned work state is
- * provisioned, but a headless scheduled session has no interactive operator to
- * satisfy a permission prompt and no parent assistant-message Tool.Context to
- * drive goal-bearing work — so the run degrades to a typed `headless_incapable`
- * terminal rather than an auto-approved bypass (FR6). The occurrence `job.*`
- * events publish through the single `EventV2Bridge` authority; the
+ * tasks.md): a due occurrence is admitted through a REAL Feature 002
+ * `AdmissionController` token-bucket gate (session scope; a denial is a typed
+ * `admitted:false`, never a fabricated `admitted`). A headless scheduled session
+ * has no interactive operator to satisfy a permission prompt and no parent
+ * assistant-message Tool.Context to drive goal-bearing work, so the
+ * headless-capability probe reports `incapable`: the coordinator does NOT persist
+ * a Feature 002 session for a run it cannot drive (a per-minute cron never grows
+ * dead scheduled-job sessions), the occurrence carries a synthetic, non-persisted
+ * process handle, and the run degrades to a typed `headless_incapable` terminal
+ * rather than an auto-approved bypass (FR6). When a headless goal-bearing driver
+ * lands, the same probe flips to `capable` and `createProcess` persists the REAL
+ * `owner_kind: "scheduled-job"` session before goal-bearing work. The occurrence
+ * `job.*` events publish through the single `EventV2Bridge` authority; the
  * definition-keyed durable aggregate is tightened in Group C (T010).
+ *
+ * Boundary (FR13, ADR-0018): the in-process occurrence idempotency registry
+ * (`createLiveRegistry`) is a process-local `Map` — cross-process occurrence
+ * dedup is out of scope (matches the "no distributed/multi-node scheduler" note).
  */
 export * as ExecutorCompositionLive from "./executor-composition-live"
 
@@ -28,6 +38,7 @@ import { AppRuntime } from "@/effect/app-runtime"
 import { EventV2Bridge } from "@/event-v2-bridge"
 import { Session } from "@/session/session"
 import { Config } from "@/config/config"
+import { AdmissionController } from "@opencode-ai/core/lifecycle/admission/admission-controller"
 import { createLiveConfigServiceLike } from "@/operator/adapters/outbound/config-live"
 import { createDurableOperatorStore } from "@/operator/adapters/outbound/config-service"
 import { OperatorJobPersistence } from "@/operator/jobs/persistence"
@@ -173,34 +184,115 @@ function createLiveRegistry(): OccurrenceRegistry {
 
 const unavailable = (reason: string): TriggerError => ({ type: "unavailable", reason })
 
-function createLiveCoordinator(): TaskProcessCoordinator {
-  // A due occurrence is admitted under the same surface a normal session hits; no
-  // gate is relaxed for the scheduled path. Feature 002 admission + Feature 001
-  // routing hard gates deny nothing extra here, so admission is honest `admitted`.
-  const admit = (_input: AdmissionInput): Effect.Effect<AdmissionOutcome, TriggerError> =>
-    Effect.succeed({ admitted: true })
+/** Injectable seam that persists a real Feature 002 scheduled-job session (production default reaches `Session.Service`). */
+export interface ScheduledSessionSeam {
+  readonly create: (input: {
+    readonly jobDefinitionId: string
+    readonly ownerKind: string
+  }) => Promise<{ readonly id: string }>
+}
 
-  // Create the REAL Feature 002 session for the occurrence, tagged with the fixed
-  // scheduled-job provenance. The session id is the occurrence's process handle.
-  const createProcess = (input: CreateProcessInput): Effect.Effect<AssociatedProcess, TriggerError> =>
-    Effect.tryPromise({
-      try: () =>
-        AppRuntime.runPromise(
-          Effect.gen(function* () {
-            const sessions = yield* Session.Service
-            const created = yield* sessions.create({
-              title: `scheduled-job ${input.jobDefinitionId}`,
-              metadata: { owner_kind: input.ownerKind, jobDefinitionId: input.jobDefinitionId } as never,
-            })
-            return {
-              processId: created.id as unknown as AssociatedProcess["processId"],
-              sessionId: created.id as unknown as AssociatedProcess["sessionId"],
-              attempt: 1 as unknown as AssociatedProcess["attempt"],
-            }
-          }),
-        ),
+/** The verdict of the headless-capability probe (ADR-0018 decision 3, FR6). */
+export interface HeadlessCapability {
+  readonly capable: boolean
+  /** Bounded, secret-free reason a headless run is not capable of goal-bearing work. */
+  readonly reason: string
+}
+
+/**
+ * The headless goal-bearing capability probe. A headless scheduled session has no
+ * interactive operator to satisfy a permission prompt and no parent
+ * assistant-message `Tool.Context` to drive goal-bearing work, so goal-bearing
+ * headless execution is NOT capable yet. The coordinator consults this BEFORE
+ * `createProcess` so it never persists a session for a run it cannot drive
+ * (session-leak fix, FR6): an incapable occurrence degrades to the typed
+ * `headless_incapable` terminal with no persisted session created.
+ */
+export function headlessGoalBearingCapability(): HeadlessCapability {
+  return {
+    capable: false,
+    reason: "headless scheduled session has no interactive permission surface (no privilege bypass)",
+  }
+}
+
+export interface LiveCoordinatorOptions {
+  /** The Feature 002 admission authority (default a fresh `AdmissionController` for the scheduled path). */
+  readonly admission?: AdmissionController.AdmissionController
+  /** The scheduled-job session persistence seam (default reaches `Session.Service` via `AppRuntime`). */
+  readonly session?: ScheduledSessionSeam
+  /** The headless goal-bearing capability probe (default `headlessGoalBearingCapability`). */
+  readonly capability?: () => HeadlessCapability
+}
+
+/** The production scheduled-session seam: persist a REAL Feature 002 session tagged `owner_kind`. */
+function defaultScheduledSessionSeam(): ScheduledSessionSeam {
+  return {
+    create: (input) =>
+      AppRuntime.runPromise(
+        Effect.gen(function* () {
+          const sessions = yield* Session.Service
+          const created = yield* sessions.create({
+            title: `scheduled-job ${input.jobDefinitionId}`,
+            metadata: { owner_kind: input.ownerKind, jobDefinitionId: input.jobDefinitionId } as never,
+          })
+          return { id: created.id as string }
+        }),
+      ),
+  }
+}
+
+/**
+ * The live `TaskProcessCoordinator`. `admit` runs a REAL Feature 002
+ * `AdmissionController` token-bucket gate for the occurrence's session scope — a
+ * denial (`queued`/`rejected`/`partial`) is reported honestly, never a fabricated
+ * `admitted` (FR4, C11). `createProcess` consults the headless-capability probe
+ * BEFORE persisting: an incapable occurrence gets a synthetic, non-persisted
+ * process handle (no `Session.Service.create`, so a cron loop never grows dead
+ * scheduled-job sessions); a capable occurrence persists the real session before
+ * goal-bearing work (session-leak fix, FR5, FR6).
+ */
+export function createLiveCoordinator(opts: LiveCoordinatorOptions = {}): TaskProcessCoordinator {
+  const admission = opts.admission ?? AdmissionController.createAdmissionController()
+  const session = opts.session ?? defaultScheduledSessionSeam()
+  const capability = opts.capability ?? headlessGoalBearingCapability
+
+  // Feature 002 admission gate: a due occurrence admits ONE unit of session-scope
+  // capacity through the SAME `AdmissionController` class the lifecycle domain uses.
+  // The token bucket + capacity signals decide; a denial is honest (FR4, C11).
+  const admit = (input: AdmissionInput): Effect.Effect<AdmissionOutcome, TriggerError> =>
+    Effect.sync((): AdmissionOutcome => {
+      const decision = admission.request({ scope: "session", key: String(input.rootSessionId), requestedFanout: 1 })
+      if (decision.decision === "granted") return { admitted: true }
+      return { admitted: false, reason: `admission ${decision.decision}: ${decision.reason}` }
+    })
+
+  // Create/associate the occurrence's Feature 002 Task Process. The
+  // headless-capability probe gates session persistence: an incapable occurrence
+  // returns a synthetic handle WITHOUT `Session.Service.create` (no leaked dead
+  // session); a capable one persists the real `owner_kind: "scheduled-job"` session.
+  const createProcess = (input: CreateProcessInput): Effect.Effect<AssociatedProcess, TriggerError> => {
+    if (!capability().capable) {
+      return Effect.succeed({
+        processId: `proc_${input.occurrenceId}` as unknown as AssociatedProcess["processId"],
+        sessionId: `nsession_${input.occurrenceId}` as unknown as AssociatedProcess["sessionId"],
+        attempt: 1 as unknown as AssociatedProcess["attempt"],
+      })
+    }
+    return Effect.tryPromise({
+      try: async (): Promise<AssociatedProcess> => {
+        const created = await session.create({
+          jobDefinitionId: String(input.jobDefinitionId),
+          ownerKind: input.ownerKind,
+        })
+        return {
+          processId: created.id as unknown as AssociatedProcess["processId"],
+          sessionId: created.id as unknown as AssociatedProcess["sessionId"],
+          attempt: 1 as unknown as AssociatedProcess["attempt"],
+        }
+      },
       catch: (cause) => unavailable(`scheduled session creation failed: ${String(cause).slice(0, 120)}`),
     })
+  }
 
   // The occurrence-owned Todo + OutputGroup refs. The scheduled session's output is
   // captured through the SHARED Feature 017 spool writer already armed at server
@@ -218,17 +310,18 @@ function createLiveCoordinator(): TaskProcessCoordinator {
 // Live OccurrenceRunner — honest headless verdict (ADR-0018 decision 3, FR6)
 // =============================================================================
 
-function createLiveRunner(): OccurrenceRunner {
+export function createLiveRunner(opts: { readonly capability?: () => HeadlessCapability } = {}): OccurrenceRunner {
+  const capability = opts.capability ?? headlessGoalBearingCapability
   return {
     // A headless scheduled session runs under the SAME permission/config surface as
-    // a normal session: there is no interactive operator to satisfy a permission
-    // prompt and no parent assistant-message Tool.Context to drive goal-bearing
-    // work, so the run degrades to a typed terminal outcome rather than an
+    // a normal session. Until a headless goal-bearing driver lands, the probe reports
+    // `incapable`, so the run degrades to a typed terminal outcome rather than an
     // auto-approved bypass. No fabricated success, no privilege escalation (FR6).
     run: () =>
-      Effect.succeed({
-        disposition: "headless_incapable" as const,
-        reason: "headless scheduled session has no interactive permission surface (no privilege bypass)",
+      Effect.sync(() => {
+        const cap = capability()
+        if (cap.capable) return { disposition: "completed" as const }
+        return { disposition: "headless_incapable" as const, reason: cap.reason }
       }),
   }
 }
@@ -303,12 +396,16 @@ export function __resetLiveJobsPersistenceForTests(): void {
 export function createLiveExecutorCompositionDeps(): ExecutorCompositionDeps {
   const cron = requireBunCronRuntime()
   const seams = createLiveReconcileSeams()
+  // One admission authority + one capability probe shared by the coordinator and the
+  // runner, so the session-persistence gate and the terminal verdict agree.
+  const admission = AdmissionController.createAdmissionController()
+  const capability = headlessGoalBearingCapability
   return {
     cron,
     emitter: createLiveEmitter(),
     registry: createLiveRegistry(),
-    coordinator: createLiveCoordinator(),
-    runner: createLiveRunner(),
+    coordinator: createLiveCoordinator({ admission, capability }),
+    runner: createLiveRunner({ capability }),
     resolveDueContext: seams.resolveDueContext,
     reconcileSource: seams.reconcileSource,
     runFork: (effect) => void AppRuntime.runFork(effect),

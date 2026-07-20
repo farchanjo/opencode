@@ -161,6 +161,8 @@ interface ParsedEvent {
   readonly causationId: string | null
   readonly timestamp: string
   readonly seq: number
+  /** Bounded terminal reason lifted from `detail.reason` (e.g. "headless_incapable"), null when absent (FR11). */
+  readonly reason: string | null
 }
 
 function asObject(value: unknown): Record<string, unknown> | null {
@@ -196,6 +198,7 @@ function parseEvent(ev: RawDurableEvent): ParsedEvent | null {
   const tree = asObject(envelope.tree)
   const ordering = asObject(envelope.ordering)
   const delivery = asObject(envelope.delivery)
+  const detail = asObject(data.detail)
   if (occurrence === null || ordering === null) return null
   const jobDefinitionId = asString(occurrence.job_definition_id)
   const occurrenceId = asString(occurrence.occurrence_id)
@@ -216,7 +219,15 @@ function parseEvent(ev: RawDurableEvent): ParsedEvent | null {
     causationId: ordering.causation_id === null ? null : asString(ordering.causation_id),
     timestamp: toIso(delivery?.timestamp),
     seq: ev.durable?.seq ?? asNumber(ordering.sequence) ?? 0,
+    reason: boundedReason(detail?.reason),
   }
+}
+
+/** Lift a wire `detail.reason` into a bounded, secret-free string; null when absent/empty. */
+function boundedReason(value: unknown): string | null {
+  const s = asString(value)
+  if (s === null || s.length === 0) return null
+  return s.slice(0, 200)
 }
 
 // =============================================================================
@@ -228,6 +239,8 @@ interface OccurrenceFold {
   firstTimestamp: string
   state: OccurrenceState
   outcome: OccurrenceState | null
+  /** Bounded terminal reason from the event that settled the outcome (FR11). */
+  reason: string | null
 }
 
 /** Fold the parsed events (for one definition) into one Occurrence per occurrence id (latest state wins). */
@@ -243,13 +256,17 @@ function foldOccurrences(parsed: readonly ParsedEvent[]): Occurrence[] {
         firstTimestamp: ev.timestamp,
         state,
         outcome: TERMINAL_STATES.has(state) ? state : null,
+        reason: TERMINAL_STATES.has(state) ? ev.reason : null,
       })
       continue
     }
     if (ev.seq >= existing.latest.seq) {
       existing.latest = ev
       existing.state = state
-      if (TERMINAL_STATES.has(state)) existing.outcome = state
+      if (TERMINAL_STATES.has(state)) {
+        existing.outcome = state
+        existing.reason = ev.reason
+      }
     }
     if (ev.timestamp < existing.firstTimestamp) existing.firstTimestamp = ev.timestamp
   }
@@ -270,6 +287,7 @@ function foldOccurrences(parsed: readonly ParsedEvent[]): Occurrence[] {
       attempt: ev.attempt,
       state: fold.state,
       outcome: fold.outcome,
+      reason: fold.reason,
     })
   }
   // Most recent first (by the latest event sequence).

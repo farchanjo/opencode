@@ -277,6 +277,7 @@ export function createDispatcher(options: DispatchOptions): Dispatcher {
           // The irreversible op (control-store / live MCP action / credential clear)
           // is deferred here so mutateAuthority runs it only after all checks pass.
           effect: plan.effect,
+          effectOnly: plan.effectOnly,
           snapshotBefore: plan.snapshotBefore,
           cutoverDomain: plan.cutoverDomain,
           rollbackDomain: plan.rollbackDomain,

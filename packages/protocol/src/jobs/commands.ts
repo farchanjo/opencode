@@ -238,6 +238,7 @@ export interface Occurrence {
   readonly attempt: Attempt | null
   readonly state: OccurrenceState
   readonly outcome: OccurrenceState | null // terminal/branch outcome once settled
+  readonly reason?: string | null // bounded, secret-free terminal reason (e.g. "headless_incapable"), null when none (FR11)
 }
 
 // =============================================================================
