@@ -24,6 +24,8 @@ import { createConfigBackedRegistry } from "./registry-backend"
 import { MilvusBinding } from "./milvus-binding"
 import type { BindingPort, IndexPort, ModelPort, ProviderPort } from "@opencode-ai/protocol/semantic/ports"
 import type { ConfigPort } from "@/operator/application/ports/config-port"
+import type { MilvusPort } from "@/semantic/milvus-adapter"
+import type { MetricKind } from "@opencode-ai/protocol/semantic/commands"
 import type { SemanticBackend } from "./semantic-port"
 import type { SemanticRegistryBackend } from "./registry-backend"
 
@@ -44,6 +46,15 @@ export interface LiveSemanticBackendDeps {
    * whole domain an honest capability gap (the pre-014 behaviour).
    */
   readonly config?: ConfigPort
+  /**
+   * Feature 019 (FR4, FR5) — the live Milvus port bound when an endpoint is configured.
+   * Threaded into the config-backed registry so `embedding.reindex`/`cutover`/`rollback`
+   * physically build a generation + swap the alias; absent → the `milvus_unavailable` floor.
+   */
+  readonly milvusPort?: MilvusPort
+  /** The vector dimension/metric a generation build declares (defaults 1024 / cosine). */
+  readonly generationDimension?: number
+  readonly generationMetric?: MetricKind
   /** Optional pre-built registry (tests inject a double); defaults to the config-backed registry when `config` is set. */
   readonly registry?: SemanticRegistryBackend
 }
@@ -105,5 +116,15 @@ export const createLiveSemanticBackend = (deps: LiveSemanticBackendDeps = {}): S
   model: deps.override?.model ?? gapBackend.model,
   binding: deps.override?.binding ?? gapBackend.binding,
   index: deps.override?.index ?? (deps.milvus ? MilvusBinding.createMilvusIndexPort(deps.milvus) : gapBackend.index),
-  registry: deps.registry ?? deps.override?.registry ?? (deps.config ? createConfigBackedRegistry({ config: deps.config }) : undefined),
+  registry:
+    deps.registry ??
+    deps.override?.registry ??
+    (deps.config
+      ? createConfigBackedRegistry({
+          config: deps.config,
+          milvus: deps.milvusPort ?? deps.milvus?.port,
+          defaultDimension: deps.generationDimension,
+          defaultMetric: deps.generationMetric,
+        })
+      : undefined),
 })

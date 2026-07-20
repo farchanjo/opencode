@@ -27,10 +27,13 @@ import type { BindingState } from "@opencode-ai/core/semantic/binding-lifecycle"
 import { CutoverExecutor } from "@/semantic/cutover-executor"
 import { UrlGuard } from "@/semantic/url-guard"
 import { type ConfigPort } from "@/operator/application/ports/config-port"
-import type { OperatorMutationPlan } from "@/operator/application/handler"
+import type { MilvusPort } from "@/semantic/milvus-adapter"
+import type { OperatorMutationEffectResult, OperatorMutationPlan } from "@/operator/application/handler"
 import type {
   AddProviderInput,
   BindingError,
+  CollectionKind,
+  MetricKind,
   BindingHistoryInput,
   BindingHistoryOutput,
   BindingSlot,
@@ -113,13 +116,33 @@ const RegistryBinding = Schema.Struct({
 type RegistryBinding = Schema.Schema.Type<typeof RegistryBinding>
 
 /**
- * Feature 019 (FR2) — the operator `RegistryDocument` carries a per-slot binding
+ * Feature 019 (FR5) — one persisted Milvus blue/green generation for the embedding
+ * slot (ADR-0019 decision 3): the generation is physically built + validated in Milvus
+ * BEFORE a cutover swaps the alias, so the operator record and the live index never
+ * disagree. `state` walks `building → validated → live → superseded`; only a
+ * `validated` (or `live`, for rollback) generation is a legal cutover source (cardinal
+ * honesty). Content-free — a generation id + its vector space, never a vector body.
+ */
+const RegistryGeneration = Schema.Struct({
+  generationId: Schema.String,
+  state: Schema.String,
+  dimension: Schema.Number,
+  metric: Schema.String,
+  bindingVersion: Schema.Number,
+  collections: Schema.Array(Schema.String),
+})
+type RegistryGeneration = Schema.Schema.Type<typeof RegistryGeneration>
+
+/**
+ * Feature 019 (FR2, FR5) — the operator `RegistryDocument` carries a per-slot binding
  * VERSION ARCHIVE (ADR-0019 decision 3): the live `embedding`/`reranker` entry is the
  * current binding, `*Staged` is the in-flight candidate a `select` stages (kept apart
  * from the live one so a cutover can move the outgoing active into the archive), and
- * `*Archive` is the slot's superseded priors (newest-first) a rollback targets. Every
- * new field is `optional` so a pre-019 document round-trips losslessly (absent →
- * normalized to `null`/`[]`/`0`), never dropping providers/models on the first read.
+ * `*Archive` is the slot's superseded priors (newest-first) a rollback targets. The
+ * embedding slot additionally persists `embeddingGenerations` (the Milvus blue/green
+ * builds) and `embeddingLiveGeneration` (the alias target). Every new field is
+ * `optional` so a pre-019 document round-trips losslessly (absent → normalized to
+ * `null`/`[]`/`0`), never dropping providers/models on the first read.
  */
 const RegistryDocument = Schema.Struct({
   providers: Schema.Array(RegistryProvider),
@@ -132,6 +155,10 @@ const RegistryDocument = Schema.Struct({
   rerankerArchive: Schema.optional(Schema.Array(RegistryBinding)),
   /** Monotonic rerank cache/eval version; a reranker cutover/rollback bumps it (reEmbedded stays false, FR1). */
   rerankEvalVersion: Schema.optional(Schema.Number),
+  /** The embedding slot's Milvus blue/green generations, newest-first (FR5). */
+  embeddingGenerations: Schema.optional(Schema.Array(RegistryGeneration)),
+  /** The generation id the live alias currently targets, or `null` when none is live (FR5). */
+  embeddingLiveGeneration: Schema.optional(Schema.NullOr(Schema.String)),
 })
 type RegistryDocument = Schema.Schema.Type<typeof RegistryDocument>
 
@@ -145,7 +172,12 @@ const EMPTY_DOCUMENT: RegistryDocument = {
   embeddingArchive: [],
   rerankerArchive: [],
   rerankEvalVersion: 0,
+  embeddingGenerations: [],
+  embeddingLiveGeneration: null,
 }
+
+/** The four collections that build + cut over TOGETHER under one CAS, never split (Feature 006 C6/C12). */
+const GENERATION_COLLECTIONS: readonly CollectionKind[] = ["agents", "skills", "skill_chunks", "tools"]
 
 const decodeDocument = Schema.decodeUnknownExit(RegistryDocument)
 const encodeDocument = Schema.encodeSync(RegistryDocument)
@@ -159,6 +191,8 @@ function normalizeDocument(doc: RegistryDocument): RegistryDocument {
     embeddingArchive: doc.embeddingArchive ?? [],
     rerankerArchive: doc.rerankerArchive ?? [],
     rerankEvalVersion: doc.rerankEvalVersion ?? 0,
+    embeddingGenerations: doc.embeddingGenerations ?? [],
+    embeddingLiveGeneration: doc.embeddingLiveGeneration ?? null,
   }
 }
 
@@ -197,6 +231,9 @@ export interface SemanticRegistryBackend {
   readonly planSelectReranker: (input: SelectBindingInput) => Effect.Effect<OperatorMutationPlan, BindingError>
   readonly planCutoverReranker: (input: RerankerCutoverPlanInput) => Effect.Effect<OperatorMutationPlan, BindingError>
   readonly planRollbackReranker: (input: RerankerRollbackPlanInput) => Effect.Effect<OperatorMutationPlan, BindingError>
+  readonly planReindexEmbedding: (input: EmbeddingReindexPlanInput) => Effect.Effect<OperatorMutationPlan, BindingError>
+  readonly planCutoverEmbedding: (input: EmbeddingCutoverPlanInput) => Effect.Effect<OperatorMutationPlan, BindingError>
+  readonly planRollbackEmbedding: (input: EmbeddingRollbackPlanInput) => Effect.Effect<OperatorMutationPlan, BindingError>
 }
 
 /**
@@ -221,12 +258,54 @@ export interface RerankerRollbackPlanInput {
   readonly principal: OperatorPrincipal
 }
 
+/**
+ * Feature 019 (FR5, FR6) — build + validate a blue/green Milvus generation for the
+ * staged embedding candidate. The effect physically creates the generation in Milvus
+ * (`building → validated`) and the apply records it on the document; `select` alone
+ * never reaches here. Requires a bound live Milvus port — unconfigured → `milvus_unavailable`.
+ */
+export interface EmbeddingReindexPlanInput {
+  readonly principal: OperatorPrincipal
+}
+
+/**
+ * Feature 019 (FR5) — activate a validated embedding generation. The cardinal honesty
+ * rule holds: a `validated` generation MUST already exist; the effect swaps the alias
+ * across EVERY collection together under one CAS; a contention swaps nothing. A
+ * config-only flip is never a cutover.
+ */
+export interface EmbeddingCutoverPlanInput {
+  /** The generation to activate; unset resolves the newest `validated` generation. */
+  readonly generationId?: string
+  readonly confirmed: boolean
+  readonly principal: OperatorPrincipal
+}
+
+/** Feature 019 (FR5) — restore a superseded embedding generation + its archived binding prior. */
+export interface EmbeddingRollbackPlanInput {
+  readonly targetBindingVersion?: number
+  readonly confirmed: boolean
+  readonly principal: OperatorPrincipal
+}
+
 export interface ConfigBackedRegistryDeps {
   readonly config: ConfigPort
   /** Monotonic millisecond clock stamped onto each write (default `Date.now`). */
   readonly clock?: () => number
   /** Stable id generator for new provider/model records (default `crypto.randomUUID`). */
   readonly idGen?: () => string
+  /**
+   * Feature 019 (FR4, FR5) — the live Milvus port bound when an endpoint is
+   * configured. When present, `planReindexEmbedding`/`planCutoverEmbedding`/
+   * `planRollbackEmbedding` physically build a generation and swap the alias in their
+   * effects; when ABSENT every embedding-index plan is the exact typed
+   * `milvus_unavailable` floor — never a config-only alias flip (cardinal honesty).
+   */
+  readonly milvus?: MilvusPort
+  /** The vector dimension a generation build declares when the staged model omits one (default 1024). */
+  readonly defaultDimension?: number
+  /** The vector metric a generation build declares when the staged model omits one (default `cosine`). */
+  readonly defaultMetric?: MetricKind
 }
 
 // =============================================================================
@@ -327,6 +406,23 @@ function resolveRollbackTarget(
   if (archive.length === 0) return undefined
   if (targetVersion === undefined) return archive[0]
   return archive.find((b) => b.version === targetVersion)
+}
+
+/** The embedding slot's persisted generations, newest-first. */
+function generationsOf(doc: RegistryDocument): readonly RegistryGeneration[] {
+  return doc.embeddingGenerations ?? []
+}
+
+/** The newest generation whose state is a legal cutover source (`validated`), or the requested one. */
+function resolveCutoverGeneration(doc: RegistryDocument, generationId: string | undefined): RegistryGeneration | undefined {
+  const gens = generationsOf(doc)
+  if (generationId !== undefined) return gens.find((g) => g.generationId === generationId && g.state === "validated")
+  return gens.find((g) => g.state === "validated")
+}
+
+/** The generation a rollback restores: the newest `superseded` generation. */
+function resolveRollbackGeneration(doc: RegistryDocument): RegistryGeneration | undefined {
+  return generationsOf(doc).find((g) => g.state === "superseded")
 }
 
 // =============================================================================
@@ -512,6 +608,220 @@ export function createConfigBackedRegistry(deps: ConfigBackedRegistryDeps): Sema
     planSelectReranker: (input) => planSelect(input, "reranker"),
     planCutoverReranker: (input) => planCutoverReranker(input),
     planRollbackReranker: (input) => planRollbackReranker(input),
+    planReindexEmbedding: (input) => planReindexEmbedding(input),
+    planCutoverEmbedding: (input) => planCutoverEmbedding(input),
+    planRollbackEmbedding: (input) => planRollbackEmbedding(input),
+  }
+
+  /** The vector space a generation build declares from the staged model, else the configured defaults. */
+  function generationVectorSpace(model: RegistryModel | undefined): { dimension: number; metric: MetricKind } {
+    const dimension = deps.defaultDimension ?? 1024
+    const metric = deps.defaultMetric ?? ("cosine" as MetricKind)
+    void model
+    return { dimension, metric }
+  }
+
+  /** Run one Milvus port effect to a deferred `OperatorMutationEffectResult` (bounded, secret-free reason). */
+  function milvusEffect<A>(
+    port: MilvusPort,
+    run: (p: MilvusPort) => Effect.Effect<A, { readonly type: string; readonly reason?: string }>,
+    onValue: (value: A) => OperatorMutationEffectResult,
+  ): Promise<OperatorMutationEffectResult> {
+    return Effect.runPromise(
+      run(port).pipe(
+        Effect.match({
+          onSuccess: onValue,
+          onFailure: (gap): OperatorMutationEffectResult =>
+            gap.type === "cas_conflict"
+              ? { ok: false, code: "conflict", message: "alias generation moved under the swap" }
+              : { ok: false, code: "unavailable", message: "milvus_unavailable" },
+        }),
+      ),
+    )
+  }
+
+  /**
+   * Feature 019 (FR5, FR6) — build + validate a blue/green generation for the staged
+   * embedding candidate. The effect physically creates the generation in Milvus and the
+   * apply records it `validated` on the document; an unbound port or an unreachable
+   * endpoint aborts with `milvus_unavailable` and commits nothing (cardinal honesty).
+   */
+  function planReindexEmbedding(input: EmbeddingReindexPlanInput): Effect.Effect<OperatorMutationPlan, BindingError> {
+    return Effect.gen(function* () {
+      const doc = yield* readDoc(bindingUnavailable)
+      const port = deps.milvus
+      if (port === undefined) return yield* Effect.fail<BindingError>({ type: "unavailable", reason: "milvus_unavailable" })
+      const staged = stagedOf(doc, "embedding")
+      if (staged === null || staged.validated !== true) {
+        return yield* Effect.fail<BindingError>({ type: "not_validated", id: staged?.modelDescriptorId ?? "" })
+      }
+      const generationId = `gen_${idGen()}`
+      const model = doc.models.find((m) => m.id === staged.modelDescriptorId)
+      const space = generationVectorSpace(model)
+      const record: RegistryGeneration = {
+        generationId,
+        state: "validated",
+        dimension: space.dimension,
+        metric: space.metric,
+        bindingVersion: staged.version,
+        collections: GENERATION_COLLECTIONS.map(String),
+      }
+      const plan: OperatorMutationPlan = {
+        authority: AUTHORITY,
+        effect: () =>
+          milvusEffect(
+            port,
+            (p) => p.buildGeneration({ collections: GENERATION_COLLECTIONS, generationId, dimension: space.dimension, metric: space.metric }),
+            () => ({ ok: true }),
+          ),
+        apply: (current) => {
+          const base = parseDocument(current)
+          return encodeDocument({ ...base, embeddingGenerations: [record, ...generationsOf(base)] })
+        },
+      }
+      return plan
+    })
+  }
+
+  /**
+   * Feature 019 (FR5) — activate a validated embedding generation under the cardinal
+   * honesty rule: a `validated` generation MUST exist; the effect swaps the alias across
+   * every collection together via `cutoverEmbedding` (CAS decided in-core, contention
+   * swaps nothing); the apply promotes the staged binding to `active`, archives the prior,
+   * and marks the generation `live`. `select`/`reindex` alone never reach here.
+   */
+  function planCutoverEmbedding(input: EmbeddingCutoverPlanInput): Effect.Effect<OperatorMutationPlan, BindingError> {
+    return Effect.gen(function* () {
+      const doc = yield* readDoc(bindingUnavailable)
+      const port = deps.milvus
+      if (port === undefined) return yield* Effect.fail<BindingError>({ type: "unavailable", reason: "milvus_unavailable" })
+      const staged = stagedOf(doc, "embedding")
+      if (staged === null || staged.validated !== true) {
+        return yield* Effect.fail<BindingError>({ type: "not_validated", id: staged?.modelDescriptorId ?? "" })
+      }
+      const generation = resolveCutoverGeneration(doc, input.generationId)
+      // Cardinal honesty: no physically built + validated generation → refuse; never a config-only flip.
+      if (generation === undefined) return yield* Effect.fail<BindingError>({ type: "no_candidate_staged" })
+      if (!input.confirmed) return yield* Effect.fail<BindingError>({ type: "confirmation_required" })
+      const liveGeneration = doc.embeddingLiveGeneration ?? generation.generationId
+      const plan: OperatorMutationPlan = {
+        authority: AUTHORITY,
+        effect: () =>
+          milvusEffect(
+            port,
+            (p) =>
+              CutoverExecutor.cutoverEmbedding(
+                { milvus: p },
+                {
+                  collections: GENERATION_COLLECTIONS,
+                  fromGeneration: liveGeneration,
+                  toGeneration: generation.generationId,
+                  casExpected: input.generationId ?? generation.generationId,
+                  casActual: generation.generationId,
+                  confirmed: true,
+                  bindingVersion: generation.bindingVersion,
+                },
+              ).pipe(
+                Effect.flatMap((outcome) =>
+                  outcome.kind === "committed"
+                    ? Effect.succeed(outcome)
+                    : Effect.fail({ type: "cas_conflict", reason: "cutover did not commit" }),
+                ),
+              ),
+            () => ({ ok: true }),
+          ),
+        apply: (current) => encodeDocument(activateEmbedding(parseDocument(current), generation.generationId, input.principal.id)),
+      }
+      return plan
+    })
+  }
+
+  /**
+   * Feature 019 (FR5) — restore the newest superseded embedding generation + its archived
+   * binding prior. The effect swaps the alias back; the apply restores the prior binding
+   * `active` and re-marks the generation `live`. No superseded prior → `no_archived_prior`.
+   */
+  function planRollbackEmbedding(input: EmbeddingRollbackPlanInput): Effect.Effect<OperatorMutationPlan, BindingError> {
+    return Effect.gen(function* () {
+      const doc = yield* readDoc(bindingUnavailable)
+      const port = deps.milvus
+      if (port === undefined) return yield* Effect.fail<BindingError>({ type: "unavailable", reason: "milvus_unavailable" })
+      const target = resolveRollbackTarget(archiveOf(doc, "embedding"), input.targetBindingVersion)
+      const generation = resolveRollbackGeneration(doc)
+      if (target === undefined || generation === undefined) {
+        return yield* Effect.fail<BindingError>({ type: "no_archived_prior", slot: "embedding" as BindingSlot })
+      }
+      if (!input.confirmed) return yield* Effect.fail<BindingError>({ type: "confirmation_required" })
+      const liveGeneration = doc.embeddingLiveGeneration ?? generation.generationId
+      const plan: OperatorMutationPlan = {
+        authority: AUTHORITY,
+        effect: () =>
+          milvusEffect(
+            port,
+            (p) =>
+              CutoverExecutor.rollbackEmbedding(
+                { milvus: p },
+                {
+                  collections: GENERATION_COLLECTIONS,
+                  targetGeneration: generation.generationId,
+                  casExpected: liveGeneration,
+                  casActual: liveGeneration,
+                  confirmed: true,
+                  bindingVersion: target.version,
+                },
+              ).pipe(
+                Effect.flatMap((outcome) =>
+                  outcome.kind === "committed"
+                    ? Effect.succeed(outcome)
+                    : Effect.fail({ type: "cas_conflict", reason: "rollback did not commit" }),
+                ),
+              ),
+            () => ({ ok: true }),
+          ),
+        apply: (current) => encodeDocument(restoreEmbedding(parseDocument(current), input.targetBindingVersion, generation.generationId)),
+      }
+      return plan
+    })
+  }
+
+  /** Promote the staged embedding candidate to `active`, archive the prior, and mark the generation `live` (FR5). */
+  function activateEmbedding(d: RegistryDocument, generationId: string, activatedBy: string): RegistryDocument {
+    const staged = stagedOf(d, "embedding")
+    if (staged === null) return d // defensive — the plan gate required a validated candidate
+    const outgoing = currentOf(d, "embedding")
+    const archive = archiveOf(d, "embedding")
+    const nextArchive = outgoing && outgoing.state === "active" ? [outgoing, ...archive] : archive
+    const generations = generationsOf(d).map((g) =>
+      g.generationId === generationId ? { ...g, state: "live" } : g.state === "live" ? { ...g, state: "superseded" } : g,
+    )
+    return {
+      ...d,
+      embedding: { ...staged, state: "active", selectedBy: activatedBy, selectedAt: new Date(clock()).toISOString() },
+      embeddingStaged: null,
+      embeddingArchive: nextArchive,
+      embeddingGenerations: generations,
+      embeddingLiveGeneration: generationId,
+    }
+  }
+
+  /** Restore an archived embedding prior to `active` and re-mark its generation `live` (FR5). */
+  function restoreEmbedding(d: RegistryDocument, targetVersion: number | undefined, generationId: string): RegistryDocument {
+    const archive = archiveOf(d, "embedding")
+    const target = resolveRollbackTarget(archive, targetVersion)
+    if (target === undefined) return d // defensive — the plan gate required a prior
+    const remaining = archive.filter((b) => b.version !== target.version)
+    const outgoing = currentOf(d, "embedding")
+    const nextArchive = outgoing && outgoing.state === "active" ? [outgoing, ...remaining] : remaining
+    const generations = generationsOf(d).map((g) =>
+      g.generationId === generationId ? { ...g, state: "live" } : g.state === "live" ? { ...g, state: "superseded" } : g,
+    )
+    return {
+      ...d,
+      embedding: { ...target, state: "active" },
+      embeddingArchive: nextArchive,
+      embeddingGenerations: generations,
+      embeddingLiveGeneration: generationId,
+    }
   }
 
   /** Run a pure transform through the plaintext guard and hand back the plan (shared by every mutation). */

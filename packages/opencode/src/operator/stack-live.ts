@@ -510,24 +510,41 @@ export async function createLiveOperatorStack(input: CreateLiveOperatorStackInpu
   // `milvus_unavailable`), and when absent every index verb degrades to the exact same
   // typed `milvus_unavailable` gap as today. The endpoint/credential never cross the
   // result seam — only a bounded reachability finding or a typed gap (FR14, FR18).
+  // Feature 019 / T004 (FR4) — bind a REAL Milvus client over the shipped REST v2 adapter
+  // when `OPENCODE_SEMANTIC_MILVUS_ADDRESS` is configured. TLS is on by default; an explicit
+  // `http://` address (or `OPENCODE_SEMANTIC_MILVUS_INSECURE=1`) opts out for a local profile.
+  // The bound port lets the `index.*` maintenance verbs probe live and lets the config-backed
+  // registry physically build a generation + swap the alias for an embedding cutover. The
+  // endpoint/credential never cross the result seam — only a bounded finding or a typed gap.
+  // When unconfigured, NO port is bound and every index/binding verb degrades to the EXACT
+  // same typed `milvus_unavailable` floor as today.
   const milvusAddress = process.env["OPENCODE_SEMANTIC_MILVUS_ADDRESS"]?.trim()
-  const milvus: MilvusBinding.MilvusIndexBindingDeps | undefined =
+  const insecureMilvus = process.env["OPENCODE_SEMANTIC_MILVUS_INSECURE"] === "1"
+  const milvusPort =
     milvusAddress && milvusAddress.length > 0
+      ? MilvusAdapter.createGrpcMilvusAdapter({
+          client: MilvusAdapter.createHttpMilvusClient({
+            address: milvusAddress,
+            ssl: !insecureMilvus,
+            authorization: process.env["OPENCODE_SEMANTIC_MILVUS_TOKEN"] || undefined,
+          }),
+        })
+      : undefined
+  const milvus: MilvusBinding.MilvusIndexBindingDeps | undefined =
+    milvusAddress && milvusAddress.length > 0 && milvusPort !== undefined
       ? {
           endpoint: {
             address: milvusAddress,
-            ssl: process.env["OPENCODE_SEMANTIC_MILVUS_INSECURE"] !== "1",
+            ssl: !insecureMilvus,
             secretRef: process.env["OPENCODE_SEMANTIC_MILVUS_SECRET_REF"] || undefined,
           },
-          // The live probe runs the shipped adapter health call; no gRPC client is bound
-          // from the operator runtime yet, so it resolves an honest `reachable:false`
-          // finding rather than fabricating a healthy endpoint (never rejects).
+          port: milvusPort,
+          // The live probe runs the bound client's health call; an unreachable endpoint resolves
+          // an honest `reachable:false` finding rather than rejecting (never leaks the endpoint).
           probe: async () => {
             const started = Date.now()
             const health = await AppRuntime.runPromise(
-              MilvusAdapter.createGrpcMilvusAdapter({})
-                .health()
-                .pipe(Effect.match({ onFailure: () => null, onSuccess: (h) => h })),
+              milvusPort.health().pipe(Effect.match({ onFailure: () => null, onSuccess: (h) => h })),
             )
             return health === null
               ? { reachable: false, latencyMs: Date.now() - started }
@@ -535,7 +552,7 @@ export async function createLiveOperatorStack(input: CreateLiveOperatorStackInpu
           },
         }
       : undefined
-  const semanticBackend = SemanticBackendLive.createLiveSemanticBackend({ config: store.config, milvus })
+  const semanticBackend = SemanticBackendLive.createLiveSemanticBackend({ config: store.config, milvus, milvusPort })
   const semanticWiring = SemanticStackWiring.createSemanticDomainWiring({ backend: semanticBackend })
 
   // === Feature 008 / 014 T008 — mcp domain port composition =================

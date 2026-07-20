@@ -67,6 +67,8 @@ export interface DocumentRow {
 export interface UpsertInput {
   readonly collection: CollectionKind
   readonly rows: readonly DocumentRow[]
+  /** When set, upsert into a specific (blue/green) generation collection rather than the live alias (FR5, FR6). */
+  readonly generationId?: string
 }
 
 export interface UpsertResult {
@@ -77,6 +79,8 @@ export interface TombstoneInput {
   readonly collection: CollectionKind
   readonly canonicalIds: readonly string[]
   readonly projectId: string
+  /** When set, tombstone within a specific generation collection rather than the live alias (FR6). */
+  readonly generationId?: string
 }
 
 export interface TombstoneResult {
@@ -103,6 +107,52 @@ export interface SwapAliasesResult {
   readonly swapped: readonly CollectionKind[]
 }
 
+/**
+ * Feature 019 (FR6) — one enumerated indexed document: the canonical id plus its
+ * stored content hash, the minimal pair `runReconcile` diffs the live-doc source
+ * against. Never a body, a vector, or a scope payload — content-free (`#EnumeratedIndexedDoc`).
+ */
+export interface EnumeratedIndexedDoc {
+  readonly canonicalId: string
+  readonly contentHash: string
+}
+
+export interface EnumerateIndexedInput {
+  readonly collection: CollectionKind
+  /** The mandatory project partition; enumeration never crosses a project (FR9, C6). */
+  readonly projectId: string
+  /** When set, enumerate a specific (blue/green) generation rather than the live alias. */
+  readonly generationId?: string
+}
+
+export interface EnumerateIndexedResult {
+  readonly docs: readonly EnumeratedIndexedDoc[]
+}
+
+/** The blue/green generation build state; `validated` is the ONLY legal cutover source (FR5, cardinal honesty). */
+export type GenerationBuildState = "building" | "validated"
+
+/**
+ * Feature 019 (FR5, FR6) — a blue/green generation build request. It physically
+ * creates a fresh collection generation for EVERY collection together and validates
+ * it (`building → validated`) BEFORE an embedding cutover swaps the alias — a
+ * config-only alias flip is never a cutover (`#GenerationBuild`, `#IndexGeneration`).
+ */
+export interface BuildGenerationInput {
+  readonly collections: readonly CollectionKind[]
+  readonly generationId: string
+  readonly dimension: number
+  readonly metric: MetricKind
+}
+
+export interface BuildGenerationResult {
+  readonly generationId: string
+  readonly collections: readonly CollectionKind[]
+  readonly built: boolean
+  readonly validated: boolean
+  readonly state: GenerationBuildState
+}
+
 /** The typed Milvus capability gap; `milvus_unavailable` never hard-fails routing (C1, C20). */
 export type MilvusGap =
   | { readonly type: "milvus_unavailable"; readonly reason: string }
@@ -116,6 +166,10 @@ export interface MilvusPort {
   readonly tombstone: (input: TombstoneInput) => Effect.Effect<TombstoneResult, MilvusGap>
   readonly health: () => Effect.Effect<HealthResult, MilvusGap>
   readonly swapAliases: (input: SwapAliasesInput) => Effect.Effect<SwapAliasesResult, MilvusGap>
+  /** Feature 019 (FR6) — enumerate the `{canonicalId, contentHash}` pairs indexed for one collection/project. */
+  readonly enumerateIndexed: (input: EnumerateIndexedInput) => Effect.Effect<EnumerateIndexedResult, MilvusGap>
+  /** Feature 019 (FR5, FR6) — physically build + validate a blue/green generation before an alias swap. */
+  readonly buildGeneration: (input: BuildGenerationInput) => Effect.Effect<BuildGenerationResult, MilvusGap>
 }
 
 const unavailable = (reason: string): MilvusGap => ({ type: "milvus_unavailable", reason })
@@ -180,12 +234,16 @@ type CollectionStore = Map<string, StoredRow>
 export const createFakeMilvusAdapter = (
   options: { readonly casToken?: string } = {},
 ): MilvusPort => {
-  const stores = new Map<CollectionKind, CollectionStore>()
-  const storeOf = (collection: CollectionKind): CollectionStore => {
-    const existing = stores.get(collection)
+  const stores = new Map<string, CollectionStore>()
+  // A `generationId` buckets a blue/green generation apart from the live alias (undefined).
+  const storeKey = (collection: CollectionKind, generationId?: string): string =>
+    generationId ? `${collection}::${generationId}` : collection
+  const storeOf = (collection: CollectionKind, generationId?: string): CollectionStore => {
+    const key = storeKey(collection, generationId)
+    const existing = stores.get(key)
     if (existing) return existing
     const created: CollectionStore = new Map()
-    stores.set(collection, created)
+    stores.set(key, created)
     return created
   }
 
@@ -203,7 +261,7 @@ export const createFakeMilvusAdapter = (
   }
 
   const upsert = (input: UpsertInput): Effect.Effect<UpsertResult, MilvusGap> => {
-    const store = storeOf(input.collection)
+    const store = storeOf(input.collection, input.generationId)
     for (const row of input.rows) {
       if (!filtersValid(row.filters)) return Effect.fail({ type: "invalid_filters", reason: "row missing project partition key" })
       store.set(`${row.filters.projectId}:${row.canonicalId}`, { ...row, tombstoned: false })
@@ -212,7 +270,7 @@ export const createFakeMilvusAdapter = (
   }
 
   const tombstone = (input: TombstoneInput): Effect.Effect<TombstoneResult, MilvusGap> => {
-    const store = storeOf(input.collection)
+    const store = storeOf(input.collection, input.generationId)
     let count = 0
     for (const id of input.canonicalIds) {
       const key = `${input.projectId}:${id}`
@@ -231,10 +289,35 @@ export const createFakeMilvusAdapter = (
     if (options.casToken !== undefined && input.casToken !== options.casToken) {
       return Effect.fail({ type: "cas_conflict", reason: "alias generation moved under the swap" })
     }
+    // Promote each target generation's rows into the live alias so a post-swap enumerate/search sees them.
+    for (const target of input.targets) {
+      const gen = stores.get(storeKey(target.collection, target.generationId))
+      if (gen) stores.set(storeKey(target.collection), new Map(gen))
+    }
     return Effect.succeed({ swapped: input.targets.map((t) => t.collection) })
   }
 
-  return { search, upsert, tombstone, health, swapAliases }
+  const enumerateIndexed = (input: EnumerateIndexedInput): Effect.Effect<EnumerateIndexedResult, MilvusGap> => {
+    if (input.projectId.length === 0) return Effect.fail({ type: "invalid_filters", reason: "missing project partition key" })
+    const docs = [...storeOf(input.collection, input.generationId).values()]
+      .filter((row) => !row.tombstoned && row.filters.projectId === input.projectId)
+      .map((row) => ({ canonicalId: row.canonicalId, contentHash: row.canonicalVersion }))
+    return Effect.succeed({ docs })
+  }
+
+  const buildGeneration = (input: BuildGenerationInput): Effect.Effect<BuildGenerationResult, MilvusGap> => {
+    // Materialize a fresh generation bucket per collection (empty until reindex upserts into it).
+    for (const collection of input.collections) storeOf(collection, input.generationId)
+    return Effect.succeed({
+      generationId: input.generationId,
+      collections: input.collections,
+      built: true,
+      validated: true,
+      state: "validated",
+    })
+  }
+
+  return { search, upsert, tombstone, health, swapAliases, enumerateIndexed, buildGeneration }
 }
 
 /** The narrow live-driver seam the composition root binds when T025 recorded `grpc_bun_supported`. */
@@ -244,6 +327,8 @@ export interface MilvusGrpcClient {
   readonly tombstone: (input: TombstoneInput) => Promise<TombstoneResult>
   readonly health: () => Promise<HealthResult>
   readonly swapAliases: (input: SwapAliasesInput) => Promise<SwapAliasesResult>
+  readonly enumerateIndexed: (input: EnumerateIndexedInput) => Promise<EnumerateIndexedResult>
+  readonly buildGeneration: (input: BuildGenerationInput) => Promise<BuildGenerationResult>
 }
 
 /**
@@ -270,5 +355,197 @@ export const createGrpcMilvusAdapter = (
     tombstone: (input) => guard((c) => c.tombstone(input)),
     health: () => guard((c) => c.health()),
     swapAliases: (input) => guard((c) => c.swapAliases(input)),
+    enumerateIndexed: (input) => {
+      if (input.projectId.length === 0) return Effect.fail({ type: "invalid_filters", reason: "missing project partition key" })
+      return guard((c) => c.enumerateIndexed(input))
+    },
+    buildGeneration: (input) => guard((c) => c.buildGeneration(input)),
+  }
+}
+
+// =============================================================================
+// Feature 019 / T004 — the live Milvus HTTP (REST v2) client
+// =============================================================================
+
+/** Options for the live REST client; the credential is a resolved bearer header, never inline plaintext (FR4, C19). */
+export interface HttpMilvusClientOptions {
+  /** `host:port`, or an explicit `http://`/`https://` base URL. */
+  readonly address: string
+  /** TLS on when no explicit scheme is given (secure by default); `http://` addresses opt out explicitly (FR4). */
+  readonly ssl?: boolean
+  /** Bounded per-request budget in ms (default 5000, hard-capped 30000). */
+  readonly timeoutMs?: number
+  /** A resolved `Authorization` header value (Milvus `user:pass` token), supplied by the SecretPort at use time. */
+  readonly authorization?: string
+  /** Physical-collection name prefix; a test uses `opencode_test` to stay isolated + cleanable. */
+  readonly collectionPrefix?: string
+  /** The Milvus vector metric (default `COSINE`). */
+  readonly metricType?: "COSINE" | "IP" | "L2"
+  /** Injected fetch for tests; defaults to the global `fetch`. */
+  readonly fetch?: typeof fetch
+}
+
+const HTTP_DEFAULT_TIMEOUT_MS = 5000
+const HTTP_MAX_TIMEOUT_MS = 30000
+
+/** Milvus collection names allow only `[A-Za-z0-9_]`; sanitize a generation id (uuids carry hyphens). */
+function sanitizeName(raw: string): string {
+  return raw.replace(/[^A-Za-z0-9_]/g, "_")
+}
+
+function milvusMetric(metric: MetricKind): "COSINE" | "IP" | "L2" {
+  return metric === "cosine" ? "COSINE" : metric === "inner-product" ? "IP" : "L2"
+}
+
+/**
+ * Build a live Milvus port over the REST v2 HTTP API (`/v2/vectordb/*`). Every op
+ * is bounded by a timeout and returns a typed `milvus_unavailable`/`cas_conflict`
+ * gap on any transport/timeout/non-zero-code error — never a raw error, an endpoint,
+ * or a credential across the seam (FR4, FR16, C19). The physical collection for a
+ * generation is `<prefix>__<collection>__<generationId>`; the live alias is
+ * `<prefix>__<collection>`, which `swapAliases` atomically re-points.
+ */
+export function createHttpMilvusClient(options: HttpMilvusClientOptions): MilvusGrpcClient {
+  const doFetch = options.fetch ?? fetch
+  const timeoutMs = Math.min(Math.max(1, options.timeoutMs ?? HTTP_DEFAULT_TIMEOUT_MS), HTTP_MAX_TIMEOUT_MS)
+  const prefix = options.collectionPrefix ?? "opencode"
+  const metricType = options.metricType ?? "COSINE"
+  const base = /^https?:\/\//.test(options.address)
+    ? options.address.replace(/\/+$/, "")
+    : `${options.ssl === false ? "http" : "https"}://${options.address}`
+
+  const aliasName = (collection: CollectionKind): string => sanitizeName(`${prefix}__${collection}`)
+  const physicalName = (collection: CollectionKind, generationId: string): string =>
+    sanitizeName(`${prefix}__${collection}__${generationId}`)
+  /** The concrete collection an op targets: a generation's physical collection, else the live alias. */
+  const targetName = (collection: CollectionKind, generationId?: string): string =>
+    generationId ? physicalName(collection, generationId) : aliasName(collection)
+
+  /** POST one REST v2 call under the bounded timeout; a non-zero `code` or transport fault throws a bounded reason. */
+  async function post(path: string, body: unknown): Promise<Record<string, unknown>> {
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), timeoutMs)
+    try {
+      const response = await doFetch(`${base}/v2/vectordb${path}`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          ...(options.authorization ? { authorization: options.authorization } : {}),
+        },
+        body: JSON.stringify(body ?? {}),
+        signal: controller.signal,
+      })
+      if (!response.ok) throw new Error(`http ${response.status}`)
+      const json = (await response.json()) as { code?: number; message?: string; data?: unknown }
+      if (typeof json.code === "number" && json.code !== 0) throw new Error(`milvus code ${json.code}`)
+      return json as Record<string, unknown>
+    } finally {
+      clearTimeout(timer)
+    }
+  }
+
+  const dataOf = (json: Record<string, unknown>): unknown => json["data"]
+
+  return {
+    health: async () => {
+      const started = Date.now()
+      await post("/collections/list", {})
+      return { reachable: true, latencyMs: Date.now() - started }
+    },
+    buildGeneration: async (input) => {
+      for (const collection of input.collections) {
+        const name = physicalName(collection, input.generationId)
+        await post("/collections/create", {
+          collectionName: name,
+          schema: {
+            autoID: false,
+            fields: [
+              { fieldName: "id", dataType: "VarChar", isPrimary: true, elementTypeParams: { max_length: 512 } },
+              { fieldName: "content_hash", dataType: "VarChar", elementTypeParams: { max_length: 128 } },
+              { fieldName: "project_id", dataType: "VarChar", elementTypeParams: { max_length: 256 } },
+              { fieldName: "vector", dataType: "FloatVector", elementTypeParams: { dim: input.dimension } },
+            ],
+          },
+          indexParams: [{ fieldName: "vector", metricType: milvusMetric(input.metric), indexType: "AUTOINDEX" }],
+        })
+        // Validate the build is materialized (describe resolves the physical collection).
+        await post("/collections/describe", { collectionName: name })
+      }
+      return {
+        generationId: input.generationId,
+        collections: input.collections,
+        built: true,
+        validated: true,
+        state: "validated",
+      }
+    },
+    upsert: async (input) => {
+      const name = targetName(input.collection, input.generationId)
+      const data = input.rows.map((row) => ({
+        id: row.canonicalId,
+        content_hash: row.canonicalVersion,
+        project_id: row.filters.projectId,
+        vector: [...row.dense],
+      }))
+      if (data.length === 0) return { upsertedCount: 0 }
+      await post("/entities/upsert", { collectionName: name, data })
+      return { upsertedCount: data.length }
+    },
+    tombstone: async (input) => {
+      const name = targetName(input.collection, input.generationId)
+      if (input.canonicalIds.length === 0) return { tombstonedCount: 0 }
+      const idList = input.canonicalIds.map((id) => JSON.stringify(id)).join(", ")
+      const json = await post("/entities/delete", { collectionName: name, filter: `id in [${idList}]` })
+      const count = (dataOf(json) as { deleteCount?: number } | undefined)?.deleteCount
+      return { tombstonedCount: typeof count === "number" ? count : input.canonicalIds.length }
+    },
+    enumerateIndexed: async (input) => {
+      const name = targetName(input.collection, input.generationId)
+      const json = await post("/entities/query", {
+        collectionName: name,
+        filter: `project_id == ${JSON.stringify(input.projectId)}`,
+        outputFields: ["id", "content_hash"],
+        limit: 16384,
+      })
+      const rows = (dataOf(json) as ReadonlyArray<{ id?: string; content_hash?: string }>) ?? []
+      return {
+        docs: rows.map((r) => ({ canonicalId: String(r.id ?? ""), contentHash: String(r.content_hash ?? "") })),
+      }
+    },
+    swapAliases: async (input) => {
+      for (const target of input.targets) {
+        const alias = aliasName(target.collection)
+        const physical = physicalName(target.collection, target.generationId)
+        // Create the alias on first cutover, else re-point it atomically at the new generation.
+        try {
+          await post("/aliases/describe", { aliasName: alias })
+          await post("/aliases/alter", { collectionName: physical, aliasName: alias })
+        } catch {
+          await post("/aliases/create", { collectionName: physical, aliasName: alias })
+        }
+      }
+      return { swapped: input.targets.map((t) => t.collection) }
+    },
+    search: async (input) => {
+      const name = aliasName(input.collection)
+      const json = await post("/entities/search", {
+        collectionName: name,
+        data: [[...input.dense]],
+        annsField: "vector",
+        limit: input.topK,
+        outputFields: ["id", "content_hash"],
+        searchParams: { metricType },
+      })
+      const rows = (dataOf(json) as ReadonlyArray<{ id?: string; content_hash?: string; distance?: number }>) ?? []
+      return {
+        hits: rows.map((r) => ({
+          canonicalId: String(r.id ?? ""),
+          canonicalVersion: String(r.content_hash ?? ""),
+          dense: typeof r.distance === "number" ? r.distance : 0,
+          sparse: 0,
+        })),
+        consistency: input.consistency,
+      }
+    },
   }
 }

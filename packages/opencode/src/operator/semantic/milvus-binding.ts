@@ -29,8 +29,10 @@
 export * as MilvusBinding from "./milvus-binding"
 
 import { Effect } from "effect"
+import { IndexJobs } from "@/semantic/index-jobs"
+import type { MilvusPort } from "@/semantic/milvus-adapter"
 import type { IndexPort } from "@opencode-ai/protocol/semantic/ports"
-import type { IndexError } from "@opencode-ai/protocol/semantic/commands"
+import type { CollectionKind, IndexError } from "@opencode-ai/protocol/semantic/commands"
 
 /**
  * The Milvus endpoint config (Feature 006/009 shape) the composition root resolves.
@@ -66,15 +68,54 @@ export type MilvusProbe = (input: {
   readonly timeoutMs: number
 }) => Promise<MilvusProbeResult>
 
+/**
+ * Feature 019 / T008 (FR6, FR7) — the per-collection live-doc source. It projects
+ * the current agents/skills/skill_chunks/tools into content-hashed, content-free
+ * `LiveDoc`s (the agent/skill builders join the shipped `toolLiveDoc`), embedding the
+ * dense/sparse vectors from the bound embedding client. When no embedding provider is
+ * configured it MUST reject rather than fabricate vectors — the reconcile then
+ * degrades to a typed gap.
+ */
+export interface LiveDocSource {
+  readonly collect: (input: {
+    readonly collection: CollectionKind
+    readonly projectId: string
+  }) => Promise<readonly IndexJobs.LiveDoc[]>
+}
+
+/** The reconcile projection context: the project partition + the pinned binding version (never re-pinned, FR7). */
+export interface MaintenanceContext {
+  readonly projectId: string
+  readonly bindingVersion: number
+}
+
 export interface MilvusIndexBindingDeps {
   readonly endpoint: MilvusEndpointConfig
   readonly probe: MilvusProbe
+  /**
+   * Feature 019 (FR6, FR7) — the live Milvus port + the bound live-doc source. When
+   * BOTH are present, `reindex`/`reconcile` compose `runReconcile` (diff the live-doc
+   * source against the enumerated indexed docs, apply upserts/tombstones) and report
+   * content-free counts with the pinned binding version UNCHANGED. When either is
+   * absent, the maintenance verbs keep the honest not-composed `milvus_unavailable` gap.
+   */
+  readonly port?: MilvusPort
+  readonly source?: LiveDocSource
+  /** Resolve the reconcile projection context (project + pinned binding version) per run. */
+  readonly context?: () => Promise<MaintenanceContext>
+  /** The Feature 005 spool sink for the bounded job log; a bounded content-free ref when absent. */
+  readonly spool?: IndexJobs.OutputSpoolSink
 }
 
 const DEFAULT_TIMEOUT_MS = 2000
 const MAX_TIMEOUT_MS = 10000
 
 const milvusUnavailable = (reason: string): IndexError => ({ type: "milvus_unavailable", reason })
+
+/** A content-free spool fallback: returns a bounded, secret-free ref, never a job body (C22). */
+const boundedSpool: IndexJobs.OutputSpoolSink = {
+  spool: (input) => Effect.succeed(`spool:reconcile:${input.collection}`),
+}
 
 /**
  * Bind the operator `IndexPort` over the shipped Milvus stack under a bounded
@@ -102,13 +143,54 @@ export function createMilvusIndexPort(deps: MilvusIndexBindingDeps): IndexPort {
       )
     })
 
+  const port = deps.port
+  const source = deps.source
+  const spool = deps.spool ?? boundedSpool
+
+  /**
+   * Feature 019 (FR6, FR7) — run one collection's reconcile over the live port: read
+   * the pinned context, collect the live docs, enumerate the indexed docs, then diff +
+   * apply via `runReconcile`. `full` forces a rebuild (indexed treated as empty → every
+   * live doc upserts); a scheduled reconcile diffs the real enumerated state. The pinned
+   * binding version is carried UNCHANGED — a reconcile never re-pins the binding.
+   */
+  const runMaintenance = (collection: CollectionKind, full: boolean): Effect.Effect<{ upsertedCount: number; tombstonedCount: number; outputRef: string }, IndexError> =>
+    Effect.gen(function* () {
+      if (port === undefined || source === undefined || deps.context === undefined) {
+        return yield* gatedGap(full ? "index.reindex" : "index.reconcile")
+      }
+      const health = yield* runProbe
+      if (!health.reachable) return yield* Effect.fail(milvusUnavailable("milvus endpoint unreachable"))
+      const ctx = yield* Effect.tryPromise({ try: () => deps.context!(), catch: () => milvusUnavailable("maintenance context unavailable") })
+      const live = yield* Effect.tryPromise({
+        try: () => source.collect({ collection, projectId: ctx.projectId }),
+        // A missing embedding provider / definition source degrades typed — never fabricated vectors (FR6).
+        catch: () => milvusUnavailable("live-doc source unavailable (embedding provider not configured)"),
+      })
+      const indexed = full
+        ? []
+        : yield* port.enumerateIndexed({ collection, projectId: ctx.projectId }).pipe(
+            Effect.mapError((): IndexError => milvusUnavailable("enumerate indexed docs failed")),
+            Effect.map((r) => r.docs),
+          )
+      const result = yield* IndexJobs.runReconcile(
+        { milvus: port, spool },
+        { collection, live, indexed, projectId: ctx.projectId, bindingVersion: ctx.bindingVersion },
+      ).pipe(Effect.mapError((): IndexError => milvusUnavailable("index maintenance failed")))
+      return {
+        upsertedCount: result.summary.upsertedCount,
+        tombstonedCount: result.summary.tombstonedCount,
+        outputRef: result.outputRef,
+      }
+    })
+
   return {
     // The real bound verb: a bounded probe → the live reachability finding.
     test: () =>
       Effect.map(runProbe, (health) => ({ reachable: health.reachable, latencyMs: health.latencyMs })),
     status: () => gatedGap("index.status"),
-    reindex: () => gatedGap("index.reindex"),
-    reconcile: () => gatedGap("index.reconcile"),
+    reindex: (input) => runMaintenance(input.collection, true),
+    reconcile: (input) => runMaintenance(input.collection, false),
     showCollections: () => gatedGap("index.show-collections"),
   }
 }

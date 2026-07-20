@@ -220,13 +220,25 @@ function embeddingInvoke(port: SemanticPort, c: Ctx): Promise<HandlerResult> | n
   const cas = str(c.payload, ["casToken", "cas_token"]) ?? ""
   const select = { slot: "embedding" as const, modelDescriptorId: (str(c.payload, ["modelDescriptorId", "model_descriptor_id"]) ?? "") as never, compatibilityMode: "embedding" as const, principal: c.principal }
   switch (c.id) {
-    // show/select ride the registry round-trip; validate/reindex/cutover/rollback stay the gated Milvus ops.
+    // show/select/reindex/cutover/rollback ride the config-backed registry over the live Milvus port
+    // (FR5, effectful mutation plans that build+validate before the alias swap); validate stays the gated
+    // Milvus probe. When Milvus is unconfigured the registry plans return the exact `milvus_unavailable`
+    // floor — never a config-only alias flip.
     case "semantic.embedding.show": return reg ? c.io.run(reg.showEmbedding({ scope: c.scope, scopeId: c.scopeId }), query) : c.io.run(b.showEmbedding({ scope: c.scope, scopeId: c.scopeId }), query)
     case "semantic.embedding.select": return reg ? c.io.plan(reg.planSelectEmbedding(select)) : c.io.run(b.selectEmbedding(select), query)
     case "semantic.embedding.validate": return c.io.run(b.validateEmbedding({ id: id as never, principal: c.principal }), query)
-    case "semantic.embedding.reindex": return c.io.run(b.reindexEmbedding({ id: id as never, principal: c.principal }), query)
-    case "semantic.embedding.cutover": return c.io.run(b.cutoverEmbedding({ id: id as never, generationId: (str(c.payload, ["generationId", "generation_id"]) ?? "") as never, casToken: cas as never, confirmed: bool(c.payload, "confirmed"), principal: c.principal }), query)
-    case "semantic.embedding.rollback": return c.io.run(b.rollbackEmbedding({ slot: "embedding", targetBindingVersion: num(c.payload, ["targetBindingVersion", "target_binding_version"]) ?? 0, casToken: cas as never, confirmed: bool(c.payload, "confirmed"), principal: c.principal }), query)
+    case "semantic.embedding.reindex":
+      return reg
+        ? c.io.plan(reg.planReindexEmbedding({ principal: c.principal }))
+        : c.io.run(b.reindexEmbedding({ id: id as never, principal: c.principal }), query)
+    case "semantic.embedding.cutover":
+      return reg
+        ? c.io.plan(reg.planCutoverEmbedding({ generationId: str(c.payload, ["generationId", "generation_id"]), confirmed: bool(c.payload, "confirmed"), principal: c.principal }))
+        : c.io.run(b.cutoverEmbedding({ id: id as never, generationId: (str(c.payload, ["generationId", "generation_id"]) ?? "") as never, casToken: cas as never, confirmed: bool(c.payload, "confirmed"), principal: c.principal }), query)
+    case "semantic.embedding.rollback":
+      return reg
+        ? c.io.plan(reg.planRollbackEmbedding({ targetBindingVersion: num(c.payload, ["targetBindingVersion", "target_binding_version"]), confirmed: bool(c.payload, "confirmed"), principal: c.principal }))
+        : c.io.run(b.rollbackEmbedding({ slot: "embedding", targetBindingVersion: num(c.payload, ["targetBindingVersion", "target_binding_version"]) ?? 0, casToken: cas as never, confirmed: bool(c.payload, "confirmed"), principal: c.principal }), query)
     default: return null
   }
 }

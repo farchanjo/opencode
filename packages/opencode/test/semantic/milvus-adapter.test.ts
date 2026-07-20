@@ -119,6 +119,8 @@ describe("live gRPC Milvus adapter (honest gap)", () => {
       tombstone: async () => ({ tombstonedCount: 0 }),
       health: async () => ({ reachable: true, latencyMs: 3 }),
       swapAliases: async () => ({ swapped: ["agents"] }),
+      enumerateIndexed: async () => ({ docs: [] }),
+      buildGeneration: async (input) => ({ generationId: input.generationId, collections: input.collections, built: true, validated: true, state: "validated" }),
     }
     const port = MilvusAdapter.createGrpcMilvusAdapter({ client })
     const health = await Effect.runPromise(port.health())

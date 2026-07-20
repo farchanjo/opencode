@@ -21,7 +21,8 @@ import { Effect } from "effect"
 import { Projection } from "@opencode-ai/core/semantic/projection"
 import type { CollectionKind } from "@opencode-ai/protocol/semantic/commands"
 import type { ToolDoc } from "@opencode-ai/schema/semantic/tool-doc"
-import type { DocumentRow, MilvusGap, MilvusPort } from "./milvus-adapter"
+import type { AgentDoc, SkillDoc } from "@opencode-ai/schema/semantic/documents"
+import type { DocumentRow, MandatoryFilters, MilvusGap, MilvusPort } from "./milvus-adapter"
 
 /** A live-core document projected to its content hash and mandatory scalar fields (never a body, C22). */
 export interface LiveDoc {
@@ -96,6 +97,50 @@ export const toolLiveDoc = (doc: ToolDoc, vectors: ToolVectors): LiveDoc => ({
       visibility: doc.scope.visibility,
       permissionRef: doc.scope.permission_ref,
     },
+  },
+})
+
+/**
+ * Feature 019 / T008 (FR6) — project a sanitized `AgentDoc` into the generic
+ * `LiveDoc` for the `agents` collection, joining the shipped `toolLiveDoc`. The
+ * content hash keys the incremental upsert/tombstone; the mandatory `DocScope`
+ * fields become the per-search partition filters so an agent never crosses a project
+ * (FR9, C13). Content-free — never a body, only the hash + scalar filters. The
+ * dense/sparse vectors are injected from the bound embedding client (I/O upstream).
+ */
+export const agentLiveDoc = (doc: AgentDoc, vectors: ToolVectors): LiveDoc => ({
+  canonicalId: doc.id,
+  contentHash: doc.identity.content_hash,
+  row: {
+    canonicalId: doc.id,
+    canonicalVersion: doc.identity.content_hash,
+    dense: vectors.dense,
+    terms: vectors.terms,
+    filters: {
+      projectId: doc.scope.project_id,
+      scope: doc.scope.scope,
+      visibility: doc.scope.visibility,
+      permissionRef: doc.scope.permission_ref,
+    },
+  },
+})
+
+/**
+ * Feature 019 / T008 (FR6) — project a sanitized `SkillDoc` into the generic
+ * `LiveDoc` for the `skills`/`skill_chunks` collections. `SkillDoc` carries no
+ * `DocScope`, so the mandatory partition `filters` are supplied by the caller (the
+ * reconcile projection context) rather than read off the doc; the projection stays
+ * content-free — only the canonical id, its content hash, and the injected vectors.
+ */
+export const skillLiveDoc = (doc: SkillDoc, vectors: ToolVectors, filters: MandatoryFilters): LiveDoc => ({
+  canonicalId: doc.id,
+  contentHash: doc.identity.content_hash,
+  row: {
+    canonicalId: doc.id,
+    canonicalVersion: doc.identity.content_hash,
+    dense: vectors.dense,
+    terms: vectors.terms,
+    filters,
   },
 })
 
