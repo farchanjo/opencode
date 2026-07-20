@@ -41,10 +41,10 @@ coordinator) is FIRST — nothing runs without it.
 - [x] T012 — `InterruptRegistry` process-singleton + execution-layer registration
 - [x] T013 — Second-press forced abort consults the registry; first-press unchanged
 - [x] T014 — Palette availability flip (`jobs.run-now` + process/task `cancel`)
-- [ ] T015 — Composition + coordinator tests (arming, fail-open, admit→run→terminal)
-- [ ] T016 — Run-now + occurrence-history tests (effect once, overlap, real history)
-- [ ] T017 — Interrupt-edge + availability/parity tests (FR12)
-- [ ] T018 — Guard scope + doc sync + `speckit analyze` + `validate --json` green
+- [x] T015 — Composition + coordinator tests (arming, fail-open, admit→run→terminal)
+- [x] T016 — Run-now + occurrence-history tests (effect once, overlap, real history)
+- [x] T017 — Interrupt-edge + availability/parity tests (FR12)
+- [x] T018 — Guard scope + doc sync + `speckit analyze` + `validate --json` green
 
 ---
 
@@ -116,13 +116,26 @@ coordinator) is FIRST — nothing runs without it.
 - **Acceptance:** a denied admission surfaces the typed denial; an admitted occurrence
   proceeds; no gate is bypassed.
 - **Verification:** `bun test packages/opencode/test/jobs/**` (admit cases).
-- **Evidence:** 2026-07-19 — the composition consumes the real `admit` seam through
-  `triggerService.trigger` (`executor-composition.ts:291`, over the shipped
-  `associateProcess` admission flow at `trigger-service.ts:296-324`). The live
-  coordinator's `admit` (`executor-composition-live.ts:196-198`) returns the honest
-  `admitted`; a denial stays `claimed` (never a fake `admitted`) and the composition
-  never provisions/runs it. Tests: "a denied admission never provisions, never runs,
-  never emits a terminal".
+- **Evidence:** 2026-07-19 / amended 2026-07-20 (adversarial-fix round) — the live
+  coordinator's `admit` (`executor-composition-live.ts` `createLiveCoordinator`) now
+  runs a REAL Feature 002 `AdmissionController` token-bucket gate
+  (`admission.request({ scope: "session", key: rootSessionId, requestedFanout: 1 })`,
+  imported from `@opencode-ai/core/lifecycle/admission/admission-controller`): a
+  `granted` decision → `admitted:true`; a `queued`/`rejected`/`partial` decision →
+  typed `admitted:false` with the decision reason — never a hardcoded/fabricated
+  `admitted`. HONEST SCOPE: the eager executor arms independent of the operator stack,
+  so it owns a real `AdmissionController` for the scheduled path rather than the
+  lifecycle-wiring instance (`stack-wiring.ts` constructs its own instance inside
+  `createLifecycleDomainWiring()`; no process-singleton exists to share, and the
+  admission module is outside the Feature 018 guard scope). The Feature 001 routing
+  gate stays a documented boundary (a headless scheduled trigger carries no
+  routing-decision context). The shipped `associateProcess` flow
+  (`trigger-service.ts:296-324`) keeps a denial at `claimed` — never provisions/runs.
+  Tests: `test/jobs/live-coordinator.test.ts` "a denied admission (zero session
+  ceiling) creates no session and emits no terminal", "admit reports the typed denial
+  reason, never a fabricated `admitted`", "a granted admission proceeds"; the
+  fake-coordinator composition case "a denied admission never provisions, never runs,
+  never emits a terminal" is unchanged.
 
 - [x] **T005 — Implement `createProcess`/`provisionTodo`/`provisionOutputGroup`**
 - **Depends:** T004
@@ -135,14 +148,20 @@ coordinator) is FIRST — nothing runs without it.
 - **Acceptance:** an admitted occurrence creates a Task Process tagged `scheduled-job`
   and provisions its Todo + OutputGroup before goal-bearing work.
 - **Verification:** `bun test packages/opencode/test/jobs/**` (provision cases).
-- **Evidence:** 2026-07-19 — the live coordinator's `createProcess`
-  (`executor-composition-live.ts:203-222`) creates a REAL Feature 002 session tagged
-  `owner_kind: "scheduled-job"` through `Session.Service.create` (via
-  `AppRuntime.runPromise`); `provisionTodo`/`provisionOutputGroup` provision the
-  occurrence-owned refs before goal-bearing work. The shipped `trigger-service`
-  `associateProcess` orders `createProcess → provisionTodo → provisionOutputGroup →
-  job.admitted/job.triggered`. Tests: "an admitted occurrence provisions Todo +
-  OutputGroup, runs headless, emits terminal" asserts `calls.created`/`todos`/`outputs`.
+- **Evidence:** 2026-07-19 / amended 2026-07-20 (adversarial-fix round) — the live
+  coordinator's `createProcess` (`executor-composition-live.ts` `createLiveCoordinator`)
+  consults a headless-capability probe BEFORE persisting: when the probe reports
+  `capable` it persists a REAL Feature 002 session tagged `owner_kind: "scheduled-job"`
+  through an injectable `ScheduledSessionSeam` (production default → `Session.Service.create`
+  via `AppRuntime.runPromise`); when `incapable` it returns a synthetic, non-persisted
+  process handle and creates NO session (session-leak fix, see T006).
+  `provisionTodo`/`provisionOutputGroup` provision the occurrence-owned refs before
+  goal-bearing work. The shipped `trigger-service` `associateProcess` orders
+  `createProcess → provisionTodo → provisionOutputGroup → job.admitted/job.triggered`.
+  Tests: `test/jobs/live-coordinator.test.ts` "a capable occurrence DOES persist the
+  real session before goal-bearing work" (counting `ScheduledSessionSeam` → exactly one
+  create); "an admitted occurrence provisions Todo + OutputGroup, runs headless, emits
+  terminal" (fake coordinator) asserts `calls.created`/`todos`/`outputs`.
 
 - [x] **T006 — Run headless via the shared spool writer; same permission surface (no bypass)**
 - **Depends:** T005
@@ -157,20 +176,26 @@ coordinator) is FIRST — nothing runs without it.
 - **Acceptance:** output lands in the shared control store; a permission gate a user
   session hits is hit by the scheduled session too; no auto-approved bypass.
 - **Verification:** `bun test packages/opencode/test/jobs/**` + `packages/opencode/test/operator/**`.
-- **Evidence:** 2026-07-19 — output rides the SHARED Feature 017 spool writer already
-  armed at server start (`ensureProcessSpoolWriter`, `server.ts:113-118`), never a
-  second writer — the scheduled session is a normal Feature 002 session. HEADLESS
-  HONESTY (ADR-0018 decision 3): the live runner (`executor-composition-live.ts:238-247`)
-  runs under the SAME permission surface with NO interactive-prompt auto-approval;
-  a capability a headless session cannot satisfy degrades to a typed
-  `headless_incapable` terminal → emitted as `job.execution_failed` (never a
-  fabricated success, never a bypass). The composition emits `job.execution_started`
-  + terminal around the runner (`executor-composition.ts:277-289`). Tests: "a
-  headless-incapable capability degrades to a typed execution_failed terminal", "a
-  runner fault degrades to a bounded execution_failed terminal". CURRENT ENVELOPE:
-  goal-bearing headless execution is not yet driven (no parent assistant-message
-  Tool.Context headless); the coordinator composes real session + provisioning +
-  events + no-bypass honesty. `bun test test/operator` 429 pass.
+- **Evidence:** 2026-07-19 / amended 2026-07-20 (adversarial-fix round) — output rides
+  the SHARED Feature 017 spool writer already armed at server start
+  (`ensureProcessSpoolWriter`, `server.ts:113-118`), never a second writer. HEADLESS
+  HONESTY + NO SESSION LEAK (ADR-0018 decision 3): the live runner
+  (`executor-composition-live.ts` `createLiveRunner`) and the coordinator share ONE
+  `headlessGoalBearingCapability` probe. While no goal-bearing headless driver exists
+  the probe reports `incapable`, so (a) `createProcess` persists NO session (the
+  earlier envelope created a REAL session that the runner then immediately abandoned as
+  `headless_incapable` — a per-minute cron leaked one dead scheduled-job session per
+  fire; now zero), and (b) the run degrades to a typed `headless_incapable` terminal →
+  emitted as `job.execution_failed` (never a fabricated success, never a bypass). The
+  composition emits `job.execution_started` + terminal around the runner
+  (`executor-composition.ts`). Tests: `test/jobs/live-coordinator.test.ts` "an
+  admitted-but-incapable occurrence persists NO session and fails headless_incapable"
+  and "run-now: an incapable occurrence enqueues but persists NO session" (counting
+  `ScheduledSessionSeam` → zero creates); the fake-coordinator "headless-incapable …
+  execution_failed terminal" + "runner fault … bounded execution_failed" cases are
+  unchanged. CURRENT ENVELOPE: goal-bearing headless execution is not yet driven; when
+  the driver lands the shared probe flips to `capable` and `createProcess` persists the
+  real session before goal-bearing work. `bun test test/jobs test/operator` 527 pass / 2 skip.
 
 - [x] **T007 — Bounded concurrency over the existing overlap/misfire policies**
 - **Depends:** T003, T005
@@ -210,11 +235,18 @@ coordinator) is FIRST — nothing runs without it.
   path) is bound at the operator composition root
   (`operator/stack-live.ts` `jobsRunNow` → `ExecutorComposition.ensureExecutorComposition().enqueueImmediate`).
   `planRunNow` (`operator/jobs/backend-live.ts`) now returns an `OperatorMutationPlan`
-  whose `effect` calls that seam; `apply` is identity (run-now records no definition
-  mutation — the settled token rides the `jobs` authority) so `mutateAuthority` runs
-  the enqueue EXACTLY ONCE after the contract/CAS checks. An unbound executor keeps the
-  honest `unavailable` gap. Test: `test/jobs/run-now.test.ts` "a dispatch enqueues one
-  immediate occurrence and commits (effect runs once)" (`runNow.calls === 1`, `result.ok`);
+  whose `effect` calls that seam; `mutateAuthority` runs the enqueue EXACTLY ONCE after
+  the contract/CAS checks. NO-CAS-CHURN (adversarial-fix round 2026-07-20): the plan is
+  marked `effectOnly: true` — a general `OperatorMutationPlan` capability threaded
+  through the dispatcher into `mutateAuthority` (`application/{handler,dispatcher,mutation}.ts`)
+  that runs the effect then SKIPS the committed CAS write, so a successful run-now leaves
+  the `jobs` authority version UNCHANGED (the prior identity-`apply` plan committed a
+  no-op CAS that bumped the version on every run and spuriously conflicted with concurrent
+  definition edits). An unbound executor keeps the honest `unavailable` gap. Test:
+  `test/jobs/run-now.test.ts` "a dispatch enqueues one immediate occurrence and commits
+  (effect runs once)", "a successful run-now leaves the jobs authority version UNCHANGED
+  (effect-only, no CAS churn)", "a successful run-now is idempotent — a replay does not
+  re-enqueue";
   `test/jobs/executor-composition.test.ts` "enqueues one immediate occurrence, provisions +
   runs headless, emits terminal". `bun run typecheck` EXIT=0; `bun test test/jobs` 85 pass;
   `bun test test/operator` 429 pass.
@@ -431,7 +463,14 @@ coordinator) is FIRST — nothing runs without it.
   writer, emits terminal events; bounded concurrency honors the overlap/misfire policies.
 - **Acceptance:** all composition + coordinator cases green.
 - **Verification:** `bun test packages/opencode/test/jobs/**`.
-- **Evidence:** _(reserved)_
+- **Evidence:** 2026-07-20 — `test/jobs/executor-composition.test.ts` (eager arm +
+  idempotent + fail-open T001/T002; reconcile rehydration + fire-and-forget dispatch
+  T003; fake-coordinator admit→provision→run→terminal + headless-incapable + runner
+  fault T004-T006; bounded-concurrency forbid/replace T007) and the adversarial-fix
+  `test/jobs/live-coordinator.test.ts` (REAL `AdmissionController` gate: denial → no
+  session, no terminal, no phantom; admitted-but-incapable → NO persisted session via a
+  counting `ScheduledSessionSeam`; capable → exactly one persisted session). `bun test
+  test/jobs` 94 pass; `bun run typecheck` EXIT=0.
 
 - [ ] **T016 — Run-now + occurrence-history tests (effect once, overlap, real history)**
 - **Depends:** T008-T011
@@ -442,7 +481,16 @@ coordinator) is FIRST — nothing runs without it.
   executions with a bounded, closable watch.
 - **Acceptance:** all run-now + history cases green.
 - **Verification:** `bun test packages/opencode/test/operator/**`.
-- **Evidence:** _(reserved)_
+- **Evidence:** 2026-07-20 — run-now over the REAL `createLiveJobsBackend` +
+  `mutateAuthority` pipeline: `test/jobs/run-now.test.ts` (effect once after CAS;
+  effect-only leaves the version UNCHANGED — no CAS churn; idempotent replay does not
+  re-enqueue; overlap-rejected / disarmed / disabled / not-found typed failures commit
+  nothing; unbound executor stays `unavailable`). Definition-keyed occurrence history
+  round-trip: `test/jobs/definition-keyed-history.test.ts` (executor emits under the
+  `jobDefinitionId` aggregate → the REAL `createJobOccurrenceProjection.history`
+  returns it; a foreign definition stays empty; a failed occurrence surfaces its
+  bounded terminal `reason` — the swallowed-reason fix, FR11). `bun test test/jobs
+  test/operator` 527 pass / 2 skip.
 
 - [ ] **T017 — Interrupt-edge + availability/parity tests (FR12)**
 - **Depends:** T012-T014
@@ -454,7 +502,17 @@ coordinator) is FIRST — nothing runs without it.
   id / loopback with no new dispatch path, no new catalog id, no version bump.
 - **Acceptance:** all interrupt + availability + parity cases green.
 - **Verification:** `bun test packages/core/test/session/** packages/opencode/test/operator/** packages/core/test/operator/**`.
-- **Evidence:** _(reserved)_
+- **Evidence:** 2026-07-20 — interrupt edge: `packages/core/test/session/interrupt-registry.test.ts`
+  (register/deregister lifecycle, token-guarded double-register, absent → `unconfirmed`,
+  live interrupt over the real coordinator) + `packages/opencode/test/operator/forced-abort-interrupt.test.ts`
+  (second press aborts a registered live run's fiber + deregisters; absent → `unconfirmed`;
+  first press fences + emits two `cancel_requested`, never consults the registry).
+  Availability + parity: `packages/core/test/operator/feature018-availability.test.ts`
+  (run-now + process/task cancel read composed truth; `mcp.auth.*` / `output.*` stay
+  honest gaps; reserved catalog version `1.3.0` unchanged, no new id, palette==catalog
+  entry count) + `packages/tui/test/operator/entity.test.ts` (run-now no longer
+  `unavailable`, same canonical id). `bun test test/session test/operator` (core) 335 pass;
+  `bun test test/operator` (opencode) 527 pass / 2 skip; `bun test test/operator` (tui) 175 pass.
 
 - [ ] **T018 — Guard scope + doc sync + `speckit analyze` + `validate --json` green**
 - **Depends:** T001-T017
@@ -467,4 +525,15 @@ coordinator) is FIRST — nothing runs without it.
 - **Acceptance:** `speckit analyze` reports no new Critical/High/Medium; `speckit
   validate --json` is `ok:true` with 0 new findings.
 - **Verification:** `speckit analyze`; `speckit validate --json`.
-- **Evidence:** _(reserved)_
+- **Evidence:** 2026-07-20 — GUARD SCOPE: every touched path is already covered by the
+  Feature 018 / 003 / 007 guard globs (`doc/arch/speckit.toml`) — `packages/opencode/src/jobs/**`
+  (executor-composition-live coordinator/runner/admission gate), `packages/opencode/src/operator/**`
+  (backend-live effect-only plan, occurrence-projection reason, application/{handler,dispatcher,mutation}
+  effectOnly seam), `packages/protocol/src/jobs/**` (Occurrence.reason), and the
+  `test/{jobs,operator}` suites; no new glob required. DOC SYNC: ADR-0018 records the
+  real admission-scope reach, the no-session-leak headless verdict, the effect-only
+  no-CAS-churn plan, and the single-process dedup boundary; spec.md FR4/FR6 + Out of
+  Scope match; the occurrence.cue `#OccurrenceStatus.reason` already models the surfaced
+  reason (no schema change). GATES: `speckit validate --json` → `ok:true`, `waivedCount:4`
+  (all pre-existing hygiene.empty-file warnings), 0 new findings; `speckit analyze` →
+  "analyzed 18 feature(s): consistent; 0 ADR overlap(s)". `bun run typecheck` EXIT=0.

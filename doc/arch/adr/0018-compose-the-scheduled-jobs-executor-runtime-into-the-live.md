@@ -109,8 +109,9 @@ nothing.
   (`bun-cron-adapter.ts:271-283`).
 - **`TaskProcessCoordinator` implementation (FR4, FR5, FR6).** The seam
   (`trigger-service.ts:122-131`) is implemented over the real Feature 002 machinery:
-  `admit` runs the Feature 002 admission + Feature 001 routing gates (honest denial,
-  never a fake `admitted`); `createProcess` creates the Task Process with
+  `admit` runs a REAL Feature 002 `AdmissionController` token-bucket gate (session
+  scope) — a denial (`queued`/`rejected`/`partial`) is a typed `admitted:false`,
+  never a fake `admitted`; `createProcess` creates the Task Process with
   `owner_kind: "scheduled-job"` through `TaskTool`
   (`packages/opencode/src/tool/task.ts`) / `SessionExecution`; `provisionTodo` and
   `provisionOutputGroup` provision the occurrence-owned Todo + OutputGroup. The
@@ -120,13 +121,32 @@ nothing.
   bypass); a capability a headless session cannot satisfy degrades to a typed
   terminal outcome.
 
-  **Coordinator headless-honesty verdict (flagged decision).** A headless scheduled
-  session has no interactive operator to satisfy a permission prompt. Chosen: the
-  coordinator does NOT auto-approve a prompt — it runs under the identical permission
-  surface a user session hits, and a capability that genuinely requires interactive
-  confirmation degrades to a typed, honest terminal outcome for that occurrence. The
-  implement phase confirms the exact permission-surface seam and records the final
-  headless capability envelope in `tasks.md`. No fabricated success on any occurrence.
+  **Admission authority (honest scope, adversarial-fix round).** The eager executor
+  arms independent of the operator stack, so it does NOT share the lifecycle-wiring
+  `AdmissionController` instance (that one is constructed inside
+  `createLifecycleDomainWiring()`, which only runs when the operator opens; there is
+  no process-singleton to reach, and the admission module is outside the Feature 018
+  guard scope). The coordinator therefore owns a real `AdmissionController` for the
+  scheduled path — the SAME framework-free token-bucket gate class the lifecycle
+  domain uses, honestly enforcing the per-`rootSessionId` session ceiling — NOT a
+  shared interactive budget, and NOT the Feature 001 routing gate (which requires a
+  routing-decision context a headless scheduled trigger does not carry). This is the
+  honest, in-scope reach; the shared/global admission budget and the routing gate
+  remain documented boundaries.
+
+  **Coordinator headless-honesty verdict + no-session-leak (flagged decision,
+  adversarial-fix round).** A headless scheduled session has no interactive operator
+  to satisfy a permission prompt and no parent assistant-message `Tool.Context` to
+  drive goal-bearing work. Chosen: the coordinator consults a **headless-capability
+  probe BEFORE `createProcess`**. While no goal-bearing headless driver exists the
+  probe reports `incapable`, so the coordinator persists **NO** Feature 002 session
+  for that occurrence (a per-minute cron must not grow dead scheduled-job sessions);
+  the occurrence carries a synthetic, non-persisted process handle and degrades to a
+  typed `headless_incapable` terminal — no auto-approved prompt, no fabricated
+  success. When a headless goal-bearing driver lands, the same probe flips to
+  `capable` and `createProcess` persists the REAL `owner_kind: "scheduled-job"`
+  session before goal-bearing work. The permission-surface seam and the final
+  headless capability envelope are recorded in `tasks.md`.
 - **`jobs.run-now` effectful mutation plan (FR7).** `planRunNow`
   (`operator/jobs/backend-live.ts:93`) converts to an `OperatorMutationPlan` whose
   `effect` (the Feature 017 fix-round seam on `application/handler.ts`, run EXACTLY
@@ -135,6 +155,17 @@ nothing.
   executor. A successful enqueue reports the occurrence identity; an overlap-policy
   rejection reports the typed rejection; a disarmed executor degrades to `unavailable`;
   an idempotent replay returns the stored result WITHOUT re-enqueuing.
+
+  **Effect-only plan — no CAS churn (adversarial-fix round).** Run-now records NO
+  definition-document mutation, so the plan is marked `effectOnly`: `mutateAuthority`
+  runs the enqueue once after the contract/idempotency/CAS-precondition checks and
+  then SKIPS the committed CAS write. A successful run-now therefore leaves the `jobs`
+  authority version UNCHANGED — it never bumps the definitions doc and never
+  spuriously conflicts with a concurrent definition edit — while staying idempotent
+  and audited. (The prior identity-`apply` plan still committed a no-op CAS that
+  bumped the version on every successful run.) `effectOnly` is a general
+  `OperatorMutationPlan` capability threaded through the dispatcher into
+  `mutateAuthority`; a rejected enqueue still aborts before any write (no phantom).
 - **Definition-keyed occurrence events (FR8, flagged decision).** The Feature 017
   occurrence projection keys by `jobDefinitionId`, but the durable stream aggregates
   by `root_session_id`, so occurrence history is honest-empty. The `job.*` envelope
@@ -200,6 +231,13 @@ statechart in `doc/arch/statecharts/job-executor-composition.md`.
 - A headless scheduled session cannot satisfy an interactive permission prompt; such
   a capability degrades to a typed terminal outcome rather than an auto-approved
   bypass — a deliberate no-privilege-escalation trade-off.
+- **Single-process occurrence dedup.** The occurrence idempotency registry
+  (`executor-composition-live.ts` `createLiveRegistry`) and the scheduled-path
+  `AdmissionController` are process-local in-memory state. Deduplication and
+  concurrency bounding are therefore honest only WITHIN one process — cross-process /
+  multi-node occurrence dedup is out of scope, matching the "no distributed/multi-node
+  scheduler" boundary. A restart re-registers enabled definitions via the reconcile
+  sweep without claiming past execution.
 
 #### Follow-ups
 

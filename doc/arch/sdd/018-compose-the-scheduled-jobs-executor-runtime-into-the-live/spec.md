@@ -2,7 +2,7 @@
 id: 019f7d4f-8ba9-7ed0-88f0-5f2e0b1a2a9e
 number: 018
 slug: compose-the-scheduled-jobs-executor-runtime-into-the-live
-status: analyzed
+status: implemented
 created_at: 2026-07-20T02:16:32.937261Z
 ---
 # Feature Specification: Compose the Scheduled Jobs Executor Runtime into the Live Runtime
@@ -200,14 +200,20 @@ Priority uses P1 (must have), P2 (should have), and P3 (could have).
 4. **Implement the `TaskProcessCoordinator` over the real seams (FR4).** The
    `TaskProcessCoordinator` seam
    (`packages/opencode/src/jobs/trigger-service.ts:122-131`) MUST be implemented
-   over the real Feature 002 execution machinery — `admit` runs the Feature 002
-   admission + Feature 001 routing hard gates and reports a denial honestly (never a
-   fake `admitted`); `createProcess` creates/associates the canonical Feature 002
-   Task Process with `owner_kind: "scheduled-job"` through `TaskTool`
-   (`packages/opencode/src/tool/task.ts`) / `SessionExecution`; `provisionTodo` and
-   `provisionOutputGroup` provision the occurrence-owned Feature 002 Todo and Feature
-   005 OutputGroup before goal-bearing work. It MUST NOT introduce a second executor
-   or lifecycle (Feature 003 C16).
+   over the real Feature 002 execution machinery — `admit` runs a REAL Feature 002
+   `AdmissionController` token-bucket gate (session scope) and reports a denial
+   honestly (never a fake `admitted`); `createProcess` creates/associates the
+   canonical Feature 002 Task Process with `owner_kind: "scheduled-job"` through
+   `TaskTool` (`packages/opencode/src/tool/task.ts`) / `SessionExecution`;
+   `provisionTodo` and `provisionOutputGroup` provision the occurrence-owned Feature
+   002 Todo and Feature 005 OutputGroup before goal-bearing work. It MUST NOT
+   introduce a second executor or lifecycle (Feature 003 C16). **Admission scope
+   (honest reach):** the eager executor arms independent of the operator stack, so it
+   owns a real `AdmissionController` for the scheduled path rather than the
+   lifecycle-wiring instance (no process-singleton exists to share, and the admission
+   module is outside this feature's guard scope); the shared/global admission budget
+   and the Feature 001 routing gate (which needs a routing-decision context a headless
+   scheduled trigger does not carry) stay documented boundaries.
 5. **Run to terminal, output through the shared writer (FR5).** The admitted
    occurrence MUST run headless through the Feature 002 `SessionExecution` seam and
    emit the terminal occurrence events; its output MUST be captured through the SAME
@@ -221,7 +227,10 @@ Priority uses P1 (must have), P2 (should have), and P3 (could have).
    silently auto-approved. Where a headless session genuinely cannot satisfy a
    capability (e.g. an interactive permission prompt with no operator present), the
    occurrence degrades to a typed, honest terminal outcome — never a fabricated
-   success.
+   success. **No session leak:** the coordinator consults a headless-capability probe
+   BEFORE `createProcess`, so an incapable occurrence persists NO Feature 002 session
+   (a per-minute cron never grows dead scheduled-job sessions); the persisted session
+   is created only once the run is known to be able to do goal-bearing work.
 
 ### Group 3 — Run-now conversion (G3)
 
@@ -494,6 +503,11 @@ page body, definition secret, or config payload is exported. Conventions live in
   path, parallel registry, or divergent command name.
 - A new feature flag, a distributed/multi-node scheduler, or a non-loopback executor
   control surface.
+- Cross-process / multi-node occurrence deduplication and concurrency bounding — the
+  occurrence idempotency registry and the scheduled-path admission gate are
+  process-local in-memory state, honest only within a single process (a restart
+  re-registers enabled definitions via the reconcile sweep without claiming past
+  execution). This matches the "no distributed/multi-node scheduler" boundary above.
 - App/Desktop parity (Feature 007 Phase 2), multi-user directory, vault backends, or
   a non-loopback operator API.
 
