@@ -21,6 +21,9 @@ ts-dist
 refs
 Session.vim
 /opencode.json
+# Runtime operator config written to the project root — carries secrets
+# (provider/MCP API keys), never commit. Mirrors packages/opencode/.gitignore.
+/config.json
 a.out
 target
 .scripts
