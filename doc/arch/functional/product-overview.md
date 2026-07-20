@@ -175,6 +175,26 @@ Acceptance criteria live as prioritized scenarios in each feature `spec.md`.
   recorded, plus operator_read → { projected | typed_gap }, honoring the Feature
   005 producer ownership and content-free events — the Feature 007 parity
   invariant is preserved).
+- **Scheduled jobs executor composition** — the Feature 018 composition of the
+  shipped-but-idle Feature 002/003 scheduled executor into the live runtime:
+  the scheduler engine + Bun cron adapter + trigger service are armed eagerly and
+  fail-open at server start (mirroring the Feature 017 spool-writer eager seam),
+  the `TaskProcessCoordinator` is implemented over the real
+  `TaskTool`/`SessionExecution`/`SessionRunCoordinator` seams, `jobs.run-now`
+  converts to an effectful mutation plan that enqueues an immediate occurrence,
+  the executor emits definition-keyed occurrence events so
+  `jobs.history`/`show-occurrences`/`watch` reflect real executions, and the live
+  `SessionRunCoordinator` is exposed through a narrow interrupt registry so the
+  second-press forced abort actually interrupts (the first-press cancel is
+  unchanged). The composition lifecycle — arm (fail-open) → { armed | disarmed },
+  due occurrence → claim (bounded overlap/misfire) → admit → provision → run
+  (headless, same permission surface, shared spool writer) → terminal →
+  definition-keyed events, plus the run-now immediate path and the interrupt edge
+  { interrupted | unconfirmed } — is modeled in
+  [job-executor-composition statechart](../statecharts/job-executor-composition.md),
+  honoring bounded concurrency, no privilege bypass, and the single
+  `mutateAuthority` CAS commit — the Feature 007 parity invariant is preserved and
+  no catalog id or version is added.
 
 ## Phase 2 deferred (explicit)
 
