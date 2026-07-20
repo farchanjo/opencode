@@ -56,6 +56,13 @@ export type DispatchOptions = {
   /** T046 content-free OTEL recorder (once per dispatch). */
   readonly otel?: OperatorSpanRecorder
   readonly surface?: string
+  /**
+   * Feature 019 / T016 — a generic post-commit hook fired after a mutation commits
+   * successfully (`result.ok`). The composition root uses it to poke the pull-based
+   * telemetry export re-arm on a `telemetry.*` commit (no push invalidation seam
+   * exists). Best-effort and fail-open: a throw here never affects the dispatch.
+   */
+  readonly onCommitted?: (descriptor: OperatorCommandDescriptor, result: CommandResult) => void
 }
 
 export type DispatchRequestOptions = {
@@ -294,6 +301,14 @@ export function createDispatcher(options: DispatchOptions): Dispatcher {
       }
       // mutateAuthority already audits on success path via events; ensure envelope
       assertAdminResultShape(result)
+      // Feature 019 / T016 — pull-based telemetry re-arm poke after a successful commit.
+      if (result.ok && options.onCommitted) {
+        try {
+          options.onCommitted(descriptor, result)
+        } catch {
+          /* the post-commit poke is best-effort and never affects the dispatch */
+        }
+      }
       try {
         probe.assertClean()
       } catch (error) {

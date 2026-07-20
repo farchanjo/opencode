@@ -43,6 +43,7 @@ import { createFsDecisionStorePort } from "@/routing/adapters/outbound/decision-
 import { createTaskAnalyzer } from "@/routing/application/task-analyzer"
 import { createOtlpAdapter, createRoutingDecisionTelemetry } from "@/routing/adapters/outbound/otlp-adapter"
 import { resolveEffectiveTelemetryConfig } from "@/routing/application/telemetry-service"
+import { TelemetryExport } from "@/routing/telemetry-export"
 import { createLiveOperatorOtelRecorder } from "./adapters/outbound/otel-live"
 import { LifecycleStackWiring } from "./lifecycle/stack-wiring"
 import { JobsStackWiring } from "./jobs/stack-wiring"
@@ -812,6 +813,14 @@ export async function createLiveOperatorStack(input: CreateLiveOperatorStackInpu
     connectivity: () => resolveConnectivityLive(),
     otel,
     surface: "live",
+    // Feature 019 / T016 — pull-based telemetry export reactivity. Every committed
+    // operator mutation bumps the content-free mutation counter; a `telemetry.*`
+    // commit re-resolves the effective config and re-arms/stops the export pipeline
+    // (enabling arms a real transport, disabling goes silent). Fail-open.
+    onCommitted: (descriptor) => {
+      TelemetryExport.recordOperatorMutation()
+      if (descriptor.domain === "telemetry") void TelemetryExport.rearmTelemetryExport().catch(() => {})
+    },
   })
 
   // Feature 017 fix-round (ADR-0017): the preflight authority resolver, sourced from the SAME

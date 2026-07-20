@@ -131,6 +131,19 @@ export async function listen(opts: ListenOptions): Promise<Listener> {
     // Executor-composition bootstrap must never break server startup.
   }
 
+  // Feature 019 (ADR-0019): arm the real OTLP telemetry export pipeline eagerly at
+  // server start — a process-singleton mirroring the Feature 017/018 eager seams. When
+  // the effective telemetry config has enabled=true it binds a real transport and a
+  // bounded periodic flush; disabled leaves it disarmed (no fiber, no network). Fire-
+  // and-forget + fail-open (FR11): the config resolve is async and any fault degrades
+  // the pipeline to disarmed — it never blocks or breaks server startup.
+  try {
+    const { TelemetryExport } = await import("@/routing/telemetry-export")
+    void TelemetryExport.ensureTelemetryExport().catch(() => {})
+  } catch {
+    // Telemetry export bootstrap must never break server startup.
+  }
+
   const { tryCreateOperatorHttpFetch } = await import("@/operator/http/mount")
   const { setOperatorRequestIpResolver, resolveOperatorClientIp } = await import("@/operator/http/client-ip")
   const mount = tryCreateOperatorHttpFetch({
