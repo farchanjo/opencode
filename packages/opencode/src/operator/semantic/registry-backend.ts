@@ -33,8 +33,12 @@ import type { OperatorMutationEffectResult, OperatorMutationPlan } from "@/opera
 import type {
   AddProviderInput,
   BindingError,
+  CapabilityKind,
   CollectionKind,
+  EndpointMode,
   MetricKind,
+  ModelSource,
+  ProbeState,
   BindingHistoryInput,
   BindingHistoryOutput,
   BindingSlot,
@@ -93,6 +97,13 @@ const RegistryModel = Schema.Struct({
   providerProfileId: Schema.String,
   version: Schema.Number,
   displayName: Schema.String,
+  /**
+   * Feature 026 (FR2) — the provider-facing model name a rerank/embedding call sends
+   * (`RegisterModelInput.modelRef`). Optional so a pre-026 record round-trips losslessly
+   * (absent → falls back to the descriptor id); it feeds the flat descriptor projection and
+   * the reranker validation probe's model argument.
+   */
+  modelRef: Schema.optional(Schema.String),
   endpointMode: Schema.String,
   declaredCapabilityKinds: Schema.Array(Schema.String),
   enabled: Schema.Boolean,
@@ -265,6 +276,18 @@ export interface RerankValidationProbe {
     readonly baseUrl: string
     readonly profile: RerankProfile
     readonly modelDescriptorId: string
+    /**
+     * Feature 026 (FR2) — the provider-facing model name the rerank call sends (the registered
+     * `modelRef`, falling back to the descriptor id). Kept distinct from `modelDescriptorId` (the
+     * registry's internal id) so the probe addresses the real provider model.
+     */
+    readonly modelRef: string
+    /**
+     * Feature 026 (FR2) — the provider's bounded `SecretRef` COORDINATE string (never plaintext).
+     * The composed probe resolves it to an Authorization header internally (redaction intact); it
+     * is never logged, echoed, or returned. Empty when the provider carries no secret.
+     */
+    readonly secretRef: string
   }) => Promise<{ readonly passed: boolean }>
 }
 
@@ -365,16 +388,29 @@ function toProfile(p: RegistryProvider): SemanticProviderProfile {
   } as unknown as SemanticProviderProfile
 }
 
-/** Project a persisted model onto the operator-facing descriptor. */
+/**
+ * Project a persisted model onto the FLAT operator-facing descriptor (Feature 026 FR3).
+ * The protocol `SemanticModelDescriptor` (packages/protocol/src/semantic/commands.ts) and the
+ * TUI `isModelDescriptor` guard require a FLAT `{ displayName, capabilityKinds, probeState,
+ * enabled, ... }` shape — the prior nested `{ identity.display_name, capability.kinds,
+ * validation.status }` cast projected a shape the guard rejected as `shape_mismatch`, so the
+ * panel rendered "no model descriptors". This emits the flat protocol shape directly (no
+ * `as unknown` shape cast; only closed-enum string narrowings), so the panel renders every
+ * registered model and the reranker selector can find its validated candidates.
+ */
 function toDescriptor(m: RegistryModel): SemanticModelDescriptor {
   return {
     id: m.id,
-    provider_ref: m.providerProfileId,
-    identity: { display_name: m.displayName, source: "manual", endpoint_mode: m.endpointMode, rerank_profile: null },
-    capability: { kinds: m.declaredCapabilityKinds, dimension: null, metric: null, normalized: null, limits: { batch_size: null, vector_count: null, token_limit: null } },
-    validation: { status: m.validationStatus, provenance: "operator", validated_at: null, eval_version: null },
+    providerProfileId: m.providerProfileId,
+    modelRef: m.modelRef ?? m.id,
+    displayName: m.displayName,
+    source: "manual" as ModelSource,
+    capabilityKinds: m.declaredCapabilityKinds as readonly CapabilityKind[],
+    endpointMode: m.endpointMode as EndpointMode,
+    languageSupport: [],
+    probeState: m.validationStatus as ProbeState,
     enabled: m.enabled,
-  } as unknown as SemanticModelDescriptor
+  }
 }
 
 /** Project a persisted binding onto the operator-facing binding view. */
@@ -628,6 +664,7 @@ export function createConfigBackedRegistry(deps: ConfigBackedRegistryDeps): Sema
           providerProfileId: input.providerProfileId,
           version: 1,
           displayName: input.displayName,
+          modelRef: input.modelRef,
           endpointMode: input.endpointMode,
           declaredCapabilityKinds: input.declaredCapabilityKinds.map(String),
           enabled: true,
@@ -920,12 +957,27 @@ export function createConfigBackedRegistry(deps: ConfigBackedRegistryDeps): Sema
     })
   }
 
-  /** Promote the staged candidate for a slot to `{ state: "staged", validated: true }` (the ONLY validated writer). */
+  /**
+   * Promote the staged candidate for a slot to `{ state: "staged", validated: true }` (the ONLY
+   * validated writer) AND promote its underlying model descriptor's `validationStatus` to
+   * `"validated"` (Feature 026 FR4). The provider probe that validated the staged binding candidate
+   * is exactly the probe that validated the model's declared capability, so the model descriptor
+   * the `semantic.model.list` reader projects (and the TUI reranker selector filters on
+   * `probeState === "validated"`) becomes an eligible candidate through this same config-backed
+   * `reranker.validate` transition — no separate `model.validate` mutation is required (its catalog
+   * entry stays `mutates: false`). Nothing is fabricated: the model is marked validated only on the
+   * SAME passing probe that promotes the binding.
+   */
   function markValidated(d: RegistryDocument, slot: Slot): RegistryDocument {
     const staged = stagedOf(d, slot)
     if (staged === null) return d // defensive — the plan gate already required a staged candidate
     const validated: RegistryBinding = { ...staged, state: "staged", validated: true }
-    return slot === "reranker" ? { ...d, rerankerStaged: validated } : { ...d, embeddingStaged: validated }
+    const models = d.models.map((m) =>
+      m.id === staged.modelDescriptorId ? { ...m, validationStatus: "validated" } : m,
+    )
+    return slot === "reranker"
+      ? { ...d, rerankerStaged: validated, models }
+      : { ...d, embeddingStaged: validated, models }
   }
 
   /** The staged candidate's registered+enabled model, or a typed `not_validated` (untrusted declaration, C16). */
@@ -973,11 +1025,12 @@ export function createConfigBackedRegistry(deps: ConfigBackedRegistryDeps): Sema
       }
       const profile = staged.compatibilityMode as RerankProfile
       const baseUrl = provider.baseUrl
+      const modelRef = model.modelRef ?? model.id
       const plan: OperatorMutationPlan = {
         authority: AUTHORITY,
         effect: async (): Promise<OperatorMutationEffectResult> => {
           try {
-            const result = await probe.run({ baseUrl, profile, modelDescriptorId: staged.modelDescriptorId })
+            const result = await probe.run({ baseUrl, profile, modelDescriptorId: staged.modelDescriptorId, modelRef, secretRef: ref })
             if (!result.passed) return { ok: false, code: "invalid_argument", message: "validation_failed" }
             return { ok: true }
           } catch {

@@ -174,6 +174,14 @@ export const OPERATOR_PERSISTING_VERBS = [
   // (handled by `CONDITIONAL_PERSISTING_VERBS`, which stay honest gaps until configured).
   "semantic.reranker.cutover",
   "semantic.reranker.rollback",
+  // Feature 026 (FR1) — the reranker validation transition is config-backed with NO Milvus
+  // dependency: it runs the provider rerank probe and promotes the staged candidate to
+  // `validated` through the same `store.config` `semantic` authority the cutover/rollback use
+  // (same class as `reranker.cutover`/`reranker.rollback` above), so it is UNCONDITIONALLY
+  // composed in the live stack and flips to the composed truth here. Unlike
+  // `semantic.embedding.validate` (Milvus reindex-first) and the other Milvus-conditional verbs
+  // (handled by `CONDITIONAL_PERSISTING_VERBS`), it needs no configured Milvus endpoint.
+  "semantic.reranker.validate",
   // output config-backed policy (T007)
   "output.retention.set",
   "output.quota.set",

@@ -63,6 +63,7 @@ import { ExecutorReconcile } from "@/jobs/executor-reconcile"
 import { createOperatorAuthorityResolver } from "./application/command-authority"
 import { SemanticStackWiring } from "./semantic/stack-wiring"
 import { SemanticBackendLive } from "./semantic/backend-live"
+import { RerankProbe } from "./semantic/rerank-probe"
 import type { MilvusBinding } from "./semantic/milvus-binding"
 import { MilvusAdapter } from "@/semantic/milvus-adapter"
 import { McpStackWiring } from "./mcp/stack-wiring"
@@ -252,14 +253,21 @@ export async function createLiveOperatorStack(input: CreateLiveOperatorStackInpu
     sandbox: sandboxKeychain,
     // Live may load real FFI; tests inject stack with sandboxKeychain=true
   })
+  // Feature 026 (FR2) — expose the internal-material path on the keychain part so the reranker
+  // validation probe (below) can resolve a provider's SecretRef to an Authorization header for a
+  // real provider call. Redaction is intact: the public `resolveMaterial` still returns
+  // `__redacted__`, and the internal material is only ever handed to the probe transport, never
+  // crossing the CommandResult/audit/config seam.
+  const keychainSecrets = createKeychainSecretPort({
+    backend: keychainBackend,
+    sandbox: sandboxKeychain,
+    // Production: durable metadata under same Config+Flock document
+    config: store.config,
+    projectKey: input.projectKey ?? "project",
+    exposeInternalMaterial: true,
+  }) as SecretPort & { readonly resolveSecretMaterial?: (ref: { backend: "keychain" | "env-ref"; name: string; version: number }) => Promise<string | null> }
   const secrets = createCompositeSecretPort({
-    keychain: createKeychainSecretPort({
-      backend: keychainBackend,
-      sandbox: sandboxKeychain,
-      // Production: durable metadata under same Config+Flock document
-      config: store.config,
-      projectKey: input.projectKey ?? "project",
-    }),
+    keychain: keychainSecrets,
     envRef: createEnvRefSecretPort(),
   })
 
@@ -529,10 +537,30 @@ export async function createLiveOperatorStack(input: CreateLiveOperatorStackInpu
   // Feature 019 (FR3, FR32) — `semantic.embedding.validate`/`reranker.validate` now route through the
   // config-backed registry as PERSISTED transitions that promote a staged candidate to `validated`
   // (the only producer of a validated candidate a cutover may activate). Embedding validate is
-  // Milvus-conditional (reindex-first). Reranker validate needs a live provider rerank probe; that
-  // probe is NOT composed from the operator runtime in this wave (the provider stack is unbound, the
-  // same honest boundary as `provider.test`), so `rerankProbe` is left unset and reranker validate
-  // returns the honest typed gap — never a fabricated `validated`.
+  // Milvus-conditional (reindex-first).
+  // Feature 026 (FR2) — the reranker validation probe is now COMPOSED (no Milvus): it drives the
+  // Feature 006 rerank client (`/v1/rerank` profile A / structured-chat profile B) against the
+  // staged candidate's provider endpoint, with the Authorization header resolved from the
+  // provider's SecretRef through the keychain internal-material path (redaction intact — the secret
+  // is never logged or returned). A required-but-unresolvable secret, an unreachable endpoint, or a
+  // non-passing probe fails HONESTLY (`validation_failed` / nothing committed), never a fabricated
+  // `validated`.
+  const rerankProbe = RerankProbe.createRerankValidationProbe({
+    http: RerankProbe.createFetchRerankHttpClient(),
+    resolveAuthHeader: async (secretRef) => {
+      const colon = secretRef.indexOf(":")
+      if (colon <= 0) return null
+      const backend = secretRef.slice(0, colon)
+      if (backend !== "keychain" && backend !== "env-ref") return null
+      const rest = secretRef.slice(colon + 1)
+      const at = rest.lastIndexOf("@v")
+      const name = at >= 0 ? rest.slice(0, at) : rest
+      const version = at >= 0 ? Number(rest.slice(at + 2)) : 1
+      if (name.length === 0 || !Number.isInteger(version) || version < 1) return null
+      const material = await keychainSecrets.resolveSecretMaterial?.({ backend, name, version })
+      return material ? `Bearer ${material}` : null
+    },
+  })
   const milvusAddress = process.env["OPENCODE_SEMANTIC_MILVUS_ADDRESS"]?.trim()
   const insecureMilvus = process.env["OPENCODE_SEMANTIC_MILVUS_INSECURE"] === "1"
   const milvusPort =
@@ -567,7 +595,7 @@ export async function createLiveOperatorStack(input: CreateLiveOperatorStackInpu
           },
         }
       : undefined
-  const semanticBackend = SemanticBackendLive.createLiveSemanticBackend({ config: store.config, milvus, milvusPort })
+  const semanticBackend = SemanticBackendLive.createLiveSemanticBackend({ config: store.config, milvus, milvusPort, rerankProbe })
   const semanticWiring = SemanticStackWiring.createSemanticDomainWiring({ backend: semanticBackend })
 
   // === Feature 008 / 014 T008 — mcp domain port composition =================
