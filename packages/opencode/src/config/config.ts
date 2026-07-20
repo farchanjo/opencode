@@ -127,7 +127,7 @@ export interface Interface {
   readonly get: () => Effect.Effect<Info>
   readonly getGlobal: () => Effect.Effect<Info>
   readonly getConsoleState: () => Effect.Effect<ConsoleState>
-  readonly update: (config: Info) => Effect.Effect<void>
+  readonly update: (config: Info, options?: { readonly replace?: boolean }) => Effect.Effect<void>
   readonly updateGlobal: (config: Info) => Effect.Effect<{ info: Info; changed: boolean }>
   readonly invalidate: () => Effect.Effect<void>
   readonly directories: () => Effect.Effect<string[]>
@@ -786,15 +786,21 @@ const layer = Layer.effect(
       )
     })
 
-    const update = Effect.fn("Config.update")(function* (config: Info) {
+    const update = Effect.fn("Config.update")(function* (config: Info, options?: { readonly replace?: boolean }) {
       const dir = yield* InstanceState.directory
       // Feature 027: persist per-project config to the profile store, out of the working
       // tree. writeWithDirs creates the `profiles/<key>/` folder recursively before writing.
       const file = ProjectProfile.projectOperatorConfigPath(dir)
-      const existing = yield* loadFile(file)
-      yield* fs
-        .writeWithDirs(file, JSON.stringify(mergeDeep(writable(existing), writable(config)), null, 2))
-        .pipe(Effect.orDie)
+      // Feature 032 follow-up: the profile file is 100% operator-owned (Features 027/030 —
+      // users author `opencode.json` in the project tree, never this file), so an operator
+      // write may REPLACE it wholesale instead of deep-merging onto whatever is already on
+      // disk. This self-heals a profile file left over from the pre-Feature-032 write path
+      // (which used to copy the whole layered/effective config, base secrets included) on the
+      // very next operator mutation. Every OTHER caller of `Config.update` (the HTTP config
+      // route, `flag-bootstrap`) relies on the default deep-merge and must keep it — `replace`
+      // is opt-in, used only by the operator project-profile write (see config-service.ts).
+      const next = options?.replace ? writable(config) : mergeDeep(writable(yield* loadFile(file)), writable(config))
+      yield* fs.writeWithDirs(file, JSON.stringify(next, null, 2)).pipe(Effect.orDie)
       // Feature 014 (FR3): a committed operator CAS mutation writes the profile config;
       // invalidate this directory's cached instance config so an immediate in-process
       // re-read reflects the new operator namespace instead of the stale cached

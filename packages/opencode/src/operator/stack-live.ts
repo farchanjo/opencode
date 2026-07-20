@@ -169,7 +169,7 @@ export async function createLiveOperatorStack(input: CreateLiveOperatorStackInpu
           return yield* fn({
             get: () => svc.get() as Effect.Effect<Record<string, unknown>>,
             getGlobal: () => svc.getGlobal() as Effect.Effect<Record<string, unknown>>,
-            update: (patch) => svc.update(patch as never),
+            update: (patch, options) => svc.update(patch as never, options),
             updateGlobal: (patch) => svc.updateGlobal(patch as never),
           })
         }).pipe(Effect.provideService(InstanceRef, instance)),

@@ -16,8 +16,13 @@ import { selectSnapshotsToPrune, SNAPSHOT_MAX_COUNT, snapshotMaxAgeMs } from "@o
 export type ConfigServiceLike = {
   readonly get: () => Promise<Record<string, unknown>>
   readonly getGlobal: () => Promise<Record<string, unknown>>
-  /** Merge top-level keys into document (must preserve siblings). */
-  readonly update: (config: Record<string, unknown>) => Promise<void>
+  /**
+   * Merge top-level keys into document (must preserve siblings) by default. Pass
+   * `{ replace: true }` to write `config` wholesale instead — used only for the
+   * operator project-profile write, whose target file is 100% operator-owned (see
+   * `mergeOperator` below).
+   */
+  readonly update: (config: Record<string, unknown>, options?: { readonly replace?: boolean }) => Promise<void>
   readonly updateGlobal: (config: Record<string, unknown>) => Promise<{ changed: boolean }>
 }
 
@@ -103,6 +108,13 @@ type OperatorState = {
 
 const DEFAULT_IDEMPOTENCY_TTL_MS = 30 * 86_400_000
 
+/**
+ * Feature 032: the persisted operator patch is a self-describing config document. The
+ * namespaced write carries `$schema` so a fresh per-project profile `config.json` is a
+ * valid opencode config file, never a bare `{ operator }` fragment.
+ */
+const OPENCODE_CONFIG_SCHEMA = "https://opencode.ai/config.json"
+
 function emptyState(): OperatorState {
   return { authorities: {}, idempotency: {}, rollback: {}, auditOutbox: [] }
 }
@@ -175,21 +187,47 @@ export function createDurableOperatorStore(options: ConfigServiceAdapterOptions)
   }
 
   /**
-   * Write operator namespace only, preserving all sibling top-level keys.
+   * Persist ONLY the operator namespace this store owns (Feature 032).
+   *
+   * `readRoot` returns the FULL effective config. Post-Feature-030 that is a LAYERED
+   * document: the inherited base (`~/.config/opencode`) merged under the profile, so it
+   * carries third-party `mcp`/`provider` entries with plaintext API keys plus other
+   * base-owned keys (`agent`, `command`, `mode`, `tools`, `permission`, `username`, ...).
+   * Spreading that whole root into the write copied those base-inherited keys — secrets
+   * included — verbatim into the per-project profile `config.json` (and, on the global
+   * path, into the profile's own global `config.json`). The write seams merge this patch
+   * into the target file, so a namespaced patch preserves any pre-existing project-owned
+   * keys while writing only what the file legitimately owns. The base is still inherited
+   * and merged at read time (Feature 030) — the file just stops DUPLICATING it.
+   *
    * Re-reads under lock so concurrent non-operator updates are not clobbered.
+   *
+   * Feature 032 follow-up (adversarial review, MEDIUM residual): narrowing the patch to
+   * `{$schema, [ns]}` stops NEW leaks, but a deep-merge write never REMOVES keys, so a
+   * profile file already leaked by the pre-fix code (stale base `mcp`/`provider` secrets
+   * sitting alongside the operator namespace) stayed leaked forever. The per-project
+   * profile file is 100% operator-owned (Features 027/030 — users author `opencode.json`
+   * in the project tree, never this file), so its write can go further than the global
+   * write: REPLACE the file wholesale with `{$schema, [ns]: state}` instead of
+   * deep-merging. `state` already reflects the full current operator document (loaded via
+   * `readRoot` above, then mutated), so nothing operator-owned is lost — only whatever
+   * stale non-operator keys were sitting in the file get dropped, self-healing a leaked
+   * file on its very next mutation. The GLOBAL write keeps deep-merging: the global config
+   * file legitimately has user-authored siblings (`mcp`/`provider`/`model`, ...) that must
+   * survive an operator write.
    */
   async function mergeOperator(authority: string, mutate: (state: OperatorState) => void): Promise<void> {
     const root = await readRoot(authority)
     const state = asState(root[ns])
     mutate(state)
-    const nextRoot = { ...root, [ns]: state }
-    if (options.beforeWrite) await options.beforeWrite(nextRoot)
+    const patch = { $schema: OPENCODE_CONFIG_SCHEMA, [ns]: state }
+    if (options.beforeWrite) await options.beforeWrite(patch)
     if (isGlobalAuthority(authority)) {
-      await options.config.updateGlobal(nextRoot)
+      await options.config.updateGlobal(patch)
     } else {
-      await options.config.update(nextRoot)
+      await options.config.update(patch, { replace: true })
     }
-    if (options.afterWrite) await options.afterWrite(nextRoot)
+    if (options.afterWrite) await options.afterWrite(patch)
   }
 
   async function loadState(authority: string): Promise<OperatorState> {
@@ -667,8 +705,8 @@ export function createFakeConfigService(): ConfigServiceLike & {
     async getGlobal() {
       return clone(global)
     },
-    async update(config) {
-      project = { ...project, ...clone(config) }
+    async update(config, options) {
+      project = options?.replace ? clone(config) : { ...project, ...clone(config) }
     },
     async updateGlobal(config) {
       const before = JSON.stringify(global)
@@ -705,9 +743,9 @@ export function createFileConfigService(filePath: string): ConfigServiceLike {
     async getGlobal() {
       return read()
     },
-    async update(config) {
-      const cur = await read()
-      await write({ ...cur, ...config })
+    async update(config, options) {
+      const next = options?.replace ? config : { ...(await read()), ...config }
+      await write(next)
     },
     async updateGlobal(config) {
       const cur = await read()

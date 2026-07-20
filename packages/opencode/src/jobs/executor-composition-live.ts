@@ -357,7 +357,7 @@ function loadLiveJobsPersistence(): Promise<OperatorJobPersistence.OperatorJobPe
               return yield* fn({
                 get: () => svc.get() as ReturnType<Parameters<typeof fn>[0]["get"]>,
                 getGlobal: () => svc.getGlobal() as ReturnType<Parameters<typeof fn>[0]["getGlobal"]>,
-                update: (patch) => svc.update(patch as never),
+                update: (patch, options) => svc.update(patch as never, options),
                 updateGlobal: (patch) => svc.updateGlobal(patch as never),
               })
             }),
