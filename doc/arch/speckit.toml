@@ -583,6 +583,19 @@ specScopeGlobs = [
   # Genuinely new path — the shared enforcement-leaf registry (protocol), the single
   #   source of truth both operator surfaces consume so they never drift (FR4):
   "packages/protocol/src/enforcement/**",
+
+  # Feature 047 — Emit real OpenTelemetry spans + metrics for routing decisions,
+  #   budget consumption, fan-out admission, and orchestration outcomes over the
+  #   shipped process-singleton OTLP export pipeline. Most seams are ALREADY in
+  #   scope and are NOT re-added (traceability only):
+  #   packages/opencode/src/routing/** (Feature 001) — telemetry-export.ts domain-signal
+  #     offer + the new application/telemetry-emitters.ts pure mappers;
+  #   packages/opencode/src/session/** (Feature 017) — routing-resolve.ts / processor.ts /
+  #     routing-hierarchy.ts emission wiring;
+  #   packages/opencode/src/tool/task.ts (Feature 001 block) — the orchestration-outcome seam;
+  #   packages/opencode/test/telemetry/** + test/session/** (Feature 001/017) — the emitter tests.
+  # Genuinely new path — the pure attribute-mapping emitters module (listed for exactness):
+  "packages/opencode/src/routing/application/telemetry-emitters.ts",
 ]
 
 # Waivers for intentional near-empty files (warnings only; errors are never

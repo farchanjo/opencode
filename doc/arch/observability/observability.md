@@ -69,6 +69,24 @@ above it), so keep it accurate.
 | error_code | unauthorized, forbidden_scope, conflict, idempotent_replay, invalid_argument, reserved_name, confirmation_required, unavailable, secret_backend, transport_error, not_implemented | operator error metrics          |
 | retry      | true, false                                                                                                                                                                       | operator dispatch               |
 | http_route | closed operator loopback routes (GET /operator/v1/health, GET /operator/v1/registry, POST /operator/v1/commands)                                                                  | operator API metrics            |
+| routing.task_class | small, medium, large, complex | routing.decision |
+| routing.routing_profile | direct_worker, manager | routing.decision |
+| routing.hierarchy_role | architect, manager, worker | routing.decision |
+| routing.scope | session, project, global, root-tree | routing.decision, budget.consumption |
+| routing.offline | true, false | routing.decision |
+| routing.decision_model_called | true, false | routing.decision |
+| budget.scope | session, project | budget.consumption |
+| budget.outcome | ok, blocked, error, escalation | budget.breach |
+| budget.dimension | max_turns, max_context_tokens, max_output_tokens, token_budget, cost_usd, time_ms, unspecified | budget.breach |
+| hierarchy.parent_role | architect, manager, worker | hierarchy.fanout |
+| hierarchy.child_role | architect, manager, worker | hierarchy.fanout |
+| hierarchy.admitted | true, false | hierarchy.fanout |
+| hierarchy.denied_reason | illegal_transition, depth_exceeded, parent_not_orchestrator, admission_denied, model_unresolved, unspecified | hierarchy.fanout |
+| orchestration.worker_lifecycle | pending, done, failed, aborted | orchestration.worker |
+| orchestration.delivery | foreground, background | orchestration.worker |
+| orchestration.validation | accepted, rejected, none | orchestration.worker |
+| orchestration.fail_action | reject, reject_redispatch, surface_blocked | orchestration.worker |
+| orchestration.pending_workers | bounded worker count 0..max_workers | orchestration.gate |
 
 ## OTLP Conventions
 
