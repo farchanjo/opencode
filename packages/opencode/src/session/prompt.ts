@@ -9,6 +9,8 @@ import { SessionRevert } from "./revert"
 import { Session } from "./session"
 import { Agent } from "../agent/agent"
 import { Provider } from "@/provider/provider"
+import { Auth } from "@/auth"
+import { RoutingResolve } from "./routing-resolve"
 
 import { type Tool as AITool, tool, jsonSchema } from "ai"
 import type { JSONSchema7 } from "@ai-sdk/provider"
@@ -93,6 +95,15 @@ function formatMcpResourceBytes(value: number) {
   return `${Math.ceil(value / (1024 * 1024))} MB`
 }
 
+/** Concatenate the text of a prompt's text parts — the routing task description. */
+function taskTextFromParts(parts: PromptInput["parts"]): string {
+  return parts
+    .filter((part): part is Extract<PromptInput["parts"][number], { type: "text" }> => part.type === "text")
+    .map((part) => part.text)
+    .join("\n")
+    .trim()
+}
+
 function isOrphanedInterruptedTool(part: SessionV1.ToolPart) {
   // cleanup() marks abandoned tool_use blocks this way after retries/aborts.
   // They are not pending work and must not trigger an assistant-prefill request.
@@ -117,6 +128,7 @@ const layer = Layer.effect(
     const sessions = yield* Session.Service
     const agents = yield* Agent.Service
     const provider = yield* Provider.Service
+    const auth = yield* Auth.Service
     const processor = yield* SessionProcessor.Service
     const compaction = yield* SessionCompaction.Service
     const plugin = yield* Plugin.Service
@@ -141,6 +153,19 @@ const layer = Layer.effect(
     const flags = yield* RuntimeFlags.Service
     const database = yield* Database.Service
     const { db } = database
+
+    // Feature 037 / Phase 1 — session-local Smart Routing resolver. Consulted ONLY
+    // in the implicit-default model branch below (an explicit `--model` and an
+    // agent-pinned model always win); returns `undefined` — leaving the static
+    // `currentModel()` path byte-identical — unless Smart Routing is explicitly
+    // enabled in `auto` mode with a populated role pool. It can never crash or
+    // block the prompt path (see routing-resolve.ts).
+    const resolveRoutingModel = RoutingResolve.createRoutingResolver({
+      config: { get: () => config.get(), getGlobal: () => config.getGlobal() },
+      provider: { list: () => provider.list() },
+      agents: { listSpecialists: () => agents.listSpecialists() },
+      auth: { get: (providerID) => auth.get(providerID) },
+    })
     const ops = Effect.fn("SessionPrompt.ops")(function* () {
       return {
         cancel: (sessionID: SessionID) => cancel(sessionID),
@@ -466,7 +491,19 @@ const layer = Layer.effect(
               yield* events.publish(Session.Event.Error, { sessionID: input.sessionID, error: error.toObject() })
               throw error
             }
-            const model = input.model ?? agent.model ?? (yield* currentModel(input.sessionID))
+            // Feature 037 / Phase 1 — implicit-default model selection (shell
+            // path mirror). Explicit `--model` and an agent-pinned model always
+            // win; routing is consulted only for the implicit default.
+            const routed =
+              input.model || agent.model
+                ? undefined
+                : yield* resolveRoutingModel({
+                    sessionID: input.sessionID,
+                    turnID: input.messageID ?? input.sessionID,
+                    taskText: input.command,
+                    scope: "session",
+                  })
+            const model = input.model ?? agent.model ?? routed ?? (yield* currentModel(input.sessionID))
             const userMsg: SessionV1.User = {
               id: input.messageID ?? MessageID.ascending(),
               sessionID: input.sessionID,
@@ -643,7 +680,20 @@ const layer = Layer.effect(
         throw error
       }
 
-      const model = input.model ?? ag.model ?? (yield* currentModel(input.sessionID))
+      // Feature 037 / Phase 1 — implicit-default model selection. Explicit
+      // `--model` and an agent-pinned model always win, so routing is consulted
+      // ONLY when neither is set; a `undefined` result leaves the static
+      // `currentModel()` path unchanged.
+      const routed =
+        input.model || ag.model
+          ? undefined
+          : yield* resolveRoutingModel({
+              sessionID: input.sessionID,
+              turnID: input.messageID ?? input.sessionID,
+              taskText: taskTextFromParts(input.parts),
+              scope: "session",
+            })
+      const model = input.model ?? ag.model ?? routed ?? (yield* currentModel(input.sessionID))
       const same = ag.model && model.providerID === ag.model.providerID && model.modelID === ag.model.modelID
       const full =
         !input.variant && ag.variant && same
@@ -1603,6 +1653,7 @@ export const node = LayerNode.make({
     Session.node,
     Agent.node,
     Provider.node,
+    Auth.node,
     SessionProcessor.node,
     SessionCompaction.node,
     Plugin.node,
