@@ -55,6 +55,7 @@ import {
   type RoutingResolveAuthLike,
 } from "./routing-resolve"
 import type { RoutingSessionStateStore } from "./routing-state"
+import { ZERO_CONSUMPTION, headroomFor, perWorkerReserve } from "./budget-consume"
 import type { SessionID } from "./schema"
 
 // =============================================================================
@@ -86,6 +87,12 @@ export interface HierarchyResolveDeps {
   readonly config: RoutingResolveConfigLike
   readonly provider: RoutingResolveProviderLike
   readonly auth: RoutingResolveAuthLike
+  /** The shared `RoutingSessionState` store (Feature 043). When present, fan-out
+   * admission is bound by the parent session's REAL remaining cost/token headroom
+   * (budget − recorded consumption) plus a non-zero per-worker estimate. When
+   * absent, admission degrades to the Feature 042 behavior (full-budget headroom,
+   * `max_workers`-only) — the hang/crash-safety back-compat path (FR-F1). */
+  readonly store?: RoutingSessionStateStore
   /** Per-spawn LRU capacity override (tests). Defaults to `SPAWN_CACHE_CAP`. */
   readonly spawnCacheCap?: number
 }
@@ -305,6 +312,7 @@ function buildDispatchRequest(
   childRole: Enums.HierarchyRole,
   requestedFanout: number,
   budget: Budget.Policy,
+  consumed: Budget.Consumption,
 ): HierarchyDispatcher.DispatchRequest {
   const todo: Events.TodoPointer = {
     todo_ref: input.parentSessionId as Events.TodoPointer["todo_ref"],
@@ -322,10 +330,14 @@ function buildDispatchRequest(
     todo,
     requestedFanout,
     policy: budget,
-    headroom: { costUsd: budget.cost.cost_budget_usd, tokens: budget.cost.token_budget },
-    // A non-positive per-worker estimate means "unbounded by that factor": Phase 2
-    // does not price a spawn, so admission is governed by max_workers alone.
-    perWorker: { costUsd: 0, tokens: 0 },
+    // Feature 043 — REAL remaining headroom (budget minus the parent session's
+    // recorded consumption) plus a conservative non-zero per-worker estimate, so
+    // `admitDispatchFanout` grants min(requested, max_workers, cost headroom, token
+    // headroom): fewer workers as the budget is spent, not `max_workers` alone.
+    // With zero recorded consumption this is the full-budget headroom Feature 042
+    // passed, so a fresh session is byte-identical.
+    headroom: headroomFor(budget, consumed),
+    perWorker: perWorkerReserve(budget),
   }
 }
 
@@ -357,9 +369,13 @@ export function createHierarchyDispatchResolver(deps: HierarchyResolveDeps): Res
     // 2) Classify the child role (zero-LLM, deterministic analyzer signals).
     const { childRole, requestedFanout } = classifyChildRole(input.parentRole, input.taskText, input.scope)
 
-    // 3) Legality + depth via the pure engine (never recomputed at the seam).
+    // 3) Legality + depth + fan-out admission via the pure engine (never
+    // recomputed at the seam). The parent session's recorded consumption drives
+    // the REAL cost/token headroom; an absent store degrades to zero-consumption
+    // (full-budget) headroom — the Feature 042 back-compat path.
+    const consumed = deps.store?.get(input.parentSessionId as SessionID).consumption ?? ZERO_CONSUMPTION
     const outcome = HierarchyDispatcher.planDispatch(
-      buildDispatchRequest(input, childRole, requestedFanout, budget),
+      buildDispatchRequest(input, childRole, requestedFanout, budget, consumed),
     )
     if (!outcome.ok) return { kind: "blocked", rejection: outcome.rejection }
 

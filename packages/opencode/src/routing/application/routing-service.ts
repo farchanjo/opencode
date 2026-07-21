@@ -75,6 +75,12 @@ export interface RoutingServiceDeps {
   readonly newId?: () => string
   /** Active permission mode recorded in the auth-context snapshot (default "default"). */
   readonly permissionMode?: string
+  /** Feature 043 — the session's recorded running-total consumption at decision
+   * time, read from the shared `RoutingSessionState` store. When supplied, the
+   * persisted `accounting.budget_consumed` reflects real spend instead of the
+   * `ZERO_CONSUMPTION` snapshot (FR-D1); when absent it stays `ZERO_CONSUMPTION`.
+   * The pre-execution admission (below) is UNCHANGED — it always runs over zero. */
+  readonly consumptionFor?: (sessionId: string) => Budget.Consumption | undefined
 }
 
 // Crockford base32 ULID — 48-bit ms timestamp + 80-bit randomness, 26 chars.
@@ -329,7 +335,10 @@ export function createRoutingService(deps: RoutingServiceDeps): RoutingPort {
         },
         accounting: {
           budget: budgetSnapshot,
-          budget_consumed: ZERO_CONSUMPTION,
+          // FR-D1 — the running-total consumption recorded for this session up to
+          // this decision (from the shared `RoutingSessionState` store), instead of
+          // the persisted zero snapshot; absent → `ZERO_CONSUMPTION` (back-compat).
+          budget_consumed: deps.consumptionFor?.(input.sessionId) ?? ZERO_CONSUMPTION,
           catalog_version: resolution.catalogVersion,
           policy_version: policyVersion,
           auth_context: {

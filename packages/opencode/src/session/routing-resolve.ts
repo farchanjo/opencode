@@ -49,7 +49,12 @@ import { createDomainDecisionStore } from "@/routing/application/decision-store"
 import { createFsDecisionStorePort } from "@/routing/adapters/outbound/decision-store-fs"
 import { createRoutingService } from "@/routing/application/routing-service"
 import type { DecisionStore } from "@/routing/application/ports"
-import { createRoutingSessionStateStore, type RoutingDecisionRef } from "./routing-state"
+import {
+  createRoutingSessionStateStore,
+  type RoutingDecisionRef,
+  type RoutingSessionStateStore,
+} from "./routing-state"
+import type { SessionID } from "./schema"
 
 // =============================================================================
 // Structural service seams — the minimal read surface this resolver needs from
@@ -103,6 +108,10 @@ export interface RoutingResolveDeps {
   readonly decisions?: DecisionStore
   /** Drift-cache LRU capacity override (tests). Defaults to `DRIFT_CACHE_CAP`. */
   readonly driftCacheCap?: number
+  /** Feature 043 — the shared `RoutingSessionState` store. When present, the
+   * committed decision's `accounting.budget_consumed` reflects the session's
+   * recorded running-total consumption (FR-D1) instead of `ZERO_CONSUMPTION`. */
+  readonly consumptionStore?: RoutingSessionStateStore
 }
 
 export interface ResolveRoutingModelInput {
@@ -372,6 +381,11 @@ export function createRoutingResolver(deps: RoutingResolveDeps): ResolveRoutingM
       candidates,
       analyzer: createTaskAnalyzer(),
       decisions: await decisionStore(),
+      // FR-D1 — persist the session's recorded running-total consumption in the
+      // decision accounting; absent store → `ZERO_CONSUMPTION` (back-compat).
+      consumptionFor: deps.consumptionStore
+        ? (id) => deps.consumptionStore?.get(id as SessionID).consumption ?? undefined
+        : undefined,
     })
     const decision = await run(
       service

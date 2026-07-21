@@ -12,7 +12,7 @@ import { Provider } from "@/provider/provider"
 import { Auth } from "@/auth"
 import { RoutingResolve } from "./routing-resolve"
 import { RoutingHierarchy } from "./routing-hierarchy"
-import { RoutingState } from "./routing-state"
+import { RoutingSessionStore } from "./routing-session-store"
 
 import { type Tool as AITool, tool, jsonSchema } from "ai"
 import type { JSONSchema7 } from "@ai-sdk/provider"
@@ -156,17 +156,27 @@ const layer = Layer.effect(
     const database = yield* Database.Service
     const { db } = database
 
+    // Feature 043 / Phase 2b — the shared `RoutingSessionState` store. ONE instance
+    // (the same the SessionProcessor records live consumption onto at step-finish)
+    // shared with the spawn seam (parent-role + consumption-headroom reads) and
+    // `tool/task.ts` (dispatch lineage records), so the fan-out admission below sees
+    // the real running-total spend recorded by the response loop.
+    const routingSessionState = yield* RoutingSessionStore.Service
+
     // Feature 037 / Phase 1 — session-local Smart Routing resolver. Consulted ONLY
     // in the implicit-default model branch below (an explicit `--model` and an
     // agent-pinned model always win); returns `undefined` — leaving the static
     // `currentModel()` path byte-identical — unless Smart Routing is explicitly
     // enabled in `auto` mode with a populated role pool. It can never crash or
-    // block the prompt path (see routing-resolve.ts).
+    // block the prompt path (see routing-resolve.ts). The shared store is threaded
+    // as `consumptionStore` so the committed decision's `accounting.budget_consumed`
+    // reflects real spend (FR-D1).
     const resolveRoutingModel = RoutingResolve.createRoutingResolver({
       config: { get: () => config.get(), getGlobal: () => config.getGlobal() },
       provider: { list: () => provider.list() },
       agents: { listSpecialists: () => agents.listSpecialists() },
       auth: { get: (providerID) => auth.get(providerID) },
+      consumptionStore: routingSessionState,
     })
 
     // Feature 042 / Phase 2 — session-local hierarchy dispatch resolver. Consulted
@@ -176,13 +186,13 @@ const layer = Layer.effect(
     // unless Smart Routing is enabled in `auto` mode with a populated hierarchy
     // config. It can never crash or block the spawn path (see routing-hierarchy.ts).
     // A `{ kind: "blocked" }` result is a deliberate legality outcome surfaced as an
-    // explicit blocked spawn. The `RoutingSessionState` store is shared with the
-    // spawn seam (parent-role reads) and `tool/task.ts` (dispatch lineage records).
-    const routingSessionState = RoutingState.createRoutingSessionStateStore()
+    // explicit blocked spawn. The shared `store` feeds fan-out admission the parent
+    // session's REAL cost/token headroom (budget − recorded consumption; FR-C1).
     const resolveHierarchyDispatch = RoutingHierarchy.createHierarchyDispatchResolver({
       config: { get: () => config.get(), getGlobal: () => config.getGlobal() },
       provider: { list: () => provider.list() },
       auth: { get: (providerID) => auth.get(providerID) },
+      store: routingSessionState,
     })
     const ops = Effect.fn("SessionPrompt.ops")(function* () {
       return {
@@ -1827,6 +1837,7 @@ export const node = LayerNode.make({
     EventV2Bridge.node,
     RuntimeFlags.node,
     Database.node,
+    RoutingSessionStore.node,
   ],
 })
 

@@ -33,21 +33,34 @@ export const AUTHORITY: Record<RoutingConfigScope, string> = {
   project: "routing",
 }
 
-// Conservative hard-maximum defaults applied only until an operator supplies
-// its own budget policy — never silently relaxed, never a hidden ceiling.
+// Sensible, conservative hard-maximum defaults applied ONLY when the effective
+// config origin is `default` (no operator budget at `routing` or `global:routing`)
+// — Feature 043 / ADR-0043 "sensible defaults" decision, so budget enforcement is
+// ACTIVE out-of-box rather than dormant until an operator configures every limit.
+// An explicit operator budget always wins verbatim (resolveEffective shadows the
+// default). The grounded dimensions (`max_turns` 8, `max_context_tokens` 200000,
+// `max_output_tokens` 8000, `max_workers` 3, `max_delegation_depth` 2,
+// `token_budget` 800000) match the values persisted in the `global:routing`
+// operator authority; the remaining leaves keep their conservative defaults until
+// an operator supplies its own. Never silently relaxed, never a hidden ceiling.
 const DEFAULT_ROUTING_BUDGET: RoutingConfig.Enforcement["budget"] = {
   limits: {
-    max_turns: 10,
+    max_turns: 8,
     max_context_tokens: 200_000,
     max_context_bytes: 800_000,
     max_output_tokens: 8_000,
     max_output_bytes: 32_000,
   },
-  concurrency: { max_workers: 4, max_delegation_depth: 2 },
+  concurrency: { max_workers: 3, max_delegation_depth: 2 },
   retrieval: { retrieval_top_k: 8, rerank_top_k: 4, max_skill_chunks: 8, max_skill_tokens: 4_000 },
-  cost: { time_budget_ms: 60_000, cost_budget_usd: 10, token_budget: 1_000_000 },
+  cost: { time_budget_ms: 60_000, cost_budget_usd: 10, token_budget: 800_000 },
   resilience: { retry_depth: 2, validation_depth: 1, escalation_threshold: "manual_review" },
 }
+
+/** The grounded default budget, exported so the live session response loop and the
+ * fan-out admission seam (Feature 043) can enforce it out-of-box when the effective
+ * config origin is `default`. An explicit operator budget always overrides it. */
+export { DEFAULT_ROUTING_BUDGET }
 
 // Safe, disabled-by-default RoutingConfig (origin "default") — mirrors
 // telemetry-service.ts DEFAULT_TELEMETRY_CONFIG. `role_pools` starts empty:
