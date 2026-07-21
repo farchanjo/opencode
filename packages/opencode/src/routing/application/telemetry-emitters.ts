@@ -275,3 +275,66 @@ export function emitCompletionGate(e: CompletionGateEmission): void {
     /* telemetry never blocks or breaks the completion gate */
   }
 }
+
+// =============================================================================
+// Orchestration handoff interception (Feature 053, FR8) — span `orchestration.handoff`.
+//
+// Content-free by construction: the re-entrancy guard state that gated the attempt,
+// one stage outcome (result enum + duration) each for Data and Composer, and a bounded
+// valid/repaired/flagged brief-validation tally — never subtask text, recon/brief
+// content, agent output, or specialist names. Mirrors the sibling emitters exactly.
+// =============================================================================
+
+export type HandoffStage = "data" | "composer"
+export type HandoffStageResult = "ran" | "degraded" | "skipped"
+
+export interface HandoffStageOutcome {
+  readonly stage: HandoffStage
+  readonly result: HandoffStageResult
+  readonly durationMs: number
+}
+
+export interface BriefValidationTally {
+  readonly repaired: number
+  readonly flagged: number
+}
+
+export interface OrchestrationHandoffEmission {
+  readonly synthetic: boolean
+  readonly eligible: boolean
+  readonly stages: readonly HandoffStageOutcome[]
+  readonly tally?: BriefValidationTally
+}
+
+export function orchestrationHandoffSignal(e: OrchestrationHandoffEmission): TelemetrySignal {
+  const attributes: Record<string, unknown> = {
+    "orchestration.handoff_synthetic": e.synthetic,
+    "orchestration.handoff_eligible": e.eligible,
+    "orchestration.handoff_data_result": stageResult(e, "data"),
+    "orchestration.handoff_data_ms": stageDuration(e, "data"),
+    "orchestration.handoff_composer_result": stageResult(e, "composer"),
+    "orchestration.handoff_composer_ms": stageDuration(e, "composer"),
+  }
+  if (e.tally !== undefined) {
+    attributes["orchestration.handoff_repaired"] = e.tally.repaired
+    attributes["orchestration.handoff_flagged"] = e.tally.flagged
+  }
+  return { kind: "traces", name: "orchestration.handoff", attributes }
+}
+
+function stageResult(e: OrchestrationHandoffEmission, stage: HandoffStage): HandoffStageResult {
+  return e.stages.find((outcome) => outcome.stage === stage)?.result ?? "skipped"
+}
+
+function stageDuration(e: OrchestrationHandoffEmission, stage: HandoffStage): number {
+  return e.stages.find((outcome) => outcome.stage === stage)?.durationMs ?? 0
+}
+
+export function emitOrchestrationHandoff(e: OrchestrationHandoffEmission): void {
+  if (!isTelemetryArmed()) return
+  try {
+    recordDomainSignal(orchestrationHandoffSignal(e))
+  } catch {
+    /* telemetry never blocks or breaks the interception seam */
+  }
+}

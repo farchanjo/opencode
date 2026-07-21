@@ -149,7 +149,20 @@ export interface HierarchyRouteDecision {
    * Manager persona prelude is injected on a manager-role spawn. Always `false` in
    * heuristic mode, keeping that path byte-identical. */
   readonly forceManager: boolean
+  /** Feature 053 (FR1) — the operator-configured role-to-agent bindings from
+   * `hierarchy.manager_agent`/`data_agent`/`composer_agent`, threaded verbatim so
+   * `tool/task.ts` can resolve them via `Agent.Service.get` at the spawn seam. All
+   * absent → byte-identical to Feature 048's shipped behavior (FR7). */
+  readonly bindings?: HierarchyAgentBindings
   readonly lineageStub: DispatchLineageStub
+}
+
+/** Feature 053 — the three optional role-to-agent binding names as read from the
+ * routing config's `hierarchy` struct, threaded to the spawn seam. */
+export interface HierarchyAgentBindings {
+  readonly manager?: string
+  readonly data?: string
+  readonly composer?: string
 }
 
 export interface HierarchyBlockedDecision {
@@ -197,6 +210,10 @@ export interface HierarchyDispatchExtra {
    * depth ceiling honor `hierarchy.max_depth` (so the Manager -> Worker hop passes)
    * and gates the Manager persona injection. `false` in heuristic mode. */
   readonly forceManager: boolean
+  /** Feature 053 (FR1) — the role-to-agent bindings from the routing `hierarchy` config,
+   * consumed by `tool/task.ts` to override the manager-role spawn agent and to drive the
+   * Data -> Composer interception. Absent when no binding is configured (FR7). */
+  readonly bindings?: HierarchyAgentBindings
 }
 
 /** The per-spawn inputs the live seam supplies at `tool/task.ts` execution time. */
@@ -234,6 +251,7 @@ export function toHierarchyDispatchExtra(
     denyExecutionTools: !routed.executionAllowed,
     maxDepth: routed.maxDepth,
     forceManager: routed.forceManager,
+    bindings: routed.bindings,
   }
 }
 
@@ -624,6 +642,13 @@ export function createHierarchyDispatchResolver(deps: HierarchyResolveDeps): Res
       maxDepth: effectiveMaxDepth,
       fanoutGranted: outcome.envelope.fanout.fanout_granted,
       forceManager,
+      // Feature 053 (FR1) — thread the operator-configured role-to-agent bindings so the
+      // spawn seam can override the manager agent and drive the Data -> Composer handoff.
+      bindings: {
+        manager: hierarchy.manager_agent,
+        data: hierarchy.data_agent,
+        composer: hierarchy.composer_agent,
+      },
       lineageStub: {
         parent_session_id: outcome.envelope.lineage.parent_session_id,
         parent_role: outcome.envelope.lineage.parent_role,

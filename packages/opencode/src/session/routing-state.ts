@@ -103,6 +103,12 @@ export interface RoutingSessionState {
    * (Tier-1 listing and `skill`-tool loading are unaffected). `null` until the first
    * injection. Released with the session (see `clear`). */
   readonly autoSkillInjected: ReadonlySet<string> | null
+  /** Feature 053 (FR5) — true iff this session is a Data or Composer sub-session created
+   * by the orchestration-handoff interception. Stamped at creation, BEFORE the sub-session's
+   * own turn runs, so a synthetic sub-session can never itself re-trigger the interception
+   * (zero nested interceptions is a structural invariant). Default `false`; released with the
+   * session (see `clear`), mirroring the `autoSkillInjected` extension pattern. */
+  readonly synthetic: boolean
 }
 
 function empty(sessionId: SessionID): RoutingSessionState {
@@ -115,6 +121,7 @@ function empty(sessionId: SessionID): RoutingSessionState {
     aggregate: null,
     narrowedSets: null,
     autoSkillInjected: null,
+    synthetic: false,
   }
 }
 
@@ -189,6 +196,10 @@ export interface RoutingSessionStateStore {
    * block this turn, merging into the session-scoped dedup set (lazily created); cleared with
    * the rest of the state at `clear`. Idempotent — re-recording a name is a no-op. */
   readonly recordAutoSkillInjected: (sessionId: SessionID, skillNames: readonly string[]) => RoutingSessionState
+  /** Feature 053 (FR5) — stamp a session as a synthetic Data/Composer sub-session, BEFORE its
+   * own turn runs, so it can never re-trigger the orchestration-handoff interception. Cleared
+   * with the rest of the state at `clear`. Idempotent — re-marking a synthetic session is a no-op. */
+  readonly markSynthetic: (sessionId: SessionID) => RoutingSessionState
   readonly clear: (sessionId: SessionID) => void
 }
 
@@ -247,6 +258,10 @@ export function createRoutingSessionStateStore(): RoutingSessionStateStore {
       const merged = new Set(state.autoSkillInjected ?? [])
       for (const name of skillNames) merged.add(name)
       return put({ ...state, autoSkillInjected: merged })
+    },
+
+    markSynthetic(sessionId) {
+      return put({ ...current(sessionId), synthetic: true })
     },
 
     clear(sessionId) {

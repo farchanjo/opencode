@@ -41,6 +41,7 @@ describe("RoutingSessionStateStore", () => {
       aggregate: null,
       narrowedSets: null,
       autoSkillInjected: null,
+      synthetic: false,
     })
   })
 
