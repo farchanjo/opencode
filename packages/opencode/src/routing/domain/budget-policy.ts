@@ -64,7 +64,11 @@ export interface Decision {
 
 const OUTCOME_SEVERITY: Readonly<Record<Outcome, number>> = { ok: 0, escalation: 1, blocked: 2, error: 3 }
 
-function aggregate(violations: ReadonlyArray<Violation>): Decision {
+/** Aggregate a flat violation list into the most-severe decision. Exported so the
+ * live consumption layer (`session/budget-consume.ts`) can compose the individual
+ * dimension checks over DIFFERENTLY-shaped consumption values (per-response ceilings
+ * vs cumulative totals) without re-deriving the severity ordering. */
+export function aggregate(violations: ReadonlyArray<Violation>): Decision {
   if (violations.length === 0) return { outcome: "ok", violations: [] }
   let outcome: Outcome = "ok"
   for (const violation of violations) {

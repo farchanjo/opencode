@@ -7,12 +7,18 @@
  * Task fan-out admission seam (`session/routing-hierarchy.ts`):
  *
  *   - `accumulateConsumption` folds a per-response usage delta onto the session's
- *     prior recorded `Budget.Consumption` (running total, never overwrite; FR-A2).
- *   - `recordTurnAndEvaluate` records the accumulated consumption on the store and
- *     re-evaluates the budget against it (the first non-`ZERO_CONSUMPTION` call
- *     site of `evaluateBudget`; FR-A1, FR-A3, FR-B1). A breach is the engine's
- *     explicit `blocked` / `escalation` / `error` outcome — never a truncated or
- *     reduced value (FR-B2, FR-B3).
+ *     prior recorded `Budget.Consumption` (RUNNING TOTAL, never overwrite; FR-A2) —
+ *     this is what gets recorded and persisted (`accounting.budget_consumed`; FR-D1).
+ *   - `recordTurn` records that running total; `evaluateRecorded` re-evaluates the
+ *     budget against it via `evaluateLiveBudget`, which compares each dimension
+ *     against a value of the RIGHT SHAPE: the per-response token ceilings
+ *     (`max_context_tokens` / `max_output_tokens`) against the CURRENT response's
+ *     spend, the cumulative dimensions (`max_turns`, `token_budget`, `cost_usd`)
+ *     against the running total. Recording is decoupled from budget resolution so a
+ *     transient config-read failure never under-counts the accumulator.
+ *   - `exceedsTurnLimit` is the PRE-turn gate for the countable `max_turns`, so it
+ *     is honored EXACTLY (blocked before the over-limit turn starts). A breach is
+ *     the engine's explicit typed outcome — never a truncated value (FR-B2, FR-B3).
  *   - `headroomFor` / `perWorkerReserve` convert budget minus recorded consumption
  *     into the real cost/token headroom and a conservative non-zero per-worker
  *     estimate that `admitDispatchFanout` uses to bound the granted worker count
@@ -22,7 +28,15 @@
  * seam) owns the hang/crash-safety wrap (FR-F1); these helpers only compute.
  */
 import type { Budget } from "@opencode-ai/schema/routing/budget"
-import { evaluateBudget, type Decision } from "@/routing/domain/budget-policy"
+import {
+  aggregate,
+  checkCost,
+  checkLimits,
+  checkResilience,
+  checkRetrievalConsumption,
+  type Decision,
+  type Outcome,
+} from "@/routing/domain/budget-policy"
 import type { BudgetHeadroom, WorkerCost } from "@/routing/domain/hierarchy-dispatcher"
 import type { RoutingSessionStateStore } from "./routing-state"
 import type { SessionID } from "./schema"
@@ -115,20 +129,94 @@ export function accumulateConsumption(prior: Budget.Consumption, delta: Consumpt
 export interface BudgetEnforcement {
   /** The accumulated running total after this turn was recorded. */
   readonly consumption: Budget.Consumption
-  /** The pure engine's outcome over the running total (`ok` when within budget). */
+  /** The pure engine's outcome over the correctly-shaped consumption (`ok` within budget). */
   readonly decision: Decision
-  /** True only for a genuine hard-maximum breach (`blocked` / `escalation` /
-   * `error`) — the one non-degrading outcome the caller must surface honestly. */
+  /** True only for a HARD-STOP outcome (`blocked` / `error`). An `escalation`
+   * (resilience threshold) is NOT a hard stop — it is advisory here and wired to
+   * halt the turn only in Phase 3 (see `isHardStop`). */
   readonly breached: boolean
+}
+
+/** A hard-stop outcome halts the turn (`ctx.blocked`). `escalation` is deliberately
+ * excluded: a resilience threshold asks the caller to reclassify/escalate, not to
+ * halt — and the resilience dimension is not yet fed live counts (Phase 3), so it
+ * can only fire on operator-recorded spend. Only `blocked`/`error` set `ctx.blocked`. */
+export function isHardStop(outcome: Outcome): boolean {
+  return outcome === "blocked" || outcome === "error"
+}
+
+/**
+ * The per-response VIEW of the running total. `max_context_tokens` and
+ * `max_output_tokens` are PER-RESPONSE window ceilings (the largest single
+ * response), NOT cumulative budgets — every step re-sends the full context, so
+ * comparing the CUMULATIVE token sum against them would spuriously breach within a
+ * handful of steps. This view carries the cumulative `turns_used` (a countable
+ * cumulative dimension) but replaces the token counters with the CURRENT response's
+ * spend, so `checkLimits` compares each ceiling against a value of the right shape.
+ */
+function perResponseView(cumulative: Budget.Consumption, delta: ConsumptionDelta): Budget.Consumption {
+  return {
+    ...cumulative,
+    throughput: {
+      ...cumulative.throughput,
+      context_tokens_used: delta.contextTokens,
+      output_tokens_used: delta.outputTokens,
+    },
+  }
+}
+
+/**
+ * Evaluate the budget with each dimension compared against a value of the right
+ * shape (fixing the per-response-vs-cumulative confusion):
+ *   - `checkLimits` runs over the PER-RESPONSE view (`max_context_tokens` /
+ *     `max_output_tokens` are per-response ceilings; `max_turns` stays cumulative).
+ *   - `checkCost` runs over the CUMULATIVE total (`token_budget` = context+output
+ *     summed across turns; `cost_usd`/`time_ms` cumulative) — the genuinely
+ *     cumulative dimensions.
+ *   - retrieval / resilience run over the cumulative total (zero live counts in
+ *     Phase 2b).
+ * A breach is the engine's explicit typed outcome — never a truncated or reduced
+ * value (FR-B2, FR-B3).
+ */
+export function evaluateLiveBudget(
+  budget: Budget.Policy,
+  cumulative: Budget.Consumption,
+  delta: ConsumptionDelta,
+): Decision {
+  const perResponse = perResponseView(cumulative, delta)
+  return aggregate([
+    ...checkLimits(budget, perResponse).violations,
+    ...checkCost(budget, cumulative).violations,
+    ...checkRetrievalConsumption(budget, cumulative).violations,
+    ...checkResilience(budget, cumulative).violations,
+  ])
 }
 
 /**
  * Record the completed response's consumption onto the store (accumulated onto the
- * prior recorded total) and re-evaluate the budget against the running total. The
- * recording happens BEFORE the evaluation reads it (FR-A3), so a breach is detected
- * against the consumption that includes the step just completed. The returned
- * `decision` is the engine's authoritative outcome — the caller never truncates,
- * caps, or reduces the recorded value to fit (FR-B2, FR-B3).
+ * prior recorded total). Returns the running total. This is DECOUPLED from budget
+ * resolution/evaluation so the accumulator is never under-counted by a transient
+ * config-read failure (the caller records first, resolves the budget second).
+ */
+export function recordTurn(store: RoutingSessionStateStore, sessionID: SessionID, delta: ConsumptionDelta): Budget.Consumption {
+  const prior = store.get(sessionID).consumption ?? ZERO_CONSUMPTION
+  const consumption = accumulateConsumption(prior, delta)
+  store.recordConsumption(sessionID, consumption)
+  return consumption
+}
+
+/** Evaluate an already-recorded running total against the budget (per FR-A3 the
+ * recording happens first). The `decision` is authoritative — never truncated. */
+export function evaluateRecorded(budget: Budget.Policy, consumption: Budget.Consumption, delta: ConsumptionDelta): BudgetEnforcement {
+  const decision = evaluateLiveBudget(budget, consumption, delta)
+  return { consumption, decision, breached: isHardStop(decision.outcome) }
+}
+
+/**
+ * Record + re-evaluate in one call (the recording happens BEFORE the evaluation
+ * reads it, FR-A3). Convenience wrapper over `recordTurn` + `evaluateRecorded`;
+ * the processor seam calls the two halves separately so recording survives a
+ * budget-resolution failure.
  */
 export function recordTurnAndEvaluate(
   store: RoutingSessionStateStore,
@@ -136,11 +224,20 @@ export function recordTurnAndEvaluate(
   budget: Budget.Policy,
   delta: ConsumptionDelta,
 ): BudgetEnforcement {
-  const prior = store.get(sessionID).consumption ?? ZERO_CONSUMPTION
-  const consumption = accumulateConsumption(prior, delta)
-  store.recordConsumption(sessionID, consumption)
-  const decision = evaluateBudget(budget, consumption)
-  return { consumption, decision, breached: decision.outcome !== "ok" }
+  return evaluateRecorded(budget, recordTurn(store, sessionID, delta), delta)
+}
+
+/**
+ * PRE-turn gate for the one COUNTABLE dimension, `max_turns`: `turns_used + 1 >
+ * max_turns` means the NEXT turn would breach, so it MUST be blocked BEFORE it
+ * starts (post-execution accounting is inherently one turn late for token/cost, but
+ * a countable turn can be gated exactly). Returns true when the next turn must not
+ * run. Non-finite limits collapse to "allow" (the post-turn engine reports `error`).
+ */
+export function exceedsTurnLimit(budget: Budget.Policy, consumption: Budget.Consumption | null): boolean {
+  const turnsUsed = consumption?.throughput.turns_used ?? 0
+  const max = budget.limits.max_turns
+  return Number.isFinite(max) && turnsUsed + 1 > max
 }
 
 // =============================================================================
@@ -148,12 +245,13 @@ export function recordTurnAndEvaluate(
 // =============================================================================
 
 /**
- * A conservative estimate of one worker's monetary spend, used to convert
- * remaining `cost_budget_usd` headroom into a worker count. Deliberately small so
- * a generous cost budget lets `max_workers` bind while a nearly-spent budget bounds
- * fan-out below it. Tunable; documented as a plan constant (ADR-0043).
+ * A documented, conservative blended token price (USD per 1k tokens) used to derive
+ * a worker's monetary reserve from its token reserve, so the cost gate is priced
+ * consistently with the token gate rather than a magic flat number. Operator-tunable
+ * plan constant (ADR-0043). ~0.003 is a deliberately low blended input+output rate:
+ * conservative (under-prices rather than over-blocks) but NOT inert.
  */
-export const PER_WORKER_COST_USD = 0.5
+export const PER_WORKER_TOKEN_RATE_USD_PER_1K = 0.003
 
 /**
  * Real remaining budget headroom = budget − the session's recorded consumption
@@ -170,10 +268,16 @@ export function headroomFor(budget: Budget.Policy, consumption: Budget.Consumpti
 
 /**
  * A conservative per-worker cost/token reserve so cost/token headroom genuinely
- * bounds the granted worker count (not `max_workers` alone). `PER_WORKER_TOKEN_RESERVE`
- * defaults to the budget's `max_output_tokens` — the largest single response a
- * worker may emit — so one worker is priced at its worst-case output ceiling.
+ * bounds the granted worker count (not `max_workers` alone). A worker consumes BOTH
+ * its context window AND its output, so the token reserve is priced at
+ * `max_context_tokens + max_output_tokens` — one worker's worst-case single-response
+ * footprint — NOT output alone (which under-priced a real worker and left the token
+ * gate largely inert). The cost reserve is DERIVED from that token reserve at the
+ * documented `PER_WORKER_TOKEN_RATE_USD_PER_1K` rate, so cost and token gates stay
+ * consistent. Conservative but not inert: a fresh session still lets `max_workers`
+ * bind while a spent budget bounds fan-out below it.
  */
 export function perWorkerReserve(budget: Budget.Policy): WorkerCost {
-  return { costUsd: PER_WORKER_COST_USD, tokens: budget.limits.max_output_tokens }
+  const tokens = budget.limits.max_context_tokens + budget.limits.max_output_tokens
+  return { costUsd: (tokens / 1_000) * PER_WORKER_TOKEN_RATE_USD_PER_1K, tokens }
 }

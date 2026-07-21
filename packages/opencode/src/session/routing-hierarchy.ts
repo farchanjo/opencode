@@ -136,6 +136,11 @@ export interface HierarchyRouteDecision {
    * — threaded to `tool/task.ts` so its legacy `subagent_depth` guard reconciles
    * to the MIN of the two when hierarchy routing is active (FR-E3, FR-B3). */
   readonly maxDepth: number
+  /** Feature 043 — the admission-controlled granted worker count from the pure
+   * engine envelope (`min(requested, max_workers, cost headroom, token headroom)`),
+   * never recomputed at the seam (FR-C1, FR-C3). Drops below `max_workers` as the
+   * parent session's recorded consumption spends the cost/token headroom. */
+  readonly fanoutGranted: number
   readonly lineageStub: DispatchLineageStub
 }
 
@@ -407,6 +412,7 @@ export function createHierarchyDispatchResolver(deps: HierarchyResolveDeps): Res
       childDepth: outcome.envelope.childDepth,
       executionAllowed: hierarchy.orchestration_only ? outcome.envelope.executionAllowed : true,
       maxDepth: effectiveMaxDepth,
+      fanoutGranted: outcome.envelope.fanout.fanout_granted,
       lineageStub: {
         parent_session_id: outcome.envelope.lineage.parent_session_id,
         parent_role: outcome.envelope.lineage.parent_role,
