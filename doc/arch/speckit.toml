@@ -623,6 +623,25 @@ specScopeGlobs = [
   "packages/opencode/src/util/effect-http-client.ts",
   "packages/core/src/models-dev.ts",
   "packages/core/src/util/token.ts",
+
+  # Feature 051 — Wire live per-turn semantic narrowing of agents/skills/tools
+  # into the three existing seams (`describeTask`, `SystemPrompt.skills`,
+  # `session/tools.ts`) via the Feature 009 `ToolRetrieval.narrow`/`narrowRecord`
+  # gate. Most seams ALREADY in scope (traceability only):
+  #   packages/opencode/src/tool/registry.ts (Feature 007) — describeTask seam;
+  #   packages/opencode/src/session/** (Feature 017) — system.ts skills seam,
+  #     tools.ts native/MCP seam, routing-state.ts memo field;
+  #   packages/opencode/src/semantic/** + test/semantic/** (Feature 006) —
+  #     live-narrowing.ts orchestrator;
+  #   packages/core/src/config/experimental.ts (Feature 007) — semantic_narrowing
+  #     gate block;
+  #   packages/opencode/test/session/** — system.ts/tools.ts seam tests.
+  # Genuinely new path — the agents-seam pin/narrow test suite (no existing
+  # `packages/opencode/test/tool/**` glob covers this file):
+  "packages/opencode/test/tool/registry.test.ts",
+  # Genuinely new path — the live-narrowing config resolver unit test (no
+  # existing `packages/core/test/config/**` glob covers this file):
+  "packages/core/test/config/experimental.test.ts",
 ]
 
 # Waivers for intentional near-empty files (warnings only; errors are never

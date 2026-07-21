@@ -4,21 +4,21 @@
 
 ### Phase 1 — Config gates, `NarrowedSets` type, `RoutingState` memo field
 
-- [ ] T001 Add the `semantic_narrowing` config block to `packages/core/src/
+- [x] T001 Add the `semantic_narrowing` config block to `packages/core/src/
   config/experimental.ts`: `agents`/`skills` per-surface gates mirroring
   `resolveToolSurfaceConfig` (`:84`) field-for-field (`enabled: boolean`,
   default `false`), plus `min_prompt_length` (default 8) and `debug_log`
   (default off), per `#SemanticNarrowingConfig` in the feature's CUE schema.
   The tools surface gate is NOT duplicated — it reuses the existing
   `resolveToolSurfaceConfig("native"|"mcp")` unchanged.
-- [ ] T002 Add `NarrowedSets` (agents/skills/tools optional non-empty ranked
+- [x] T002 Add `NarrowedSets` (agents/skills/tools optional non-empty ranked
   id lists, mirroring the CUE `#NarrowedSets` shape) to `packages/opencode/
   src/session/routing-state.ts`: a `narrowedSets: NarrowedSets | null` field
   on `RoutingSessionState` (`:36`), a `recordNarrowedSets(sessionId, sets)`
   store method beside `recordDecision` (`:121`), read via the existing `get`;
   cleared with the rest of the state at the existing `clear` (`:168`) — no new
   store, no new lifecycle hook.
-- [ ] T003 Unit tests (`packages/core/test/config/experimental.test.ts`,
+- [x] T003 Unit tests (`packages/core/test/config/experimental.test.ts`,
   `packages/opencode/test/session/routing-state.test.ts`): both `agents`/
   `skills` gates default `false` and resolve independently of the tools
   surface and each other; `min_prompt_length`/`debug_log` default correctly
@@ -27,41 +27,41 @@
 
 ### Phase 2 — `live-narrowing.ts` orchestrator
 
-- [ ] T004 Create `packages/opencode/src/semantic/live-narrowing.ts`:
+- [x] T004 Create `packages/opencode/src/semantic/live-narrowing.ts`:
   `narrowForTurn(input)` — the gates-off short-circuit (FR6, no I/O, no memo
   write when agents/skills/tools are all disabled), reading the memo via the
   injected `RoutingSessionStateStore`.
-- [ ] T005 Add the degenerate-input guard to `narrowForTurn`: below
+- [x] T005 Add the degenerate-input guard to `narrowForTurn`: below
   `min_prompt_length`, reuse the prior `NarrowedSets` memo verbatim (FR2); no
   prior memo (a short first turn) returns full passthrough (every surface
   `undefined`) without embedding.
-- [ ] T006 Add the concurrent fan-out: one `TaskProfile` built once per turn,
+- [x] T006 Add the concurrent fan-out: one `TaskProfile` built once per turn,
   `Effect.all` with bounded concurrency over `SemanticRetrieval.Service
   .retrieveAgents`/`.retrieveSkills`/`.retrieveTools` (tools omitted entirely
   for an orchestration-child session, FR5), each wrapped in
   `Effect.timeout(latencyBudgetMs)` from the shared `TOOL_SEARCH_DEFAULTS`
   knob (FR1, FR7).
-- [ ] T007 Add the degenerate-to-`undefined` mapping (FR3): zero retrieval
+- [x] T007 Add the degenerate-to-`undefined` mapping (FR3): zero retrieval
   hits, a result set emptied by revalidation, or a result set emptied by
   dedup all normalize to `undefined` for that surface BEFORE `NarrowedSets`
   is assembled — never a present-but-empty ranked list.
-- [ ] T008 Add the fail-open wrap (FR7): any surface's rejection, timeout, or
+- [x] T008 Add the fail-open wrap (FR7): any surface's rejection, timeout, or
   unexpected error resolves that surface to `undefined`; exactly ONE
   content-free warning is logged for the whole turn regardless of how many
   surfaces failed; zero retries anywhere on this path.
-- [ ] T009 Add the orchestration-child detector (FR5): a pure structural
+- [x] T009 Add the orchestration-child detector (FR5): a pure structural
   comparison of the session's permission ruleset against the shape
   `orchestrationChildToolRules()` (`tool/task.ts:74-83`) produces; when
   matched, `narrowForTurn` never attempts tool retrieval and returns
   `undefined` for the tools surface unconditionally (agents/skills
   unaffected).
-- [ ] T010 Add the opt-in debug log (FR8): gated by its own `debug_log` flag
+- [x] T010 Add the opt-in debug log (FR8): gated by its own `debug_log` flag
   (T001), emits kept/dropped canonical ids per surface per turn — ids only,
   never prompt text or vectors.
-- [ ] T011 Write the memo (FR1): on a completed (non-degenerate,
+- [x] T011 Write the memo (FR1): on a completed (non-degenerate,
   non-short-circuited) pass, `narrowForTurn` calls `recordNarrowedSets`
   (T002) keyed by `lastUser.id` before returning.
-- [ ] T012 Unit tests (`packages/opencode/test/semantic/
+- [x] T012 Unit tests (`packages/opencode/test/semantic/
   live-narrowing.test.ts`) against a fake `SemanticRetrieval.Interface` and a
   fake `RoutingSessionStateStore`: gates-off short-circuit (fake never
   called); degenerate-input reuse and first-turn passthrough; per-surface
@@ -75,27 +75,27 @@
 
 ### Phase 3 — Seams: agents, skills, tools
 
-- [ ] T013 Edit `packages/opencode/src/tool/registry.ts`'s `describeTask`
+- [x] T013 Edit `packages/opencode/src/tool/registry.ts`'s `describeTask`
   (`:266-279`): accept an optional `rankedAgentIds?: readonly string[]`;
   partition `Agent.Info.hidden === true` entries out as `pinned` BEFORE
   `ToolRetrieval.narrow(narrowable, (a) => a.name, gate)` runs on the
   remaining `narrowable` list; render `[...pinned, ...narrowed]` in that
   order. The splice site at `:338` is unchanged (still calls `describeTask`
   the same way, now optionally passing `rankedAgentIds`).
-- [ ] T014 Unit tests (`packages/opencode/test/tool/registry.test.ts`):
+- [x] T014 Unit tests (`packages/opencode/test/tool/registry.test.ts`):
   hidden agents always render regardless of ranking or absence from
   `rankedAgentIds`; a ranked, narrowed subset filters/reorders only the
   non-hidden list; an absent `rankedAgentIds` renders the full non-primary
   list unchanged (byte-identical to today).
-- [ ] T015 Edit `packages/opencode/src/session/system.ts`'s `sys.skills`
+- [x] T015 Edit `packages/opencode/src/session/system.ts`'s `sys.skills`
   (`:98-110`): accept an optional `ranked?: readonly string[]`; apply
   `ToolRetrieval.narrow(list, (s) => s.name, gate)` before `Skill.fmt`
   renders it; an absent `ranked` renders the full list unchanged. Spends
   neither `max_skill_chunks` nor `max_skill_tokens` (Tier-1 listing only).
-- [ ] T016 Unit tests (`packages/opencode/test/session/system.test.ts`):
+- [x] T016 Unit tests (`packages/opencode/test/session/system.test.ts`):
   ranked subset changes membership/order only, never `Skill.fmt`'s rendering
   logic; absent `ranked` is byte-identical to pre-feature output.
-- [ ] T017 Edit `packages/opencode/src/session/tools.ts`: replace
+- [x] T017 Edit `packages/opencode/src/session/tools.ts`: replace
   `ToolRetrieval.PASSTHROUGH` at the native surface (`:114`) and the MCP
   surface (`:411`) with the live `RankedGate` read from the turn's
   `NarrowedSets` (via the new `narrowedSets` input to `resolve`, mirroring
@@ -105,7 +105,12 @@
   `bash`, `grep`, `glob`) into `gate.ranked` so it can be reordered but never
   dropped; `StructuredOutput` (appended after `resolve()` returns at
   `prompt.ts:1517`) needs no special-casing — it never enters the gate.
-- [ ] T018 Unit tests (`packages/opencode/test/session/tools.test.ts`):
+  Implemented as plain `rankedTools?: readonly string[]` +
+  `skipToolNarrowing?: boolean` inputs (not a `NarrowedSets` input) per the
+  Phase 3/Phase 4 split — `live-narrowing.ts` and its `NarrowedSets` type are
+  Phase 2 territory built concurrently; T020 (Phase 4) threads
+  `narrowForTurn`'s output into these two seam inputs.
+- [x] T018 Unit tests (`packages/opencode/test/session/tools.test.ts`):
   essential-tool floor present even when a fake ranking excludes it; a
   narrowed non-floor tool is correctly dropped/reordered; an `undefined`
   tools surface (gates off or orchestration child) renders the full
