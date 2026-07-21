@@ -118,7 +118,7 @@
 
 ### Phase 4 — Mount and call site
 
-- [ ] T019 Edit `packages/opencode/src/effect/app-runtime.ts`: add
+- [x] T019 Edit `packages/opencode/src/effect/app-runtime.ts`: add
   `SemanticRetrieval.node` to the `LayerNode.group([...])` list (`:59-107`);
   compose the live-binding override (Milvus port via `MilvusComposition
   .composeMilvusPort`, active embedding/reranker binding via `BindingRuntime
@@ -130,13 +130,13 @@
   `AppNodeBuilderV1.build(Ripgrep.node)` override-merge at `:109`). Any
   resolution failure (no endpoint, no active binding) leaves the shipped
   degraded default in place — no new boot failure mode.
-- [ ] T020 Edit `packages/opencode/src/session/prompt.ts`: call
+- [x] T020 Edit `packages/opencode/src/session/prompt.ts`: call
   `LiveNarrowing.narrowForTurn(...)` once per turn immediately before
   `SessionTools.resolve` (`:1498`), threading the `RoutingSessionStateStore`,
   `session.permission`, and `lastUser`; pass the resulting `NarrowedSets`
   into `SessionTools.resolve`'s new `narrowedSets` input (T017) and into
   `sys.skills(agent, narrowedSets?.skills)` (`:1531`).
-- [ ] T021 Integration test — memoization across runLoop steps
+- [x] T021 Integration test — memoization across runLoop steps
   (`packages/opencode/test/session/prompt.test.ts` or a seam-level
   equivalent): a simulated two-round-trip turn (same `lastUser.id`) asserts
   `SessionTools.resolve` and `sys.skills` both read the identical

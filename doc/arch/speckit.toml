@@ -642,6 +642,10 @@ specScopeGlobs = [
   # Genuinely new path — the live-narrowing config resolver unit test (no
   # existing `packages/core/test/config/**` glob covers this file):
   "packages/core/test/config/experimental.test.ts",
+  # Phase 4 (T019) — the composition root that mounts `SemanticRetrieval.Service`
+  # into the live `AppLayer` and overrides the shipped degraded runner with the
+  # Milvus/binding/embeddings/reranker seams. No existing glob covers this file.
+  "packages/opencode/src/effect/app-runtime.ts",
 ]
 
 # Waivers for intentional near-empty files (warnings only; errors are never
