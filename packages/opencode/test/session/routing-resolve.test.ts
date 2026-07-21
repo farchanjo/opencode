@@ -11,7 +11,14 @@
 import { describe, expect, test } from "bun:test"
 import { Effect } from "effect"
 import type { RoutingConfig } from "@opencode-ai/schema/routing/config"
-import { createRoutingResolver, sessionConfigReadPort, createBoundedLru, type RoutingResolveDeps } from "@/session/routing-resolve"
+import {
+  createRoutingResolver,
+  createRoutingActivationReader,
+  shouldConsultRouting,
+  sessionConfigReadPort,
+  createBoundedLru,
+  type RoutingResolveDeps,
+} from "@/session/routing-resolve"
 import { createConfigAdapter, AUTHORITY } from "@/routing/adapters/outbound/config-adapter"
 import type { DecisionStore } from "@/routing/application/ports"
 import type { Decision } from "@opencode-ai/schema/routing/decision"
@@ -286,6 +293,137 @@ describe("createRoutingResolver — provider eligibility (DEFECT 3)", () => {
     )
     const out = await Effect.runPromise(resolve(INPUT))
     expect(out).toEqual({ providerID: "zzz", modelID: "model-a" } as never)
+  })
+})
+
+// =============================================================================
+// Feature 045 — always-mode activation. `always` re-evaluates routing on EVERY
+// turn (bypasses the drift-cache short-circuit `auto` keeps), so a role/pool
+// change takes effect next turn without a new session. `auto`/`never` keep their
+// pre-045 behavior; disabled/`never` stay byte-identical to no routing.
+// =============================================================================
+
+// A resolver whose provider.list() is counted, so a fresh evaluation (cache MISS
+// or an always-mode re-eval) is observable while a cache HIT is not.
+function countedResolver(mode: RoutingConfig.Info["activation"]["mode"]) {
+  let listCalls = 0
+  const base = deps(routingConfig({ enabled: true, mode, rolePools: { worker: ["model-a"] } }))
+  const counted: RoutingResolveDeps = {
+    ...base,
+    provider: {
+      list: () =>
+        Effect.sync(() => {
+          listCalls++
+          return {
+            anthropic: {
+              models: { "model-a": { id: "model-a", providerID: "anthropic", status: "active", capabilities: { toolcall: true } } },
+            },
+          }
+        }),
+    },
+  }
+  return { resolve: createRoutingResolver(counted), calls: () => listCalls }
+}
+
+describe("createRoutingResolver — always mode (Feature 045)", () => {
+  test("always mode RE-EVALUATES every turn in the same session (no drift-cache short-circuit)", async () => {
+    const { resolve, calls } = countedResolver("always")
+    const first = await Effect.runPromise(resolve(INPUT))
+    const afterFirst = calls()
+    const second = await Effect.runPromise(resolve({ ...INPUT, taskText: "a completely different task" }))
+    expect(first).toEqual({ providerID: "anthropic", modelID: "model-a" } as never)
+    expect(second).toEqual({ providerID: "anthropic", modelID: "model-a" } as never)
+    expect(calls()).toBeGreaterThan(afterFirst) // re-evaluated — NOT served from cache
+  })
+
+  test("auto mode still SHORT-CIRCUITS on the persisted decision (contrast to always)", async () => {
+    const { resolve, calls } = countedResolver("auto")
+    await Effect.runPromise(resolve(INPUT))
+    const afterFirst = calls()
+    await Effect.runPromise(resolve({ ...INPUT, taskText: "a completely different task" }))
+    expect(calls()).toBe(afterFirst) // no re-evaluation on the second message
+  })
+
+  test("always mode routes like auto on the first turn (superset of auto's aggressiveness)", async () => {
+    const resolve = createRoutingResolver(deps(routingConfig({ enabled: true, mode: "always", rolePools: { worker: ["model-a"] } })))
+    const out = await Effect.runPromise(resolve(INPUT))
+    expect(out).toEqual({ providerID: "anthropic", modelID: "model-a" } as never)
+  })
+
+  test("disabled + always is byte-identical to no routing (enabled:false wins over any mode)", async () => {
+    const resolve = createRoutingResolver(deps(routingConfig({ enabled: false, mode: "always", rolePools: { worker: ["model-a"] } })))
+    const out = await Effect.runPromise(resolve(INPUT))
+    expect(out).toBeUndefined()
+  })
+
+  test("always mode inherits the hang-safety fallback (a stuck decision commit degrades to undefined)", async () => {
+    const base = deps(routingConfig({ enabled: true, mode: "always", rolePools: { worker: ["model-a"] } }))
+    const hanging: RoutingResolveDeps = {
+      ...base,
+      decisions: { commit: () => new Promise<never>(() => {}), findById: async () => null },
+    }
+    const resolve = createRoutingResolver(hanging)
+    const start = Date.now()
+    const out = await Effect.runPromise(resolve(INPUT))
+    const elapsed = Date.now() - start
+    expect(out).toBeUndefined()
+    expect(elapsed).toBeGreaterThanOrEqual(1000)
+    expect(elapsed).toBeLessThan(4000)
+  }, 8000)
+})
+
+describe("createRoutingActivationReader — hang-safe mode read (Feature 045)", () => {
+  test("reads the effective activation mode (enabled + always → \"always\")", async () => {
+    const read = createRoutingActivationReader({
+      config: {
+        get: () => Effect.succeed(configRoot(routingConfig({ enabled: true, mode: "always", rolePools: {} }))),
+        getGlobal: () => Effect.succeed({ operator: { authorities: {} } }),
+      },
+    })
+    expect(await Effect.runPromise(read())).toBe("always")
+  })
+
+  test("a disabled engine collapses to \"never\" regardless of the stored mode", async () => {
+    const read = createRoutingActivationReader({
+      config: {
+        get: () => Effect.succeed(configRoot(routingConfig({ enabled: false, mode: "always", rolePools: {} }))),
+        getGlobal: () => Effect.succeed({ operator: { authorities: {} } }),
+      },
+    })
+    expect(await Effect.runPromise(read())).toBe("never")
+  })
+
+  test("a config read that DIES degrades to \"never\" (never crashes the prompt path)", async () => {
+    const read = createRoutingActivationReader({
+      config: {
+        get: () => Effect.die(new Error("config unavailable")),
+        getGlobal: () => Effect.succeed({ operator: { authorities: {} } }),
+      },
+    })
+    expect(await Effect.runPromise(read())).toBe("never")
+  })
+})
+
+describe("shouldConsultRouting — session-seam decision (Feature 045)", () => {
+  test("an explicit --model / agent-pinned model ALWAYS wins — routing never consulted, even in always mode", () => {
+    expect(shouldConsultRouting({ explicitModel: true, hasPersistedModel: false, mode: "always" })).toBe(false)
+    expect(shouldConsultRouting({ explicitModel: true, hasPersistedModel: true, mode: "always" })).toBe(false)
+    expect(shouldConsultRouting({ explicitModel: true, hasPersistedModel: false, mode: "auto" })).toBe(false)
+  })
+
+  test("auto mode: consult on the first turn (no persisted), short-circuit on later turns (persisted)", () => {
+    expect(shouldConsultRouting({ explicitModel: false, hasPersistedModel: false, mode: "auto" })).toBe(true)
+    expect(shouldConsultRouting({ explicitModel: false, hasPersistedModel: true, mode: "auto" })).toBe(false)
+  })
+
+  test("always mode: consult EVERY turn — re-evaluates even when a model is persisted", () => {
+    expect(shouldConsultRouting({ explicitModel: false, hasPersistedModel: false, mode: "always" })).toBe(true)
+    expect(shouldConsultRouting({ explicitModel: false, hasPersistedModel: true, mode: "always" })).toBe(true)
+  })
+
+  test("never mode keeps the persisted-model short-circuit (byte-identical to pre-045)", () => {
+    expect(shouldConsultRouting({ explicitModel: false, hasPersistedModel: false, mode: "never" })).toBe(true)
+    expect(shouldConsultRouting({ explicitModel: false, hasPersistedModel: true, mode: "never" })).toBe(false)
   })
 })
 

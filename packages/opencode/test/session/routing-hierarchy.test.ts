@@ -153,6 +153,17 @@ describe("createHierarchyDispatchResolver — activation gate (back-compat)", ()
     const resolve = createHierarchyDispatchResolver(deps(null))
     expect(await Effect.runPromise(resolve(input()))).toBeUndefined()
   })
+
+  test("Feature 045 — enabled + always ENGAGES hierarchy dispatch (superset of auto)", async () => {
+    const resolve = createHierarchyDispatchResolver(
+      deps(routingConfig({ enabled: true, mode: "always", rolePools: { worker: ["worker-model"] } })),
+    )
+    const out = await Effect.runPromise(resolve(input()))
+    expect(out?.kind).toBe("route")
+    if (out?.kind !== "route") throw new Error("expected route")
+    expect(out.childRole).toBe("worker")
+    expect(out.model).toEqual({ providerID: "anthropic", modelID: "worker-model" } as never)
+  })
 })
 
 describe("createHierarchyDispatchResolver — fresh per-spawn decision", () => {
