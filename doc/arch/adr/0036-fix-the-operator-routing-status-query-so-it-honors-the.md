@@ -143,7 +143,9 @@ Key decisions recorded:
    `routing.status --scope global` reports `configured:true` + `activation:{ enabled:true,
    mode:"auto" }`, that `routing.status`/`smart.status` agree at global scope, that `--scope
    project` still reads `routing` (`configured:false`), and that a bare `routing.status` still
-   reads `routing`. It fails on the pre-fix source and passes after.
+   reads `routing`. It fails on the pre-fix source and passes after. **[Superseded by Feature
+   040]** — the (c)/(d) project/bare `configured:false`-under-global assertions were updated to
+   the shadowed behavior; see the supersession note in Consequences.
 
 ### Consequences
 
@@ -152,7 +154,15 @@ Key decisions recorded:
 - Good: `routing.status` and `smart.status` agree at the same scope — the operator surfaces no
   longer disagree about whether Smart Routing is configured/enabled.
 - Good: project/bare `routing.status` is unchanged (still resolves `routing`), so the Feature
-  007/013 config-backed assertions all pass, unweakened.
+  007/013 config-backed assertions all pass, unweakened. **[Superseded by Feature 040,
+  ADR-0040]** — to reach TUI/CLI prefill parity, the project/bare `routing.status` read now
+  resolves the LAYERED effective config (`resolveEffective`: project > global > default, the
+  same read `smart.status` consumes), so a global-only activation SHADOWS into the project scope
+  (`configured:true` + the shadowed activation) instead of reporting `configured:false`. This
+  deliberately supersedes the "project/bare unchanged" residual above; the (c)/(d) regression
+  assertions in `feature036-routing-status-scope.test.ts` were updated to the shadowed behavior
+  (not weakened), and the Feature 007 fixture was made schema-valid so the effective read decodes
+  it. Explicit `--scope global` still reads `global:routing` directly (unchanged).
 - Good: the Feature 033 document-shadowing read, the routing engine's effective-config resolution,
   the operator schema, the catalog, and every write are untouched — only the scoped read authority
   changes.

@@ -206,16 +206,21 @@ routing over one shared `store.config`) with a bound `projectId`
   Then they agree: `activation.enabled === smart.enabled` and
   `(activation.mode === "auto") === smart.auto`, with `smart.configured:true`.
 
-- **A project-scope routing.status is unchanged (FR-C, FR-D-c).**
+- **A project-scope routing.status is unchanged (FR-C, FR-D-c).** _[Superseded by Feature 040 /
+  ADR-0040]_ — the project/bare read now SHADOWS the global config via the layered effective read.
   Given only a `global:routing` document is set,
   When `routing.status --scope project` is read,
-  Then it reports `authority:"routing"`, `configured:false`, `status:"unconfigured"`, and
-  `activation:null`.
+  Then (Feature 036) it reported `authority:"routing"`, `configured:false`,
+  `status:"unconfigured"`, `activation:null`; (Feature 040, current) it reports
+  `authority:"routing"`, `configured:true`, `status:"configured"`, and the shadowed
+  `activation:{ enabled, mode }`, agreeing with `smart.status --scope project`.
 
-- **A bare routing.status stays project (FR-C, FR-D-d).**
+- **A bare routing.status stays project (FR-C, FR-D-d).** _[Superseded by Feature 040 /
+  ADR-0040]_ — a bare read now shadows the global config too.
   Given only a `global:routing` document is set and a project is bound,
   When a bare `routing.status` (no explicit scope) is read,
-  Then it reports `authority:"routing"` and `configured:false`.
+  Then (Feature 036) it reported `authority:"routing"` and `configured:false`; (Feature 040,
+  current) it reports `authority:"routing"`, `configured:true`, and the shadowed activation.
 
 ## Observability
 
