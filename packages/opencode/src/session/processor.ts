@@ -27,6 +27,7 @@ import { Database } from "@opencode-ai/core/database/database"
 import { Usage, type LLMEvent } from "@opencode-ai/llm"
 import { RoutingSessionStore } from "./routing-session-store"
 import { recordTurn, evaluateRecorded, deltaFromUsage, exceedsTurnLimit } from "./budget-consume"
+import { OrchestrationAggregate } from "./orchestration-aggregate"
 import { createConfigAdapter, AUTHORITY } from "@/routing/adapters/outbound/config-adapter"
 import { sessionConfigReadPort, createBoundedLru } from "./routing-resolve"
 import type { RoutingConfig } from "@opencode-ai/schema/routing/config"
@@ -537,6 +538,40 @@ const layer = Layer.effect(
                 ? `${violation.reason} (observed ${violation.observed} exceeds ${violation.dimension} ${violation.limit})`
                 : result.decision.outcome
               const error = parse(new Error(`Session budget ${result.decision.outcome}: ${detail}`))
+              ctx.assistantMessage.error = error
+              ctx.assistantMessage.finish = "error"
+              ctx.blocked = true
+              yield* session.updateMessage(ctx.assistantMessage)
+              yield* events.publish(Session.Event.Error, { sessionID: ctx.sessionID, error })
+            }).pipe(Effect.catchCauseIf((cause) => !Cause.hasInterruptsOnly(cause), () => Effect.void))
+            // Feature 044 / Phase 3 (FR-B1, FR-B2, FR-B3) — the COMPLETION gate. A
+            // Manager turn MUST NOT be reported complete while a FOREGROUND (awaited)
+            // delegated Worker is still `pending`; the gate settles when every
+            // foreground Worker is terminal (a `failed`/`aborted` Worker is terminal and
+            // SURFACES, FR-B2). BACKGROUND / promoted Workers are fire-and-continue by
+            // the experimental background-subagent contract and are DELIBERATELY not
+            // gate-blocked here (ADR-0044 Decision #3) — blocking a launching turn on a
+            // by-design background launch would regress fire-and-continue; they are
+            // tracked informationally and woken via `inject` on every terminal signal
+            // (FR-D1), never starving the wake. The aggregate is populated ONLY under
+            // auto-mode hierarchy dispatch (FR-E1), so a plain/disabled session has NO
+            // aggregate and this is a NO-OP — the null short-circuit runs BEFORE any
+            // config read, byte-identical to pre-F044. Composed AFTER the budget gate (a
+            // budget-blocked turn stays blocked; this only ADDS the foreground-pending
+            // reason). Hang/crash-safe (any defect degrades to a no-op; a genuine
+            // interrupt is re-raised). The one deliberate non-degrading outcome is this
+            // typed `blocked` hold — not a crash, not a silent finish.
+            yield* Effect.gen(function* () {
+              if (ctx.blocked) return
+              const aggregate = routingStore.get(ctx.sessionID).aggregate
+              if (!aggregate) return
+              const enforcement = yield* resolveRoutingEnforcement()
+              if (!(enforcement.activation.enabled && enforcement.activation.mode === "auto")) return
+              const gate = OrchestrationAggregate.managerCompletionGate(aggregate)
+              if (gate.outcome !== "blocked") return
+              const error = parse(
+                new Error(`Orchestration completion blocked: ${gate.pendingWorkers} delegated worker(s) still pending`),
+              )
               ctx.assistantMessage.error = error
               ctx.assistantMessage.finish = "error"
               ctx.blocked = true

@@ -21,6 +21,7 @@ import type { Budget } from "@opencode-ai/schema/routing/budget"
 import type { Enums } from "@opencode-ai/schema/routing/enums"
 import type { Events } from "@opencode-ai/schema/routing/events"
 import type { SessionID } from "./schema"
+import { OrchestrationAggregate } from "./orchestration-aggregate"
 
 // =============================================================================
 // State shape
@@ -40,10 +41,15 @@ export interface RoutingSessionState {
    * child has been correlated (see `correlateDirectChild`). */
   readonly parentSessionId: SessionID | null
   readonly consumption: Budget.Consumption | null
+  /** Feature 044 / Phase 3 — the Manager's roll-up of every delegated Worker
+   * (FR-A1). Present only for a Manager that dispatched under `auto`-mode
+   * hierarchy routing; `null` for a plain/disabled session (byte-identical to
+   * pre-F044). Released with the session (see `clear`). */
+  readonly aggregate: OrchestrationAggregate.ManagerWorkerAggregate | null
 }
 
 function empty(sessionId: SessionID): RoutingSessionState {
-  return { sessionId, decision: null, hierarchyRole: null, parentSessionId: null, consumption: null }
+  return { sessionId, decision: null, hierarchyRole: null, parentSessionId: null, consumption: null, aggregate: null }
 }
 
 // =============================================================================
@@ -95,6 +101,20 @@ export interface RoutingSessionStateStore {
    * Rejected (state unchanged) when the lineage does not correlate to `sessionId`. */
   readonly recordDispatch: (sessionId: SessionID, lineage: Events.DispatchLineage) => RecordDispatchResult
   readonly recordConsumption: (sessionId: SessionID, consumption: Budget.Consumption) => RoutingSessionState
+  /** Feature 044 (FR-A1) — record a newly delegated Worker as `pending` on the
+   * MANAGER's aggregate (the aggregate root, keyed by manager session id; each
+   * roster entry keyed by child session id). Lazily creates the aggregate. */
+  readonly recordDelegatedWorker: (
+    managerSessionId: SessionID,
+    outcome: OrchestrationAggregate.WorkerOutcome,
+  ) => RoutingSessionState
+  /** Feature 044 (FR-A2, FR-D2) — apply a Worker terminal transition (the wake).
+   * Coalesced/idempotent: a child already terminal is a no-op. A manager with no
+   * aggregate (never delegated) is left untouched. */
+  readonly updateWorkerOutcome: (
+    managerSessionId: SessionID,
+    outcome: OrchestrationAggregate.WorkerOutcome,
+  ) => RoutingSessionState
   readonly clear: (sessionId: SessionID) => void
 }
 
@@ -130,6 +150,18 @@ export function createRoutingSessionStateStore(): RoutingSessionStateStore {
 
     recordConsumption(sessionId, consumption) {
       return put({ ...current(sessionId), consumption })
+    },
+
+    recordDelegatedWorker(managerSessionId, outcome) {
+      const state = current(managerSessionId)
+      const aggregate = state.aggregate ?? OrchestrationAggregate.emptyAggregate(managerSessionId)
+      return put({ ...state, aggregate: OrchestrationAggregate.recordWorker(aggregate, outcome) })
+    },
+
+    updateWorkerOutcome(managerSessionId, outcome) {
+      const state = current(managerSessionId)
+      if (!state.aggregate) return state
+      return put({ ...state, aggregate: OrchestrationAggregate.applyWorkerTransition(state.aggregate, outcome) })
     },
 
     clear(sessionId) {

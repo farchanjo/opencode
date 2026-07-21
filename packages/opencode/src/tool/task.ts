@@ -10,9 +10,12 @@ import { Agent } from "../agent/agent"
 import { deriveSubagentSessionPermission } from "../agent/subagent-permissions"
 import { RoutingHierarchy } from "../session/routing-hierarchy"
 import type { RoutingSessionStateStore } from "../session/routing-state"
+import { OrchestrationAggregate } from "../session/orchestration-aggregate"
+import { TodoAuthority } from "@/routing/domain/todo-authority"
+import { Todo } from "@/session/todo"
 import type { SessionPrompt } from "../session/prompt"
 import { Config } from "@/config/config"
-import { Effect, Exit, Schema, Scope } from "effect"
+import { Cause, Effect, Exit, Option, Schema, Scope } from "effect"
 import { EffectBridge } from "@/effect/bridge"
 import { RuntimeFlags } from "@/effect/runtime-flags"
 import { Database } from "@opencode-ai/core/database/database"
@@ -267,6 +270,23 @@ export const TaskTool = Tool.define(
           nextSession.parentID ?? ctx.sessionID,
         )
         if (!recorded.ok) yield* Effect.logWarning("hierarchy dispatch lineage not recorded", { reason: recorded.reason })
+        // Feature 044 / Phase 3 (FR-A1) — record the delegated Worker as `pending`
+        // on the MANAGER's aggregate (keyed by child session id). The Todo roll-up
+        // is refreshed from the child's own snapshot on its terminal transition
+        // (`foldWorkerTerminal`); at spawn the child has not run, so the roll-up is
+        // the deferred `UNKNOWN_ROLLUP` placeholder. A `background` launch is
+        // fire-and-continue by the experimental background-subagent contract, so it
+        // is recorded as INFORMATIONAL delivery (the completion gate never blocks the
+        // launching turn on it, ADR-0044 Decision #3); a foreground launch is
+        // gate-enforced. The whole contract is INERT unless `hierarchyDispatch` is
+        // present, which the spawn resolver produces ONLY when Smart Routing is
+        // enabled in `auto` mode (FR-E1) — so a disabled session is byte-identical.
+        hierarchyDispatch.store.recordDelegatedWorker(ctx.sessionID, {
+          childSessionId: nextSession.id,
+          lifecycle: "pending",
+          delivery: runInBackground ? "background" : "foreground",
+          todo: OrchestrationAggregate.UNKNOWN_ROLLUP,
+        })
       }
 
       const msg = yield* MessageV2.get({ sessionID: ctx.sessionID, messageID: ctx.messageID }).pipe(
@@ -311,6 +331,71 @@ export const TaskTool = Tool.define(
         return result.parts.findLast((item) => item.type === "text")?.text ?? ""
       })
 
+      // Feature 044 / Phase 3 (FR-A2, FR-C, FR-D1) — the WAKE: on a child's terminal
+      // signal, refresh its Todo roll-up (read-only), run the ordered SHAPE -> POLICY
+      // -> DOMAIN validation chain for a completed result, and fold the terminal
+      // `WorkerOutcome` into the Manager aggregate. Coalesced/idempotent per child
+      // (`updateWorkerOutcome` no-ops an already-terminal child, FR-D2). INERT unless
+      // `hierarchyDispatch` is present (auto-mode gate, FR-E1). Wrapped so ANY defect
+      // degrades to today's ungated behavior — a snapshot read failure degrades the
+      // entry to `UNKNOWN_ROLLUP` (the lifecycle still tracks terminal state, FR-F1) —
+      // but a genuine fiber interrupt (user-abort) is re-raised, never swallowed.
+      const foldWorkerTerminal = Effect.fn("TaskTool.foldWorkerTerminal")(function* (
+        status: OrchestrationAggregate.BackgroundStatus,
+        output?: string,
+        failureText?: string,
+      ) {
+        if (!hierarchyDispatch) return
+        const dispatch = hierarchyDispatch
+        yield* Effect.gen(function* () {
+          // Read the child's OWN Todo snapshot (read-only — never mutate a child's
+          // Todo, FR-A4) via an OPTIONAL service so TaskTool never hard-depends on
+          // Todo.Service (a test/build layer without it degrades to UNKNOWN_ROLLUP).
+          const todosOpt = yield* Effect.serviceOption(Todo.Service)
+          const snapshot = Option.isNone(todosOpt)
+            ? undefined
+            : yield* todosOpt.value
+                .snapshot(nextSession.id)
+                // Narrow the fallback so a genuine user-abort DURING the snapshot read
+                // still propagates (only a real read defect degrades to UNKNOWN_ROLLUP).
+                .pipe(Effect.catchCauseIf((cause) => !Cause.hasInterruptsOnly(cause), () => Effect.succeed(undefined)))
+          const rollup = snapshot
+            ? OrchestrationAggregate.rollupFromSummary(TodoAuthority.summarize(snapshot))
+            : OrchestrationAggregate.UNKNOWN_ROLLUP
+          // POLICY stage (FR-C1): the tool-escape check is a typed defense-in-depth
+          // hook whose LIVE evidence (`toolsUsed`) is empty BY CONSTRUCTION — the F042
+          // fail-closed permission layer (`orchestrationChildToolRules`) already DENIES
+          // any non-Worker tool escape at the permission boundary, so no escaped-tool
+          // signal can reach acceptance. Live child tool-usage tracking is deferred to
+          // Phase 4; the pure `evaluatePolicy` branch is exercised by unit tests and is
+          // ready to enforce the moment a real `toolsUsed` signal is threaded.
+          const chain =
+            status === "completed" && snapshot
+              ? OrchestrationAggregate.workerValidationChain({
+                  childSessionId: nextSession.id,
+                  shape: { hasEnvelope: output !== undefined },
+                  policy: {
+                    executionAllowed: !dispatch.denyExecutionTools,
+                    toolsUsed: [],
+                    allowedTools: ORCHESTRATION_ALLOWED_TOOLS,
+                  },
+                  domain: { snapshot, validationPerformed: true },
+                })
+              : undefined
+          const outcome = OrchestrationAggregate.foldTerminalOutcome({
+            childSessionId: nextSession.id,
+            // Preserve whether this Worker was recorded foreground (gate-enforced) or
+            // background/promoted (informational) so the fold does not misclassify it.
+            delivery: OrchestrationAggregate.deliveryOf(dispatch.store.get(ctx.sessionID).aggregate, nextSession.id),
+            status,
+            todo: rollup,
+            chain,
+            failureText,
+          })
+          dispatch.store.updateWorkerOutcome(ctx.sessionID, outcome)
+        }).pipe(Effect.catchCauseIf((cause) => !Cause.hasInterruptsOnly(cause), () => Effect.void))
+      })
+
       const inject = Effect.fn("TaskTool.injectBackgroundResult")(function* (
         state: "completed" | "error",
         text: string,
@@ -344,12 +429,38 @@ export const TaskTool = Tool.define(
       })
 
       const notify = Effect.fn("TaskTool.notifyBackgroundResult")(function* (jobID: string) {
-        yield* background.wait({ id: jobID }).pipe(
-          Effect.flatMap((result) => {
-            if (result.info?.status === "completed") return inject("completed", result.info.output ?? "")
-            if (result.info?.status === "error") return inject("error", result.info.error ?? "")
-            return Effect.void
-          }),
+        // Feature 044 (FR-D3) — an auto-mode Manager bounds each BACKGROUND Worker by
+        // WORKER_MAX_WAIT_MS so a hung Worker is force-aborted and the completion gate
+        // settles; a plain spawn (no `hierarchyDispatch`) awaits unbounded — the
+        // wrap collapses to `Option.some(result)`, byte-identical to pre-F044.
+        const awaited = background.wait({ id: jobID })
+        const bounded = hierarchyDispatch
+          ? awaited.pipe(Effect.timeoutOption(OrchestrationAggregate.WORKER_MAX_WAIT_MS))
+          : awaited.pipe(Effect.map(Option.some))
+        yield* bounded.pipe(
+          Effect.flatMap((maybe) =>
+            Effect.gen(function* () {
+              if (Option.isNone(maybe)) {
+                yield* foldWorkerTerminal("timeout")
+                yield* background.cancel(jobID).pipe(Effect.ignore)
+                return yield* inject("error", "Worker exceeded max-wait and was aborted.")
+              }
+              const result = maybe.value
+              if (result.info?.status === "completed") {
+                yield* foldWorkerTerminal("completed", result.info.output ?? "")
+                return yield* inject("completed", result.info.output ?? "")
+              }
+              if (result.info?.status === "error") {
+                yield* foldWorkerTerminal("error", undefined, result.info.error ?? undefined)
+                return yield* inject("error", result.info.error ?? "")
+              }
+              // FR-D1 — EVERY terminal transition wakes the Manager. A cancelled/other
+              // terminal folds the aggregate AND re-prompts the Manager (previously it
+              // folded but never injected, starving the wake).
+              yield* foldWorkerTerminal("cancelled")
+              return yield* inject("error", "Background task was cancelled.")
+            }),
+          ),
           Effect.forkIn(scope, { startImmediately: true }),
         )
       })
@@ -421,13 +532,59 @@ export const TaskTool = Tool.define(
         }),
         () =>
           Effect.gen(function* () {
-            const result = yield* Effect.raceFirst(
+            const awaited = Effect.raceFirst(
               background.wait({ id: nextSession.id }).pipe(Effect.map((waited) => waited.info)),
               background.waitForPromotion(nextSession.id),
             )
-            if (result?.metadata?.background === true) return backgroundResult()
-            if (result?.status === "error") return yield* Effect.fail(new Error(result.error ?? "Task failed"))
-            if (result?.status === "cancelled") return yield* Effect.fail(new Error("Task cancelled"))
+            // Feature 044 (FR-D3) — an auto-mode Manager bounds each FOREGROUND Worker
+            // by WORKER_MAX_WAIT_MS: on expiry the hung Worker is force-aborted so the
+            // aggregate advances and the turn never deadlocks. A plain spawn (no
+            // `hierarchyDispatch`) awaits unbounded — byte-identical to pre-F044.
+            const settled = hierarchyDispatch
+              ? yield* awaited.pipe(Effect.timeoutOption(OrchestrationAggregate.WORKER_MAX_WAIT_MS))
+              : Option.some(yield* awaited)
+            if (Option.isNone(settled)) {
+              yield* foldWorkerTerminal("timeout")
+              yield* Effect.all([cancel, background.cancel(nextSession.id)], { discard: true }).pipe(Effect.ignore)
+              return {
+                title: params.description,
+                metadata,
+                output: renderOutput({
+                  sessionID: nextSession.id,
+                  state: "error",
+                  summary: `Task timed out: ${params.description}`,
+                  text: "Worker exceeded max-wait and was aborted.",
+                }),
+              }
+            }
+            const result = settled.value
+            if (result?.metadata?.background === true) {
+              // FR-B1 (ADR-0044 Decision #3) — a foreground Worker PROMOTED to the
+              // background is now fire-and-continue: re-record it as INFORMATIONAL
+              // delivery (still pending) so the completion gate does NOT block the
+              // launching turn on it, and its `onPromote` `notify` wakes the Manager
+              // when it settles. Guarded so a defect never breaks the return path.
+              if (hierarchyDispatch) {
+                yield* Effect.sync(() =>
+                  hierarchyDispatch.store.recordDelegatedWorker(ctx.sessionID, {
+                    childSessionId: nextSession.id,
+                    lifecycle: "pending",
+                    delivery: "background",
+                    todo: OrchestrationAggregate.UNKNOWN_ROLLUP,
+                  }),
+                ).pipe(Effect.ignore)
+              }
+              return backgroundResult()
+            }
+            if (result?.status === "error") {
+              yield* foldWorkerTerminal("error", undefined, result.error ?? undefined)
+              return yield* Effect.fail(new Error(result.error ?? "Task failed"))
+            }
+            if (result?.status === "cancelled") {
+              yield* foldWorkerTerminal("cancelled")
+              return yield* Effect.fail(new Error("Task cancelled"))
+            }
+            yield* foldWorkerTerminal("completed", result?.output ?? "")
             return {
               title: params.description,
               metadata,
