@@ -29,12 +29,40 @@ truth for requirements, decisions, and execution of those changes.
 
 ## Governance
 
-The lifecycle is `constitution` → `specify` → `clarify` (when needed) →
-`plan` → `tasks` → `analyze` → `implement` → `validate`. Work must follow
-the applicable phases and keep the committed artifacts synchronized with
-the implementation.
+**Authority.** `doc/arch` is the single source of truth for the opencode
+operator control plane and smart-routing work: spec beats code, code beats
+assumption. The merged control-plane config `doc/arch/speckit.toml`
+(ADR-0029) governs the deterministic workflow `constitution` → `specify` →
+`clarify` (when needed) → `plan` → `tasks` → `analyze` → `implement` →
+`validate`. Contributors run `speckit status` then `speckit next` and read
+the active `spec.md` before writing any code; no phase is skipped and none
+is executed out of order.
 
-Changes to this constitution require a recorded Architecture Decision
-(MADR) with status `accepted` and at least one `deciders` entry. Trivial
-corrections (typos, formatting) may be committed directly; structural
-changes must go through the ADR process.
+**Write scope (guard).** The `[guard]` policy in `doc/arch/speckit.toml`
+runs in `enforce` mode. The active write scope is the union of the static
+`specScopeGlobs` and the derived globs (`doc/arch/sdd/NNN-slug/**` for the
+active feature's branch, `doc/.specify/**`, and `doc/arch/**` always). A
+denied write means the target is outside the active feature's scope: adjust
+the scope or revise the plan — never disable the guard, never hand-edit
+`doc/.specify/` state, and never reach for `--allow-out-of-spec` to force a
+change through.
+
+**Delivery gate.** A change is complete only when its acceptance criteria
+are covered by tests and `speckit validate` exits clean. `validate` errors
+are never waivable; a red `validate`, `check`, or `verify` blocks every
+commit. Fix the named artifact — never the rule, never the gate.
+
+**Commit discipline.** Commits use Angular Conventional Commit headers
+(`<type>(<scope>): <subject>`, ≤ 72 characters) and land one logical change
+at a time; the git history is part of the spec corpus and stays legible.
+AI attribution — co-author trailers, "generated with" notices, assistant
+session links — is forbidden in code, docs, and messages (ADR-0025,
+ADR-0026); commits authored under the recognized upstream identities in
+`[git].foreignEmails` are synced upstream history and are exempt from the
+own-commit discipline gate.
+
+**Amending this constitution.** Changes to this document require a recorded
+Architecture Decision (MADR) with status `accepted` and at least one
+`deciders` entry. Trivial corrections (typos, formatting) may be committed
+directly; structural or principle-level changes must go through the ADR
+process and keep `AGENTS.md`, `README.md`, and this constitution in sync.

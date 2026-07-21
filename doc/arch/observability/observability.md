@@ -18,9 +18,24 @@ Name metrics after the thing measured (e.g. operator dispatch duration), not aft
 a team or dashboard. Prefer histograms for latency, counters for throughput, and
 gauges for saturation. Every metric documents its unit.
 
+The routing domain (Feature 001, `telemetry-instruments.ts`) is the primary metric
+source. Each smart-routing pass emits one `routing.decision` signal carrying the
+selected role/tier, the survived-candidate count, and the `budget_consumed`
+throughput (turns, tokens, bytes) measured against the active `BudgetPolicy`; a
+worker→manager promotion emits a `hierarchy.escalation` signal with the escalation
+count and structured threshold name. All values are structured scalars derived from
+the decision record — never the task text, prompt, or model output that produced
+them. Latencies (decision-model round-trip, dispatch admission) are histograms;
+routing-event and escalation tallies are counters; budget headroom and fanout
+saturation are gauges.
+
 Operator control plane (Feature 007 / T046) attaches only content-free attributes
 to dispatch spans/metrics. Payload, paths, secrets, project ids, and user text are
-forbidden on metric labels.
+forbidden on metric labels; the routing signals reuse the same bounded label sets
+declared in the Cardinality table below. Instruments export over OTLP to the
+configured collector (`vm.services:4318` in the reference telemetry environment)
+only when the operator has enabled `telemetry.*`; with telemetry off, the
+instruments are inert and no signal leaves the process.
 
 ## Logs
 
