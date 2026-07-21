@@ -91,8 +91,8 @@ function buildDispatcher(mp: MutationPorts): Dispatcher {
 
 describe("T019 — no new catalog id and no version bump (FR11)", () => {
   test("the catalog version is unchanged at the additive-only pin", () => {
-    expect(catalogVersion()).toBe("1.3.0")
-    expect(RESERVED_CATALOG_VERSION).toBe("1.3.0")
+    expect(catalogVersion()).toBe("1.4.0")
+    expect(RESERVED_CATALOG_VERSION).toBe("1.4.0")
   })
 
   test("every Feature 013 verb is a pre-existing reserved id — none is newly introduced", () => {

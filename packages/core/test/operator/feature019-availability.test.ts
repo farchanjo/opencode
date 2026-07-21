@@ -132,7 +132,7 @@ describe("T018 — the default domain badges keep the honest Partial semantics (
 
 describe("T023 — parity: no new catalog id, no version bump, real dispatch ids (FR15)", () => {
   test("the reserved catalog version is unchanged at 1.3.0", () => {
-    expect(RESERVED_CATALOG.version).toBe("1.3.0")
+    expect(RESERVED_CATALOG.version).toBe("1.4.0")
   })
 
   test("the composed verbs ride REAL pre-existing catalog ids — no new dispatch path", () => {

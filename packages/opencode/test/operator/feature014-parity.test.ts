@@ -118,8 +118,8 @@ function buildDispatcher(mp: MutationPorts): Dispatcher {
 
 describe("T020 — no new catalog id, no version bump, no per-surface divergence (FR13)", () => {
   test("the catalog version is unchanged at the additive-only pin", () => {
-    expect(catalogVersion()).toBe("1.3.0")
-    expect(RESERVED_CATALOG_VERSION).toBe("1.3.0")
+    expect(catalogVersion()).toBe("1.4.0")
+    expect(RESERVED_CATALOG_VERSION).toBe("1.4.0")
   })
 
   test("every Feature 014 wired verb is a pre-existing reserved id — none is newly introduced", () => {

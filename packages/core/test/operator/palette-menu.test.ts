@@ -47,9 +47,9 @@ describe("T014 grouped operator menu — top-level copy (FR1, FR4)", () => {
 describe("T014 group list — 12 domains with badges + counts (FR2)", () => {
   const groups = buildOperatorGroupList()
 
-  test("exactly the 12 reserved domains, in order", () => {
-    expect(OPERATOR_SETTINGS_DOMAINS.length).toBe(12)
-    expect(groups.length).toBe(12)
+  test("exactly the 14 reserved domains, in order", () => {
+    expect(OPERATOR_SETTINGS_DOMAINS.length).toBe(14)
+    expect(groups.length).toBe(14)
     expect(groups.map((g) => g.domain)).toEqual([...OPERATOR_SETTINGS_DOMAINS])
   })
 
@@ -179,9 +179,11 @@ describe("T014 availability + input-mode derivation (FR3, FR5, FR7)", () => {
     expect(byId.get("semantic.index.reindex")!.availability).toBe("unavailable") // Milvus-gated mutation
   })
 
-  test("persisting-domain set is exactly the nine persisting domains", () => {
+  test("persisting-domain set is exactly the eleven persisting domains", () => {
     expect([...OPERATOR_PERSISTING_DOMAINS].sort()).toEqual([
       "budget",
+      "capability",
+      "hierarchy",
       "jobs",
       "langlock",
       "pools",

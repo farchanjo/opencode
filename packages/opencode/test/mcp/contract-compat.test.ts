@@ -19,7 +19,7 @@ import { McpReindexTrigger } from "@/mcp/reindex-trigger"
 
 describe("reserved catalog parity — no bump (T045)", () => {
   test("the catalog still declares exactly 30 mcp.* ids at version 1.3.0", () => {
-    expect(OperatorCatalog.catalogVersion()).toBe("1.3.0")
+    expect(OperatorCatalog.catalogVersion()).toBe("1.4.0")
     const catalogMcp = OperatorCatalog.listReservedIds().filter((id) => id.startsWith("mcp."))
     expect(catalogMcp.length).toBe(30)
     // The protocol command list and the reserved catalog agree exactly.

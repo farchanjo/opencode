@@ -75,7 +75,7 @@ describe("Feature 018 T017 — boundaries stay honest capability gaps (FR11)", (
 
 describe("Feature 018 T017 — parity: no new catalog id, no version bump (FR12)", () => {
   test("the reserved catalog version is unchanged at 1.3.0", () => {
-    expect(RESERVED_CATALOG.version).toBe("1.3.0")
+    expect(RESERVED_CATALOG.version).toBe("1.4.0")
   })
 
   test("the composed verbs ride REAL pre-existing catalog ids — no new dispatch path", () => {

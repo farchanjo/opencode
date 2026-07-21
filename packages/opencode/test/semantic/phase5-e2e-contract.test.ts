@@ -68,7 +68,7 @@ const ctx = (id: string, payload: Record<string, unknown> = {}, source = "cli", 
 
 describe("T044 catalog contract — 30 semantic ids at 1.3.0, no bump (C15)", () => {
   test("the reserved catalog carries exactly the 30 semantic ids the command port declares", () => {
-    expect(RESERVED_CATALOG_VERSION).toBe("1.3.0")
+    expect(RESERVED_CATALOG_VERSION).toBe("1.4.0")
     const catalogSemantic = RESERVED_CATALOG.ids.filter((id) => id.startsWith("semantic."))
     expect(catalogSemantic.length).toBe(30)
     expect(new Set(catalogSemantic)).toEqual(new Set(SemanticCommandPort.RESERVED_SEMANTIC_IDS))

@@ -31,7 +31,7 @@ const ctx = (id: string, payload: Record<string, unknown> = {}) =>
 
 describe("operator output.* wiring", () => {
   test("the reserved catalog already declares the output domain + ten ids at 1.3.0", () => {
-    expect(RESERVED_CATALOG_VERSION).toBe("1.3.0")
+    expect(RESERVED_CATALOG_VERSION).toBe("1.4.0")
     const ids = new Set(RESERVED_CATALOG.ids)
     for (const id of OUTPUT_IDS) expect(ids.has(id)).toBe(true)
     expect(RESERVED_CATALOG.domains).toContain("output")

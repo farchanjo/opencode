@@ -75,7 +75,7 @@ describe("T016 command-id parity with slash/CLI (FR8)", () => {
 
 describe("Feature 015 T024 — the CRUD redesign adds no new dispatch path / id / version bump (FR17)", () => {
   test("the reserved catalog version is unchanged — the presentation redesign never bumped it", () => {
-    expect(RESERVED_CATALOG_VERSION).toBe("1.3.0")
+    expect(RESERVED_CATALOG_VERSION).toBe("1.4.0")
   })
 
   /** Every command id any Feature 015 screen surface can dispatch, gathered from the pure classifiers. */

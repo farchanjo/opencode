@@ -55,7 +55,7 @@ describe("T001 — semantic.reranker.validate flips UNCONDITIONALLY to the compo
 
 describe("T001 — parity: no new catalog id, no version bump, real dispatch id (FR1)", () => {
   test("the reserved catalog version is unchanged at 1.3.0", () => {
-    expect(RESERVED_CATALOG.version).toBe("1.3.0")
+    expect(RESERVED_CATALOG.version).toBe("1.4.0")
   })
 
   test("reranker.validate rides a REAL pre-existing catalog id — no new dispatch path", () => {

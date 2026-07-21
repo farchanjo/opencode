@@ -89,8 +89,8 @@ describe("T020 — the pre-existing persisting domains are unchanged", () => {
     for (const domain of ["semantic", "mcp", "output"]) {
       expect(OPERATOR_PERSISTING_DOMAINS).not.toContain(domain)
     }
-    expect([...OPERATOR_PERSISTING_DOMAINS].sort()).toEqual(
-      [...FEATURE_013_DOMAINS, ...PRE_EXISTING_PERSISTING].sort(),
-    )
+    // Feature 046 added hierarchy/capability as persisting enforcement domains.
+    const expected: string[] = [...FEATURE_013_DOMAINS, ...PRE_EXISTING_PERSISTING, "hierarchy", "capability"]
+    expect([...OPERATOR_PERSISTING_DOMAINS].map((d) => String(d)).sort()).toEqual(expected.sort())
   })
 })
