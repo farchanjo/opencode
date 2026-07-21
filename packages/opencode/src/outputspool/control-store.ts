@@ -119,8 +119,15 @@ export interface ControlStore {
 export const createControlStore = (db: Database): ControlStore => {
   db.run(SCHEMA)
 
+  // `INSERT OR IGNORE`: opening an `output_ref` that already exists is an idempotent no-op, not a
+  // primary-key throw. Content-addressed callers (the `skill_chunks` spool keys each generation by
+  // its body content hash, `output-spool-store.ts` `channelKeyFor`) re-put the SAME `output_ref` on
+  // every rebuild; the contract there is "a safe no-op, never a duplicate entry". The prior raw
+  // INSERT threw on that re-put, surfacing as `spool_unavailable: open failed` and failing every
+  // repeat `skill_chunks` reindex. The `input.generation < active` fence above still rejects a stale
+  // generation before this runs, so an ignored insert only ever elides an exact-key duplicate.
   const insert = db.query(
-    `INSERT INTO channel_generation
+    `INSERT OR IGNORE INTO channel_generation
        (output_ref, group_id, generation, channel, durability_tier, correlation_id, created_at, updated_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
   )
