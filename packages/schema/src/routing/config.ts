@@ -56,6 +56,26 @@ export type StrictGates = typeof StrictGates.Type
 // -> Worker, ADR-0002). Mirrors config.cue #RoutingEnforcement.hierarchy.max_depth.
 const HierarchyDepth = Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 2 }))
 
+// OrchestrationMode (Feature 048) selects the hierarchy orchestration behavior.
+// `heuristic` (default) is the byte-identical shipped single-hop heuristic;
+// `force_manager` is the opt-in always-on Architect -> Manager -> Worker three-tier
+// flow. The field is OPTIONAL on the persisted config; an absent value resolves to
+// `heuristic`, so every already-persisted config stays valid.
+// Mirrors config.cue #RoutingEnforcement.hierarchy.orchestration_mode.
+export const OrchestrationMode = Schema.Literals(["heuristic", "force_manager"]).annotate({
+  identifier: "RoutingConfig.OrchestrationMode",
+})
+export type OrchestrationMode = typeof OrchestrationMode.Type
+
+/** The safe default orchestration mode when the field is absent (FR1). */
+export const DEFAULT_ORCHESTRATION_MODE: OrchestrationMode = "heuristic"
+
+/** Resolve the effective orchestration mode, collapsing an absent field to the
+ * safe `heuristic` default so every persisted config is backward compatible. */
+export function orchestrationModeOf(hierarchy: { readonly orchestration_mode?: OrchestrationMode }): OrchestrationMode {
+  return hierarchy.orchestration_mode ?? DEFAULT_ORCHESTRATION_MODE
+}
+
 // RoutingActivation governs whether and when Smart Routing runs.
 export interface Activation extends Schema.Schema.Type<typeof Activation> {}
 export const Activation = Schema.Struct({
@@ -88,6 +108,8 @@ export const Enforcement = Schema.Struct({
   hierarchy: Schema.Struct({
     max_depth: HierarchyDepth,
     orchestration_only: Schema.Boolean,
+    // Feature 048 — optional opt-in orchestration selector (default `heuristic`).
+    orchestration_mode: Schema.optional(OrchestrationMode),
   }),
 }).annotate({ identifier: "RoutingConfig.Enforcement" })
 

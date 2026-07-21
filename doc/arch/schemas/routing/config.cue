@@ -98,6 +98,12 @@ import "routing/ids"
 
 		// If true, Architect and Manager MUST NOT execute project mutations.
 		orchestration_only: bool
+
+		// Feature 048 — orchestration behavior selector. "heuristic" (default) is
+		// the byte-identical shipped single-hop heuristic; "force_manager" is the
+		// opt-in always-on Architect → Manager → Worker three-tier flow. Optional;
+		// an absent field resolves to "heuristic".
+		orchestration_mode?: "heuristic" | "force_manager"
 	}
 }
 
