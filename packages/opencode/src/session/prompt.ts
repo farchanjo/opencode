@@ -491,19 +491,10 @@ const layer = Layer.effect(
             // non-Worker child off the project-mutating / test-executing tool
             // classes when `orchestration_only` is in force (FR-C1), and reconciles
             // its `subagent_depth` guard to the MIN of the two (FR-E3).
-            ...(routed
-              ? {
-                  hierarchyDispatch: {
-                    store: routingSessionState,
-                    lineageStub: routed.lineageStub,
-                    denyExecutionTools: !routed.executionAllowed,
-                    maxDepth: routed.maxDepth,
-                    // Feature 048 — honors hierarchy.max_depth in the depth guard and
-                    // gates the Manager persona injection (force_manager only).
-                    forceManager: routed.forceManager,
-                  },
-                }
-              : {}),
+            // Feature 048 — the payload honors hierarchy.max_depth in the depth
+            // guard and gates the Manager persona injection (force_manager only).
+            // Built via the SAME shared mapping the live LLM seam uses (Feature 049).
+            ...(routed ? { hierarchyDispatch: RoutingHierarchy.toHierarchyDispatchExtra(routed, routingSessionState) } : {}),
           },
           messages: msgs,
           metadata: (val: { title?: string; metadata?: Record<string, any> }) =>
@@ -1481,6 +1472,29 @@ const layer = Layer.effect(
             const bypassAgentCheck = lastUserMsg?.parts.some((p) => p.type === "agent") ?? false
             const promptOps = yield* ops()
 
+            // Feature 049 — the LIVE LLM `task`-tool spawn seam. A real LLM (or
+            // @mention) delegation runs `TaskTool.execute` from the tool set built
+            // here, NOT `handleSubtask`, so it previously never consulted the
+            // hierarchy resolver — F042/F048 routing was inert on the hot path. The
+            // per-turn seeds (parent role/depth + the main-context model) are stable
+            // for the whole turn; only the spawn text varies, so the resolver runs
+            // per `TaskTool.execute` invocation. Failure-tolerant by construction:
+            // the walk degrades a pruned ancestor to a depth boundary, and the
+            // resolver never crashes/blocks (routing-hierarchy.ts).
+            const parentRole = RoutingHierarchy.parentRoleForSpawn(
+              routingSessionState.get(sessionID).hierarchyRole,
+              !session.parentID,
+            )
+            const parentDepth = yield* walkParentDepth(session)
+            const hierarchyResolve = RoutingHierarchy.createLiveHierarchyResolve({
+              resolve: resolveHierarchyDispatch,
+              store: routingSessionState,
+              parentSessionId: sessionID,
+              parentRole,
+              parentDepth,
+              mainContextModel: { providerID: model.providerID, modelID: model.id },
+            })
+
             const tools = yield* SessionTools.resolve({
               agent,
               session,
@@ -1489,6 +1503,7 @@ const layer = Layer.effect(
               bypassAgentCheck,
               messages: msgs,
               promptOps,
+              hierarchyResolve,
             }).pipe(
               Effect.provideService(Plugin.Service, plugin),
               Effect.provideService(Permission.Service, permission),
@@ -1677,15 +1692,22 @@ const layer = Layer.effect(
       }
       template = template.trim()
 
-      const taskModel = yield* Effect.gen(function* () {
+      // Feature 049 — distinguish a GENUINELY PINNED model (command/agent/explicit
+      // `--model`) from the parent-inheritance fallthrough. Only a pinned model is
+      // stamped onto the SubtaskPart below; an unpinned command must leave it UNSET
+      // so `handleSubtask` consults the hierarchy resolver (an unconditionally
+      // stamped parent model made `shouldConsultHierarchy` false, so routing was
+      // skipped for every unpinned command-subtask).
+      const pinnedModel = yield* Effect.gen(function* () {
         if (cmd.model) return Provider.parseModel(cmd.model)
         if (cmd.agent) {
           const cmdAgent = yield* agents.get(cmd.agent)
           if (cmdAgent?.model) return cmdAgent.model
         }
         if (input.model) return Provider.parseModel(input.model)
-        return yield* currentModel(input.sessionID)
+        return undefined
       })
+      const taskModel = pinnedModel ?? (yield* currentModel(input.sessionID))
 
       yield* getModel(taskModel.providerID, taskModel.modelID, input.sessionID)
 
@@ -1713,7 +1735,9 @@ const layer = Layer.effect(
               agent: agent.name,
               description: cmd.description ?? "",
               command: input.command,
-              model: { providerID: taskModel.providerID, modelID: taskModel.modelID },
+              // Stamp the model ONLY when genuinely pinned; leave it unset for an
+              // unpinned command so the hierarchy resolver is consulted (Feature 049).
+              ...(pinnedModel ? { model: { providerID: pinnedModel.providerID, modelID: pinnedModel.modelID } } : {}),
               prompt: templateParts.find((y) => y.type === "text")?.text ?? "",
             },
           ]

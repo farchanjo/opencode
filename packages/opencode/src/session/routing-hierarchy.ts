@@ -174,6 +174,111 @@ export type ResolveHierarchyDispatch = (
   input: ResolveHierarchyDispatchInput,
 ) => Effect.Effect<HierarchyDispatchDecision | undefined>
 
+// =============================================================================
+// Feature 049 — the LIVE LLM `task`-tool spawn seam.
+//
+// `session/tools.ts` builds the tool set ONCE per turn, but a hierarchy decision
+// is PER-SPAWN (it depends on the specific `task.prompt`). So the resolver is
+// injected into `ctx.extra` as a per-invocation closure that `tool/task.ts` calls
+// with the actual spawn text at execution time — reusing the SAME seeding + engine
+// path `handleSubtask` uses, never a divergent second resolver.
+// =============================================================================
+
+/** The `hierarchyDispatch` payload `tool/task.ts` consumes to activate the F042/
+ * F048 branches (lineage record, `orchestration_only` tool-gating, depth-ceiling
+ * reconciliation, Manager persona). Shared by BOTH spawn paths so the mapping from
+ * a route decision lives in ONE place. */
+export interface HierarchyDispatchExtra {
+  readonly store: RoutingSessionStateStore
+  readonly lineageStub: DispatchLineageStub
+  readonly denyExecutionTools: boolean
+  readonly maxDepth: number
+  /** Feature 048 — true only under the opt-in `force_manager` mode: it lets the
+   * depth ceiling honor `hierarchy.max_depth` (so the Manager -> Worker hop passes)
+   * and gates the Manager persona injection. `false` in heuristic mode. */
+  readonly forceManager: boolean
+}
+
+/** The per-spawn inputs the live seam supplies at `tool/task.ts` execution time. */
+export interface LiveHierarchySpawnInput {
+  readonly taskText: string
+  /** A stable per-spawn key (the tool call id) so the resolver's bounded retention
+   * never reuses one spawn's decision for another. */
+  readonly spawnKey: string
+  /** `!!agent.model` for the resolved child subagent — an agent-pinned model wins
+   * over routing (the consult short-circuit), mirroring `handleSubtask`. */
+  readonly hasAgentPinnedModel: boolean
+}
+
+/** The live seam's decision: a route (a routed model + a ready `hierarchyDispatch`
+ * payload), a legality block, or a force_manager degrade — the same three outcomes
+ * `handleSubtask` handles, reshaped so `tool/task.ts` consumes them uniformly. */
+export type LiveHierarchyResolution =
+  | { readonly kind: "route"; readonly model: ResolvedRoutingModel; readonly dispatch: HierarchyDispatchExtra }
+  | { readonly kind: "blocked"; readonly rejection: HierarchyDispatcher.DispatchRejection }
+  | { readonly kind: "degraded"; readonly reason: "model_unresolved"; readonly childRole: Enums.HierarchyRole }
+
+export type LiveHierarchyResolve = (
+  input: LiveHierarchySpawnInput,
+) => Effect.Effect<LiveHierarchyResolution | undefined>
+
+/** The SINGLE route→`hierarchyDispatch` mapping, shared by BOTH spawn paths (the
+ * live LLM seam and `handleSubtask`) so the F042/F048 payload is built one way. */
+export function toHierarchyDispatchExtra(
+  routed: HierarchyRouteDecision,
+  store: RoutingSessionStateStore,
+): HierarchyDispatchExtra {
+  return {
+    store,
+    lineageStub: routed.lineageStub,
+    denyExecutionTools: !routed.executionAllowed,
+    maxDepth: routed.maxDepth,
+    forceManager: routed.forceManager,
+  }
+}
+
+/** Per-turn seeds for the live seam. The parent role/depth and the main-context
+ * model are stable for the whole turn (the parent session is fixed); only the
+ * spawn text + key vary per `task` call, so they are supplied per invocation. */
+export interface LiveHierarchyResolveDeps {
+  readonly resolve: ResolveHierarchyDispatch
+  readonly store: RoutingSessionStateStore
+  readonly parentSessionId: string
+  readonly parentRole: Enums.HierarchyRole
+  readonly parentDepth: number
+  readonly mainContextModel: ResolvedRoutingModel
+}
+
+/**
+ * Build the per-invocation live-spawn resolver injected into `ctx.extra`. It
+ * applies the SAME consult guard + seeding + engine call as `handleSubtask`, then
+ * reshapes the decision so `tool/task.ts` consumes it without re-implementing the
+ * route→dispatch mapping. `undefined` means "no route" — the seam falls through to
+ * the exact current parent-inheritance path (HARD INVARIANT: byte-identical off).
+ */
+export function createLiveHierarchyResolve(deps: LiveHierarchyResolveDeps): LiveHierarchyResolve {
+  return (spawn) =>
+    Effect.gen(function* () {
+      // The LLM `task` tool carries no explicit `task.model`, so only an
+      // agent-pinned model can short-circuit the resolver here (explicit wins).
+      if (!shouldConsultHierarchy(false, spawn.hasAgentPinnedModel)) return undefined
+      const decision = yield* deps.resolve({
+        parentSessionId: deps.parentSessionId,
+        parentRole: deps.parentRole,
+        parentDepth: deps.parentDepth,
+        taskText: spawn.taskText,
+        scope: "session",
+        spawnKey: spawn.spawnKey,
+        mainContextModel: deps.mainContextModel,
+      })
+      if (!decision) return undefined
+      if (decision.kind === "route") {
+        return { kind: "route", model: decision.model, dispatch: toHierarchyDispatchExtra(decision, deps.store) }
+      }
+      return decision
+    })
+}
+
 /**
  * The spawn-seam consult guard (FR-E1): the hierarchy resolver fills only the
  * IMPLICIT default, so it is consulted ONLY when neither an explicit `task.model`
@@ -589,3 +694,6 @@ export async function resolveRoleModel(
 // Re-export the LRU handle type so the resolver's bounded-retention contract is
 // visible to callers that inspect it in tests.
 export type { BoundedLru }
+// Re-export the resolved-model shape so the live seam (`tool/task.ts`) can type a
+// routed child model without reaching into `routing-resolve` directly.
+export type { ResolvedRoutingModel }

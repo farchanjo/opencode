@@ -9,7 +9,6 @@ import { MessageV2 } from "../session/message-v2"
 import { Agent } from "../agent/agent"
 import { deriveSubagentSessionPermission } from "../agent/subagent-permissions"
 import { RoutingHierarchy } from "../session/routing-hierarchy"
-import type { RoutingSessionStateStore } from "../session/routing-state"
 import { OrchestrationAggregate } from "../session/orchestration-aggregate"
 import { emitOrchestrationWorker } from "@/routing/application/telemetry-emitters"
 import { isTelemetryArmed } from "@/routing/telemetry-export"
@@ -115,17 +114,6 @@ export function reconcileDepthCeiling(
   if (hierarchyMaxDepth === undefined) return subagentDepth ?? LEGACY_DEPTH_CEILING
   if (forceManager && subagentDepth === undefined) return hierarchyMaxDepth
   return Math.min(subagentDepth ?? LEGACY_DEPTH_CEILING, hierarchyMaxDepth)
-}
-
-interface HierarchyDispatchExtra {
-  readonly store: RoutingSessionStateStore
-  readonly lineageStub: RoutingHierarchy.DispatchLineageStub
-  readonly denyExecutionTools: boolean
-  readonly maxDepth: number
-  /** Feature 048 — true only under the opt-in `force_manager` mode: it lets the
-   * depth ceiling honor `hierarchy.max_depth` (so the Manager -> Worker hop passes)
-   * and gates the Manager persona injection. `false` in heuristic mode. */
-  readonly forceManager: boolean
 }
 
 /**
@@ -234,7 +222,49 @@ export const TaskTool = Tool.define(
         )
       }
 
-      const hierarchyDispatch = ctx.extra?.hierarchyDispatch as HierarchyDispatchExtra | undefined
+      // A precomputed dispatch (the mention/slash `handleSubtask` path) is used as
+      // is. Otherwise, Feature 049: when the LIVE LLM `task`-tool path injected a
+      // per-invocation resolver (`session/tools.ts`), consult it with THIS spawn's
+      // prompt to route the child — the seam the mention path already wired, but
+      // that a real LLM/@mention delegation was missing. A `undefined` result falls
+      // through to the exact parent-inheritance path (byte-identical when off).
+      let hierarchyDispatch = ctx.extra?.hierarchyDispatch as RoutingHierarchy.HierarchyDispatchExtra | undefined
+      const liveResolve = ctx.extra?.hierarchyResolve as RoutingHierarchy.LiveHierarchyResolve | undefined
+      let routedModel: RoutingHierarchy.ResolvedRoutingModel | undefined
+      // Resolve the child agent early ONLY on the live path (its pinned model must
+      // win over routing); the default path resolves it in place below, unchanged.
+      let resolvedAgent: Agent.Info | undefined
+      if (!hierarchyDispatch && liveResolve) {
+        resolvedAgent = yield* agent.get(params.subagent_type)
+        const decision = yield* liveResolve({
+          taskText: params.prompt,
+          spawnKey: ctx.callID ?? `${ctx.sessionID}:${ctx.messageID}`,
+          hasAgentPinnedModel: !!resolvedAgent?.model,
+        })
+        if (decision?.kind === "blocked") {
+          // A `{kind:"blocked"}` (illegal edge / depth exceeded / denied admission)
+          // surfaces as a REAL blocked spawn, never silent inheritance (mirrors the
+          // handleSubtask path).
+          return yield* Effect.fail(
+            new Error(
+              `Subagent spawn blocked by hierarchy routing (${decision.rejection.reason}): ${decision.rejection.detail}`,
+            ),
+          )
+        }
+        if (decision?.kind === "degraded") {
+          // Feature 048 (FR7) — a force_manager tier whose pool model failed to
+          // resolve is SURFACED (a visible warning), then the spawn proceeds on the
+          // parent model; never a silent inheritance, never a hard block.
+          yield* Effect.logWarning("hierarchy tier degraded to parent model", {
+            childRole: decision.childRole,
+            reason: decision.reason,
+          })
+        }
+        if (decision?.kind === "route") {
+          routedModel = decision.model
+          hierarchyDispatch = decision.dispatch
+        }
+      }
 
       const parent = yield* sessions.get(ctx.sessionID)
       let current = parent
@@ -271,7 +301,7 @@ export const TaskTool = Tool.define(
         })
       }
 
-      const next = yield* agent.get(params.subagent_type)
+      const next = resolvedAgent ?? (yield* agent.get(params.subagent_type))
       if (!next) {
         return yield* Effect.fail(new Error(`Unknown agent type: ${params.subagent_type} is not a valid agent type`))
       }
@@ -359,10 +389,15 @@ export const TaskTool = Tool.define(
       if (msg.info.role !== "assistant") return yield* Effect.fail(new Error("Not an assistant message"))
       const variant = msg.info.variant
 
-      const model = next.model ?? {
-        modelID: msg.info.modelID,
-        providerID: msg.info.providerID,
-      }
+      // Precedence (Feature 049): an agent-pinned model wins, then the hierarchy-
+      // routed model, then parent inheritance. `routedModel` is set only when the
+      // resolver positively routed a tier (never when off / no-route), so the
+      // `next.model ?? { parent }` behavior is byte-identical whenever it is unset.
+      const model = next.model ??
+        routedModel ?? {
+          modelID: msg.info.modelID,
+          providerID: msg.info.providerID,
+        }
       const metadata = {
         parentSessionId: ctx.sessionID,
         sessionId: nextSession.id,

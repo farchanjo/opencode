@@ -13,6 +13,7 @@ import { Truncate } from "@/tool/truncate"
 
 import { Plugin } from "@/plugin"
 import type { TaskPromptOps } from "@/tool/task"
+import type { RoutingHierarchy } from "@/session/routing-hierarchy"
 import { type Tool as AITool, tool, jsonSchema, type ToolExecutionOptions, asSchema } from "ai"
 import { Effect } from "effect"
 import { MessageV2 } from "./message-v2"
@@ -47,6 +48,10 @@ export const resolve = Effect.fn("SessionTools.resolve")(function* (input: {
   bypassAgentCheck: boolean
   messages: SessionV1.WithParts[]
   promptOps: TaskPromptOps
+  /** Feature 049 — the per-invocation live hierarchy-dispatch resolver placed into
+   * each tool call's `ctx.extra` so `TaskTool.execute` can route an LLM `task`
+   * spawn per its own prompt. Absent → the default parent-inheritance path. */
+  hierarchyResolve?: RoutingHierarchy.LiveHierarchyResolve
 }) {
   const tools: Record<string, AITool> = {}
   const run = yield* EffectBridge.make()
@@ -62,7 +67,12 @@ export const resolve = Effect.fn("SessionTools.resolve")(function* (input: {
     abort: options.abortSignal!,
     messageID: input.processor.message.id,
     callID: options.toolCallId,
-    extra: { model: input.model, bypassAgentCheck: input.bypassAgentCheck, promptOps: input.promptOps },
+    extra: {
+      model: input.model,
+      bypassAgentCheck: input.bypassAgentCheck,
+      promptOps: input.promptOps,
+      ...(input.hierarchyResolve ? { hierarchyResolve: input.hierarchyResolve } : {}),
+    },
     agent: input.agent.name,
     messages: input.messages,
     metadata: (val) =>
