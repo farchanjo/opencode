@@ -570,6 +570,19 @@ specScopeGlobs = [
   #   project/bare routing.status `configured:false`-under-global residual now shadows):
   "doc/arch/adr/0036-fix-the-operator-routing-status-query-so-it-honors-the.md",
   "doc/arch/sdd/036-fix-the-operator-routing-status-query-so-it-honors-the/**",
+
+  # Feature 046 — Expose the hierarchy/capability/budget enforcement config leaves
+  #   through BOTH the op CLI and the TUI, driven by a single shared leaf registry.
+  #   Most seams are ALREADY in scope and are NOT re-added (traceability only):
+  #   packages/opencode/src/operator/** (Feature 007) — the new enforcement/ backend +
+  #     command ports + budget extension + stack/authority wiring;
+  #   packages/core/src/operator/** (Feature 007) — the catalog domains + entries;
+  #   packages/tui/src/**/operator/** (Feature 017) — the generated field-list forms;
+  #   packages/{opencode,core,tui}/test/** + packages/protocol/test/** (Feature 001/007)
+  #     — the round-trip, scope, rejection, and op↔TUI parity tests.
+  # Genuinely new path — the shared enforcement-leaf registry (protocol), the single
+  #   source of truth both operator surfaces consume so they never drift (FR4):
+  "packages/protocol/src/enforcement/**",
 ]
 
 # Waivers for intentional near-empty files (warnings only; errors are never
