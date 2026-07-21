@@ -38,6 +38,7 @@ describe("RoutingSessionStateStore", () => {
       hierarchyRole: null,
       parentSessionId: null,
       consumption: null,
+      aggregate: null,
     })
   })
 
