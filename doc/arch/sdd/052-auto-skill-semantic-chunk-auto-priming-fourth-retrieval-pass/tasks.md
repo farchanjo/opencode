@@ -4,23 +4,23 @@
 
 ### Phase 1 — Config gate and provenance
 
-- [ ] T001 Add `#AutoSkillConfig` (`enabled: boolean` default `false`,
+- [x] T001 Add `#AutoSkillConfig` (`enabled: boolean` default `false`,
   `score_floor` default `0.75`) to `packages/schema/src/semantic/
   narrowing-config.ts`, mirroring the existing `NarrowingSurfaceGate`
   convention, per `#AutoSkillConfig`/`#ScoreFloor` in the feature's CUE
   schema. Does NOT touch `SemanticNarrowingConfig.agents`/`.skills`.
-- [ ] T002 Add `resolveAutoSkillConfig` to `packages/core/src/config/
+- [x] T002 Add `resolveAutoSkillConfig` to `packages/core/src/config/
   experimental.ts`: the effective gate is `skill_autoprime.enabled &&
   semantic_narrowing.skills.enabled` (FR1) — a missing `skill_autoprime`
   block, or `skills.enabled === false`, both resolve to fully off.
-- [ ] T003 Add a `provenance: { source: "local" | "remote-pack"; pack_ref?:
+- [x] T003 Add a `provenance: { source: "local" | "remote-pack"; pack_ref?:
   string; autoprime_opt_in: boolean }` field to `Skill.Info`
   (`packages/opencode/src/skill/index.ts:33-38`) and to `SkillDoc`
   (`packages/schema/src/semantic/documents.ts:132-141`), per
   `#SkillProvenance` in the CUE schema. `IndexJobs.skillLiveDoc` (Feature
   050, `packages/opencode/src/semantic/index-jobs.ts`) threads the field
   onto `SkillDoc` unchanged.
-- [ ] T004 Stamp provenance at discovery time in `discoverSkills`
+- [x] T004 Stamp provenance at discovery time in `discoverSkills`
   (`skill/index.ts:184-231`): every local-directory scan (global external
   dirs, project up-scans, `config.directories()`, `cfg.skills?.paths`,
   `:184-221`) stamps `{ source: "local" }`; the existing `cfg.skills.urls`
@@ -28,7 +28,7 @@
   autoprime_opt_in }`, reading `autoprime_opt_in` from a NEW, separate
   per-pack config allowlist — the existing `urls: string[]` shape is
   unchanged (FR5).
-- [ ] T005 Unit tests (`packages/core/test/config/experimental.test.ts`,
+- [x] T005 Unit tests (`packages/core/test/config/experimental.test.ts`,
   `packages/opencode/test/skill/index.test.ts`): `skill_autoprime` default
   off; the composed gate is false when either flag is false and only true
   when both are true; local scans always stamp `"local"`; the URL loop
@@ -38,46 +38,46 @@
 
 ### Phase 2 — Fourth retrieval pass (skill_chunks)
 
-- [ ] T006 Add `retrieveSkillChunks` to `RetrievalPort`
+- [x] T006 Add `retrieveSkillChunks` to `RetrievalPort`
   (`packages/protocol/src/semantic/ports.ts:194-198`), sibling to
   `retrieveSkills`; add `SkillChunkRetrievalRequest extends
   RetrievalRequest` to `packages/protocol/src/semantic/commands.ts`
   (reusing `RetrievalResult` — candidates carry `kind: "skill_chunk"` and
   `chunkRef`, both already present at `commands.ts:393,396`).
-- [ ] T007 Add `runSkillChunks` to `PipelineRunnerPort`'s production
+- [x] T007 Add `runSkillChunks` to `PipelineRunnerPort`'s production
   implementation (`packages/opencode/src/semantic/pipeline-runner.ts:
   297-299`), bound against the `skill_chunks` collection via `Pipeline.run`
   under the SAME `withDeadline`/`latencyBudgetMs` wrapper the other three
   bindings already use.
-- [ ] T008 Add the chunk pass's OWN post-pipeline revalidation in
+- [x] T008 Add the chunk pass's OWN post-pipeline revalidation in
   `runSkillChunks` (mirroring the precedent Feature 051 established for
   agent revalidation, since `Pipeline.run` revalidates skills only,
   `pipeline.ts:157`): a candidate is `revalidated: true` only if its
   `parent_skill_id` still resolves against the live `Skill.Service` AND
   remains provenance-eligible; otherwise dropped before it ever reaches
   `live-narrowing.ts`.
-- [ ] T009 Add `chunks?: readonly AutoSkillChunkRef[]` (`AutoSkillChunkRef
+- [x] T009 Add `chunks?: readonly AutoSkillChunkRef[]` (`AutoSkillChunkRef
   = {chunkId, skillName, score}`) to `NarrowedSets`
   (`packages/opencode/src/session/routing-state.ts:44-48`), following the
   identical absent-means-passthrough / present-non-empty-means-narrowed
   convention as `agents`/`skills`/`tools`.
-- [ ] T010 Extend `live-narrowing.ts`'s `NarrowForTurnDeps`/
+- [x] T010 Extend `live-narrowing.ts`'s `NarrowForTurnDeps`/
   `NarrowingGates`/`buildRequests`/fan-out with the fourth surface: when
   the T002 composed gate is true, `retrieveSkillChunks` runs concurrently
   with the existing three calls in the SAME `Effect.all`/`Promise.all`
   group, sharing the SAME `TaskProfile` (single embed) and the SAME
   `latencyBudgetMs` timeout (FR1, FR7). When the gate is false, the fourth
   call is never attempted.
-- [ ] T011 Add the provenance filter (FR5): before any confidence check, a
+- [x] T011 Add the provenance filter (FR5): before any confidence check, a
   chunk candidate is dropped unless `source === "local" || (source ===
   "remote-pack" && autoprime_opt_in === true)`.
-- [ ] T012 Add the confidence-threshold filter (FR2): of the
+- [x] T012 Add the confidence-threshold filter (FR2): of the
   provenance-eligible candidates, keep only `score.confidence >=
   score_floor`; zero survivors (from zero hits, revalidation, provenance
   exclusion, or the floor) normalizes the `chunks` surface to `undefined`
   — never a present-but-empty list, identical to the existing degenerate-
   to-passthrough rule for the other three surfaces.
-- [ ] T013 Unit tests (`packages/opencode/test/semantic/
+- [x] T013 Unit tests (`packages/opencode/test/semantic/
   live-narrowing.test.ts`, extended): a fake `RetrievalPort` with
   `retrieveSkillChunks` — gate composition (off when either flag is off,
   fake never called); provenance filtering (local kept, remote-pack
@@ -91,43 +91,43 @@
 
 ### Phase 3 — Render the `<auto_skills>` block
 
-- [ ] T014 Add an `autoSkillInjected: ReadonlySet<string> | null` field to
+- [x] T014 Add an `autoSkillInjected: ReadonlySet<string> | null` field to
   `RoutingSessionState` (`routing-state.ts:60-77`) and a
   `recordAutoSkillInjected(sessionId, skillNames)` store method beside
   `recordNarrowedSets` (merges into the existing set, lazily creates it);
   cleared with the rest of the state at the existing `clear`
   (`:211-213`) — no new store, no new lifecycle hook (FR6).
-- [ ] T015 Add `autoSkills(agent: Agent.Info, chunks?: readonly
+- [x] T015 Add `autoSkills(agent: Agent.Info, chunks?: readonly
   AutoSkillChunkRef[])` to `SystemPrompt.Interface`/`Service`
   (`session/system.ts:45-58`), a sibling to the existing `skills`/`mcp`/
   `environment` methods. `chunks` absent or already-degenerate ->
   `undefined` (no block) without any I/O (FR2, FR3).
-- [ ] T016 In `autoSkills`, filter out any chunk whose `skillName` is
+- [x] T016 In `autoSkills`, filter out any chunk whose `skillName` is
   already present in `RoutingSessionState.get(sessionId)
   .autoSkillInjected` for this session, BEFORE resolving any body (FR6).
-- [ ] T017 In `autoSkills`, resolve each remaining chunk's
+- [x] T017 In `autoSkills`, resolve each remaining chunk's
   `body_ref.output_ref` via `OutputSpoolStore.resolve`
   (`packages/opencode/src/semantic/output-spool-store.ts:74`), in rank
   order; a `not_found`/`spool_unavailable` result skips that ONE chunk
   silently (FR3) — never a raw error, never a partial body, never a block
   fails-whole over one stale ref.
-- [ ] T018 Enforce the render-time budget (FR4): accumulate resolved
+- [x] T018 Enforce the render-time budget (FR4): accumulate resolved
   bodies while `Token.estimate` (`core/src/util/token.ts`) of the running
   total stays within `Budget.Retrieval.max_skill_tokens`
   (`schema/routing/budget.ts:45`) AND the chunk count stays within
   `max_skill_chunks` (`:44`); stop appending (drop the lowest-ranked
   remaining chunks first) once either cap would be exceeded. Neither knob
   is read or spent by `SystemPrompt.skills` (Tier-1, unchanged).
-- [ ] T019 Render the `<auto_skills>` block over the survivors (mirrors the
+- [x] T019 Render the `<auto_skills>` block over the survivors (mirrors the
   `Skill.fmt`-style convention `skills` already uses, `system.ts:113-119`);
   zero survivors after T016/T017/T018 -> return `undefined` (no block, not
   an empty `<auto_skills></auto_skills>` tag pair).
-- [ ] T020 After a successful (non-empty) render, call
+- [x] T020 After a successful (non-empty) render, call
   `recordAutoSkillInjected` with every rendered chunk's `skillName` (FR6).
   Add the opt-in debug-log extension (FR8): when Feature 051's
   `debug_log` flag is on, emit the injected `chunkId`/`score` pairs — ids
   and scores only, never chunk body or prompt text.
-- [ ] T021 Unit tests (`packages/opencode/test/session/system.test.ts`,
+- [x] T021 Unit tests (`packages/opencode/test/session/system.test.ts`,
   extended; a fake `OutputSpoolStore` and a fake `RoutingSessionStateStore`):
   dangling/superseded ref skips only that chunk, block still renders from
   the remaining survivors; budget truncation (chunk-count cap, token cap,
@@ -140,20 +140,20 @@
 
 ### Phase 4 — Call site and verification
 
-- [ ] T022 Edit `packages/opencode/src/session/prompt.ts`: thread the
+- [x] T022 Edit `packages/opencode/src/session/prompt.ts`: thread the
   extended `NarrowedSets.chunks` (already produced by the existing
   `narrowForTurn` call before `SessionTools.resolve`, per Feature 051) into
   a new `sys.autoSkills(agent, narrowedSets?.chunks)` call beside the
   existing `sys.skills(agent, narrowedSets?.skills)` call (`:1531`);
   splice the rendered `<auto_skills>` block into the system prompt beside
   `<available_skills>`. No second `narrowForTurn` call is introduced.
-- [ ] T023 Integration test — memoization across runLoop steps (extends
+- [x] T023 Integration test — memoization across runLoop steps (extends
   Feature 051's existing test at `packages/opencode/test/session/
   prompt.test.ts` or its seam-level equivalent): a simulated two-round-trip
   turn (same `lastUser.id`) asserts `sys.autoSkills` reads the identical
   `NarrowedSets.chunks` on both round trips and the fake `retrieveSkillChunks`
   is invoked exactly once for the turn.
-- [ ] T024 Golden — disabled path: byte-identical snapshot of the rendered
+- [x] T024 Golden — disabled path: byte-identical snapshot of the rendered
   system prompt in BOTH sub-cases — `skill_autoprime` off with the skills
   gate off, and `skill_autoprime` off with the skills gate ON — before and
   after this feature's changes (FR1, mirrors Feature 051's AC7 pattern).
@@ -166,7 +166,7 @@
   ranks highly, and remains Tier-1 listable and `skill`-tool loadable
   (AC4); a skill injected earlier in a session is not re-injected on a
   later turn in the SAME session (AC5).
-- [ ] T026 Gates: `bun test test/semantic/ test/session/ test/skill/`
+- [x] T026 Gates: `bun test test/semantic/ test/session/ test/skill/`
   green; `bunx tsgo --noEmit -p packages/opencode/tsconfig.json` clean;
   `speckit validate --json` -> `ok:true`.
 
