@@ -229,7 +229,7 @@
   client" call-count instrumentation wired through the actual
   `AgentV2.Service`/`SkillV2.Service` live reads — that's T019/T020's own
   test file once that slice lands. Un-ticked pending that wiring.
-- [ ] T031 Live smoke — full reindex:
+- [x] T031 Live smoke — full reindex:
   `OPENCODE_CONFIG_DIR=~/.opencodedev opencode-cli op semantic index reindex`
   produces non-zero upserts across all four collections (`agents`, `skills`,
   `skill_chunks`, `tools`) at the probed 2560-dimension generation (AC1, AC2).
