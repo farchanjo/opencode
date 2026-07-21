@@ -2,7 +2,7 @@
 id: 019f82b2-8cae-7090-876a-48aabf40c581
 number: 042
 slug: wire-per-subagent-hierarchy-delegation-into-the-task-spawn
-status: specified
+status: implemented
 created_at: 2026-07-21T03:22:47.342655Z
 ---
 # Feature Specification: Wire Per Subagent Hierarchy Delegation Into The Task Spawn
