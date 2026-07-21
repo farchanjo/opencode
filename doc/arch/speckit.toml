@@ -532,6 +532,18 @@ specScopeGlobs = [
   "packages/core/src/session/execution/**",           # execution layer registers the active root run at run start (FR9)
   "packages/opencode/src/tool/task.ts",               # TaskProcessCoordinator wires onto the TaskTool execution surface (FR4)
   "packages/core/test/session/**",                    # interrupt-registry + execution-hook tests (FR9)
+
+  # Feature 037 — Wire the operator Smart Routing engine into the live session (Phase 1 MVP).
+  #   Compose a session-local routing service over the session-layer Provider/Config/Agent/Auth
+  #   interfaces and select an implicit default model at the session model-selection seam when
+  #   Smart Routing is explicitly enabled in `auto` mode. Most of the surface is ALREADY in scope
+  #   and is NOT re-added (traceability only):
+  #   packages/opencode/src/session/** (Feature 017 block above) — the new routing-resolve.ts
+  #     resolver and the prompt.ts model-selection seam edits;
+  #   packages/opencode/src/routing/** + src/session/routing-state.ts (Feature 001) — the routing
+  #     engine + RoutingSessionState decision-reference store this feature composes/consumes.
+  # Genuinely new implement path (session-layer regression test):
+  "packages/opencode/test/session/**",                # session-layer Smart Routing resolver tests (FR)
 ]
 
 # Waivers for intentional near-empty files (warnings only; errors are never
