@@ -75,6 +75,11 @@ const HIERARCHY_LEAVES: readonly EnforcementLeaf[] = [
   // Feature 048 — the opt-in orchestration selector; `heuristic` is the byte-identical
   // shipped default, `force_manager` is the always-on Architect -> Manager -> Worker flow.
   { domain: "hierarchy", key: "orchestrationMode", path: ["hierarchy", "orchestration_mode"], label: "Orchestration mode", type: { kind: "enum", members: ["heuristic", "force_manager"] } },
+  // Feature 053 — optional role-to-agent bindings (FR1). Each names an agent in the
+  // live registry; an absent leaf is byte-identical to Feature 048's shipped behavior.
+  { domain: "hierarchy", key: "managerAgent", path: ["hierarchy", "manager_agent"], label: "Manager agent", type: { kind: "text" } },
+  { domain: "hierarchy", key: "dataAgent", path: ["hierarchy", "data_agent"], label: "Data agent", type: { kind: "text" } },
+  { domain: "hierarchy", key: "composerAgent", path: ["hierarchy", "composer_agent"], label: "Composer agent", type: { kind: "text" } },
 ]
 
 const CAPABILITY_LEAVES: readonly EnforcementLeaf[] = [

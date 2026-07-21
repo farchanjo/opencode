@@ -104,6 +104,15 @@ import "routing/ids"
 		// opt-in always-on Architect → Manager → Worker three-tier flow. Optional;
 		// an absent field resolves to "heuristic".
 		orchestration_mode?: "heuristic" | "force_manager"
+
+		// Feature 053 — optional role-to-agent bindings (see
+		// deterministic-orchestration-handoff-role-to-agent-binding.cue
+		// #HierarchyHandoffBinding). Each names an Agent.Info.name in the live
+		// registry, validated with agent.get at spawn time. All absent → byte-identical
+		// to Feature 048's shipped behavior (FR7). data_agent defaults to "explore".
+		manager_agent?:  string & !~"^$"
+		data_agent?:     string & !~"^$"
+		composer_agent?: string & !~"^$"
 	}
 }
 

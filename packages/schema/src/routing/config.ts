@@ -70,6 +70,20 @@ export type OrchestrationMode = typeof OrchestrationMode.Type
 /** The safe default orchestration mode when the field is absent (FR1). */
 export const DEFAULT_ORCHESTRATION_MODE: OrchestrationMode = "heuristic"
 
+// BoundAgentName (Feature 053) names an operator-configured role->agent binding on
+// `Enforcement.hierarchy` (`manager_agent`/`data_agent`/`composer_agent`). It refers
+// to an `Agent.Info.name` in the live registry — a plain non-empty string, never an
+// enumerated set (the registry is config-composed at runtime). Mirrors
+// deterministic-orchestration-handoff-role-to-agent-binding.cue `#BoundAgentName`.
+export const BoundAgentName = Schema.String.check(Schema.isNonEmpty()).annotate({
+  identifier: "RoutingConfig.BoundAgentName",
+})
+export type BoundAgentName = typeof BoundAgentName.Type
+
+/** The safe default Data-stage agent when `hierarchy.data_agent` is absent (Feature
+ * 053, FR1): the builtin read-only `explore` agent. `composer_agent` has no default. */
+export const DEFAULT_DATA_AGENT = "explore"
+
 /** Resolve the effective orchestration mode, collapsing an absent field to the
  * safe `heuristic` default so every persisted config is backward compatible. */
 export function orchestrationModeOf(hierarchy: { readonly orchestration_mode?: OrchestrationMode }): OrchestrationMode {
@@ -110,6 +124,11 @@ export const Enforcement = Schema.Struct({
     orchestration_only: Schema.Boolean,
     // Feature 048 — optional opt-in orchestration selector (default `heuristic`).
     orchestration_mode: Schema.optional(OrchestrationMode),
+    // Feature 053 — optional role-to-agent bindings, mirroring the `orchestration_mode`
+    // precedent above. All absent → byte-identical to Feature 048's shipped behavior (FR7).
+    manager_agent: Schema.optional(BoundAgentName),
+    data_agent: Schema.optional(BoundAgentName),
+    composer_agent: Schema.optional(BoundAgentName),
   }),
 }).annotate({ identifier: "RoutingConfig.Enforcement" })
 
