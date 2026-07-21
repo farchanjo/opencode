@@ -49,6 +49,13 @@ export interface TelemetryExportPipeline {
   readonly recordOperatorMutation: () => void
   /** Count one session start (content-free; exported on the next flush). */
   readonly recordSession: () => void
+  /**
+   * Offer one already-built, allow-listed domain signal (routing decision, budget
+   * consumption/breach, fan-out admission, orchestration outcome) onto the bounded
+   * queue. Non-blocking (in-memory enqueue only); redaction runs in the adapter's
+   * `offer` as defense-in-depth. A no-op on the disarmed pipeline (FR8).
+   */
+  readonly emitDomainSignal: (signal: TelemetrySignal) => void
   /** Snapshot the meter into signals, offer them, and drain the queue over the transport. */
   readonly flush: () => Promise<{ readonly flushed: number; readonly discarded: number; readonly durationMs: number }>
   readonly status: () => TelemetryExportStatus
@@ -101,6 +108,7 @@ function disarmed(reason: string, config?: TelemetryConfig): TelemetryExportPipe
     state: "disarmed",
     recordOperatorMutation: () => {},
     recordSession: () => {},
+    emitDomainSignal: () => {},
     flush: () => Promise.resolve({ flushed: 0, discarded: 0, durationMs: 0 }),
     status: () => ({
       state: "disarmed",
@@ -194,6 +202,16 @@ function armPipeline(config: TelemetryConfig, transport: OtlpTransport, deps: Te
     },
     recordSession: () => {
       if (!disposed) meter.sessions += 1
+    },
+    emitDomainSignal: (signal) => {
+      // Non-blocking enqueue onto the REAL transport-backed queue; redaction runs
+      // inside `offer`. Never throws into the caller (the routing hot path).
+      if (disposed) return
+      try {
+        adapter.offer(signal)
+      } catch {
+        /* telemetry never blocks or breaks the hot path */
+      }
     },
     flush,
     status: () => {
@@ -292,6 +310,25 @@ export function recordOperatorMutation(): void {
 /** Count one session start on the armed pipeline (no-op when disarmed/absent). */
 export function recordSession(): void {
   singleton?.recordSession()
+}
+
+/**
+ * True only when the process-singleton export pipeline is composed AND armed
+ * (telemetry enabled + a bound transport). The domain emit seams call this FIRST
+ * so a disabled authority short-circuits before any signal object or attribute bag
+ * is allocated — the byte-identical-when-off contract (FR8).
+ */
+export function isTelemetryArmed(): boolean {
+  return singleton?.state === "armed"
+}
+
+/**
+ * Offer one already-built, allow-listed domain signal onto the armed pipeline
+ * (no-op when disarmed/absent). Non-blocking and fail-open — the network export
+ * happens later on the pipeline's background flush, never on the caller's turn.
+ */
+export function recordDomainSignal(signal: TelemetrySignal): void {
+  singleton?.emitDomainSignal(signal)
 }
 
 /**
