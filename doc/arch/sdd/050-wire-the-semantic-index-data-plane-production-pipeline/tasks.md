@@ -129,14 +129,14 @@
   slow fake port under `Effect.timeout` surfaces `undefined` for that surface
   only; `runTools` calls `ToolPass.run` and never `Pipeline.run` (spy
   assertion).
-- [ ] T019 Add `packages/opencode/src/semantic/live-doc-source.ts`:
+- [x] T019 Add `packages/opencode/src/semantic/live-doc-source.ts`:
   `createLiveDocSource` implementing the EXTENDED `LiveDocSource.collect`
   (`contracts/ports.ts`) — `agents` via `AgentV2.Service.all()` + T001's
   builder, `skills`/`skill_chunks` via `SkillV2.Service.list()` + T002/T004's
   builders, each skipping the embedding call (not just the upsert) when the
   computed content hash equals `indexedHashes.get(canonicalId)`; a missing
   embedding provider rejects rather than fabricating a vector.
-- [ ] T020 Unit tests in
+- [x] T020 Unit tests in
   `packages/opencode/test/semantic/live-doc-source.test.ts` against fake
   `AgentV2.Service`/`SkillV2.Service`/`EmbeddingsHttpPort`/`OutputSpoolStore`:
   an unchanged doc (hash present in `indexedHashes`) makes zero embedding
@@ -157,7 +157,7 @@
   reported capability envelope (`modes`, `maxDocuments`, `contextWindow`,
   `scoreRange`) into a `RerankCapabilities` value alongside the existing
   pass/fail boolean, instead of discarding it.
-- [ ] T023 Edit `packages/opencode/src/operator/stack-live.ts:588-610`: supply
+- [x] T023 Edit `packages/opencode/src/operator/stack-live.ts:588-610`: supply
   `source` (T019's `LiveDocSource`), `context` (the P0 `project_id` plus
   skill `MandatoryFilters`), and `spool` (T013's `OutputSpoolStore`) into
   `MilvusIndexBindingDeps`; route Milvus construction through T006's
@@ -180,30 +180,55 @@
 
 ### Phase 4 — CLI / live verification
 
-- [ ] T026 Golden byte-identical test in
-  `packages/opencode/test/semantic/golden-disabled-path.test.ts`: snapshot
-  every live session/turn surface (tool list, skill listing, agent selection
-  inputs) before and after this feature's changes, asserting the new runner
-  is never invoked from a live turn (FR13).
-- [ ] T027 Tool-id equality test in
-  `packages/opencode/test/semantic/tool-id-equality.test.ts`: assert
-  index-time `ToolDoc.id` (`tool-projection.ts:155`) equals the runtime key —
-  `registry.tools()` item id (`${namespace}_${id}`, `registry.ts:191`) for
-  native/plugin tools, and the `mcp.tools()` record key for MCP tools —
-  across all three classes (FR11, AC6).
-- [ ] T028 Staleness — delete, in
-  `packages/opencode/test/semantic/staleness-delete.test.ts` (or a live-smoke
-  script against `~/.opencodedev`): seed a skill file, index it, delete the
-  file, run reconcile, assert the doc and its `SpoolEntry` are both gone and
-  drift is 0 (AC3).
-- [ ] T029 Staleness — edit, in
-  `packages/opencode/test/semantic/staleness-edit.test.ts`: seed a skill,
-  index it, edit its body, run reconcile, assert the doc/chunk is superseded
-  by content-hash change and never duplicated (AC4).
-- [ ] T030 Staleness — no-change, in
-  `packages/opencode/test/semantic/staleness-nochange.test.ts`: re-run
-  reconcile with no source changes and assert zero embedding calls via a
-  call-count instrumentation seam on the fake/real embeddings client (AC5).
+- [x] T026 Golden byte-identical test, implemented in
+  `packages/opencode/test/semantic/feature050-disabled-path.test.ts` (file
+  renamed from the task's suggested `golden-disabled-path.test.ts` to the
+  `feature050-` prefix convention this slice's other new test files use):
+  asserts BOTH `session/tools.ts` narrowing seams (native list `:114`, MCP
+  record `:411`) still gate on the literal `ToolRetrieval.PASSTHROUGH` (a
+  call-shape regex over the source text, never a brittle line-number
+  assert), proves `ToolRetrieval.narrow`/`narrowRecord` are identity-preserving
+  over that exact gate (including a stray `ranked` list with the gate still
+  disabled), asserts no `session/**` module imports the Feature 050
+  runner/facade (structural "never invoked from a live turn"), and asserts
+  `Skill.fmt(list, {verbose:true})` — the literal formatter
+  `SystemPrompt.skills` wraps — is byte-identical to a stored golden string
+  reproducing that exact join (FR13).
+- [x] T027 Tool-id equality test, implemented in
+  `packages/opencode/test/semantic/feature050-tool-id-equality.test.ts`:
+  asserts index-time `ToolDoc.id` (`ToolProjection.project`,
+  `tool-projection.ts:140-160`) equals the runtime key for all three classes —
+  the `registry.ts:191` `${namespace}_${id}`/bare-namespace composition for
+  native/custom file tools, the raw `plugin.list()` registration id for
+  plugin tools (no namespace prefix), and `McpCatalog.toolName` (imported
+  directly, not reimplemented) for the `mcp.tools()` record key — plus a
+  cross-class collision check (FR11, AC6).
+- [ ] T028 Staleness — delete. PARTIAL coverage in
+  `packages/opencode/test/semantic/feature050-staleness.test.ts`: proves
+  `IndexJobs.planMutations`/`runReconcile` tombstone a doc present in
+  `indexed` but absent from `live` (drift 0 via a post-reconcile search), and
+  — composed with the Wave-1 `OutputSpoolStore` façade — that the tombstoned
+  skill_chunk's spool entry is superseded alongside the doc. NOT covered:
+  the literal "seed a skill file on disk, index it, delete the file, run
+  reconcile" end-to-end flow — that requires `live-doc-source.ts` (T019),
+  still in flight on a concurrent slice of this feature. Un-ticked pending
+  T019/T020 landing; re-verify against the real file-seed flow then.
+- [ ] T029 Staleness — edit. PARTIAL coverage in
+  `feature050-staleness.test.ts`: proves a changed content hash supersedes via
+  `upsert` (never a duplicate row for the same canonical id, verified via a
+  post-reconcile search) and that `planMutations` alone always decides
+  `upsert` (never tombstone+reinsert) for an edited hash. NOT covered: the
+  literal "seed a skill, edit its body on disk, run reconcile" end-to-end
+  flow, same T019/T020 dependency as T028. Un-ticked pending that wiring.
+- [ ] T030 Staleness — no-change. PARTIAL coverage in
+  `feature050-staleness.test.ts`: proves `runReconcile` issues zero
+  upserts/tombstones for identical hashes, and that the embed-skip DECISION
+  itself (`Projection.decideMutation`, the SAME function `live-doc-source.ts`
+  will guard its embed call with) never fires for an unchanged hash via a
+  local embed-call-count spy. NOT covered: the literal "fake/real embeddings
+  client" call-count instrumentation wired through the actual
+  `AgentV2.Service`/`SkillV2.Service` live reads — that's T019/T020's own
+  test file once that slice lands. Un-ticked pending that wiring.
 - [ ] T031 Live smoke — full reindex:
   `OPENCODE_CONFIG_DIR=~/.opencodedev opencode-cli op semantic index reindex`
   produces non-zero upserts across all four collections (`agents`, `skills`,
