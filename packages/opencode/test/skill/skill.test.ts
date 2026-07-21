@@ -1,4 +1,4 @@
-import { describe, expect } from "bun:test"
+import { describe, expect, test } from "bun:test"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { Effect, Layer } from "effect"
 import { Skill } from "../../src/skill"
@@ -66,6 +66,7 @@ const withHome = <A, E, R>(home: string, self: Effect.Effect<A, E, R>) =>
 describe("skill", () => {
   it.effect("formats verbose locations as XML-safe filesystem paths", () =>
     Effect.sync(() => {
+      const local = { source: "local" as const, autoprime_opt_in: false }
       const output = Skill.fmt(
         [
           {
@@ -73,12 +74,14 @@ describe("skill", () => {
             description: "A tagged skill.",
             location: "/tmp/plugin.git#v1.3.0/SKILL.md",
             content: "",
+            provenance: local,
           },
           {
             name: "built-in-skill",
             description: "A built-in skill.",
             location: "<built-in>",
             content: "",
+            provenance: local,
           },
         ],
         { verbose: true },
@@ -582,4 +585,228 @@ description: A skill in the .opencode/skills directory.
       { git: true },
     ),
   )
+})
+
+describe("skill provenance — local sources (Feature 052 FR5)", () => {
+  it.live("stamps a skill discovered under .opencode/skill/ as source: local", () =>
+    provideTmpdirInstance(
+      (dir) =>
+        Effect.gen(function* () {
+          yield* Effect.promise(() =>
+            Bun.write(
+              path.join(dir, ".opencode", "skill", "local-skill", "SKILL.md"),
+              `---
+name: local-skill
+description: A local skill for provenance testing.
+---
+
+# Local Skill
+`,
+            ),
+          )
+
+          const skill = yield* Skill.Service
+          const item = (yield* skill.all()).find((s) => s.name === "local-skill")
+          expect(item).toBeDefined()
+          expect(item!.provenance).toEqual({ source: "local", autoprime_opt_in: false })
+        }),
+      { git: true },
+    ),
+  )
+
+  it.live("stamps a skill discovered via cfg.skills.paths as source: local", () =>
+    provideTmpdirInstance(
+      (dir) =>
+        Effect.gen(function* () {
+          yield* Effect.promise(() =>
+            Bun.write(
+              path.join(dir, "extra-skills", "extra-skill", "SKILL.md"),
+              `---
+name: extra-skill
+description: A skill loaded via skills.paths, for provenance testing.
+---
+
+# Extra Skill
+`,
+            ),
+          )
+
+          const skill = yield* Skill.Service
+          const item = (yield* skill.all()).find((s) => s.name === "extra-skill")
+          expect(item).toBeDefined()
+          expect(item!.provenance).toEqual({ source: "local", autoprime_opt_in: false })
+        }),
+      { git: true, config: { skills: { paths: ["./extra-skills"] } } },
+    ),
+  )
+
+  it.live("stamps the built-in skill as source: local", () =>
+    provideTmpdirInstance(
+      () =>
+        Effect.gen(function* () {
+          const skill = yield* Skill.Service
+          const builtin = yield* skill.get("customize-opencode")
+          expect(builtin).toBeDefined()
+          expect(builtin!.provenance).toEqual({ source: "local", autoprime_opt_in: false })
+        }),
+      { git: true },
+    ),
+  )
+})
+
+describe("skill provenance — remote packs (Feature 052 FR5)", () => {
+  // A fake Discovery.pull keyed by URL, so remote-pack provenance stamping is tested
+  // without any real network I/O or the shared OS-level pull cache — each test seeds
+  // its own unique url -> [dir] entry immediately before calling skill.all().
+  const fakePullResults = new Map<string, string[]>()
+  const withFakeDiscovery = testEffect(
+    Layer.mergeAll(
+      LayerNode.compile(Skill.node, [
+        [
+          Discovery.node,
+          Layer.succeed(
+            Discovery.Service,
+            Discovery.Service.of({ pull: (url: string) => Effect.succeed(fakePullResults.get(url) ?? []) }),
+          ),
+        ],
+      ]),
+      node,
+      testInstanceStoreLayer,
+    ),
+  )
+
+  withFakeDiscovery.live("stamps a remote pack without opt-in as autoprime_opt_in: false", () => {
+    const url = "https://pack.test/no-opt-in/"
+    return provideTmpdirInstance(
+      (dir) =>
+        Effect.gen(function* () {
+          const packDir = path.join(dir, "remote-pack-a")
+          yield* Effect.promise(() =>
+            Bun.write(
+              path.join(packDir, "SKILL.md"),
+              `---
+name: remote-skill-a
+description: A remote pack skill without opt-in, for provenance testing.
+---
+
+# Remote Skill A
+`,
+            ),
+          )
+          fakePullResults.set(url, [packDir])
+
+          const skill = yield* Skill.Service
+          const item = (yield* skill.all()).find((s) => s.name === "remote-skill-a")
+          expect(item).toBeDefined()
+          expect(item!.provenance).toEqual({ source: "remote-pack", pack_ref: url, autoprime_opt_in: false })
+        }),
+      { git: true, config: { skills: { urls: [url] } } },
+    )
+  })
+
+  withFakeDiscovery.live("stamps a remote pack listed in autoprime_urls as autoprime_opt_in: true", () => {
+    const url = "https://pack.test/opt-in/"
+    return provideTmpdirInstance(
+      (dir) =>
+        Effect.gen(function* () {
+          const packDir = path.join(dir, "remote-pack-b")
+          yield* Effect.promise(() =>
+            Bun.write(
+              path.join(packDir, "SKILL.md"),
+              `---
+name: remote-skill-b
+description: A remote pack skill with explicit opt-in, for provenance testing.
+---
+
+# Remote Skill B
+`,
+            ),
+          )
+          fakePullResults.set(url, [packDir])
+
+          const skill = yield* Skill.Service
+          const item = (yield* skill.all()).find((s) => s.name === "remote-skill-b")
+          expect(item).toBeDefined()
+          expect(item!.provenance).toEqual({ source: "remote-pack", pack_ref: url, autoprime_opt_in: true })
+        }),
+      { git: true, config: { skills: { urls: [url], autoprime_urls: [url] } } },
+    )
+  })
+
+  withFakeDiscovery.live(
+    "a second, unlisted url pulled alongside an opted-in one stays autoprime_opt_in: false",
+    () => {
+      const optedIn = "https://pack.test/matrix-opt-in/"
+      const notOptedIn = "https://pack.test/matrix-no-opt-in/"
+      return provideTmpdirInstance(
+        (dir) =>
+          Effect.gen(function* () {
+            const optedInDir = path.join(dir, "remote-pack-c")
+            const notOptedInDir = path.join(dir, "remote-pack-d")
+            yield* Effect.promise(() =>
+              Promise.all([
+                Bun.write(
+                  path.join(optedInDir, "SKILL.md"),
+                  `---
+name: remote-skill-c
+description: Opted-in remote pack skill in a two-pack matrix.
+---
+
+# Remote Skill C
+`,
+                ),
+                Bun.write(
+                  path.join(notOptedInDir, "SKILL.md"),
+                  `---
+name: remote-skill-d
+description: Non-opted-in remote pack skill in a two-pack matrix.
+---
+
+# Remote Skill D
+`,
+                ),
+              ]),
+            )
+            fakePullResults.set(optedIn, [optedInDir])
+            fakePullResults.set(notOptedIn, [notOptedInDir])
+
+            const skill = yield* Skill.Service
+            const list = yield* skill.all()
+            expect(list.find((s) => s.name === "remote-skill-c")?.provenance).toEqual({
+              source: "remote-pack",
+              pack_ref: optedIn,
+              autoprime_opt_in: true,
+            })
+            expect(list.find((s) => s.name === "remote-skill-d")?.provenance).toEqual({
+              source: "remote-pack",
+              pack_ref: notOptedIn,
+              autoprime_opt_in: false,
+            })
+          }),
+        { git: true, config: { skills: { urls: [optedIn, notOptedIn], autoprime_urls: [optedIn] } } },
+      )
+    },
+  )
+})
+
+describe("Skill.isAutoprimable (Feature 052 FR5)", () => {
+  test("a local skill is always autoprimable", () => {
+    expect(Skill.isAutoprimable({ provenance: { source: "local", autoprime_opt_in: false } })).toBe(true)
+  })
+
+  test("a remote pack without opt-in is never autoprimable", () => {
+    expect(
+      Skill.isAutoprimable({
+        provenance: { source: "remote-pack", pack_ref: "https://pack.test/", autoprime_opt_in: false },
+      }),
+    ).toBe(false)
+  })
+
+  test("a remote pack with explicit opt-in is autoprimable", () => {
+    expect(
+      Skill.isAutoprimable({
+        provenance: { source: "remote-pack", pack_ref: "https://pack.test/", autoprime_opt_in: true },
+      }),
+    ).toBe(true)
+  })
 })

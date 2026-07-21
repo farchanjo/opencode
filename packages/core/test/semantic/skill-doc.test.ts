@@ -31,6 +31,24 @@ describe("SkillDocBuilder.build — field mapping (FR7)", () => {
     expect(doc.identity.source).toBe("skill")
   })
 
+  // Feature 052 (SR-C) / T003 — the `SkillDoc.provenance` field mapping (FR5).
+  test("absent input.provenance defaults to the safe local floor", () => {
+    const doc = SkillDocBuilder.build(baseSkill())
+    expect(doc.provenance).toEqual(SkillDocBuilder.DEFAULT_PROVENANCE)
+    expect(doc.provenance).toEqual({ source: "local", autoprime_opt_in: false })
+  })
+
+  test("a supplied remote-pack provenance is threaded through unchanged", () => {
+    const provenance = { source: "remote-pack" as const, pack_ref: "https://packs.test/skills/", autoprime_opt_in: true }
+    const doc = SkillDocBuilder.build(baseSkill({ provenance }))
+    expect(doc.provenance).toEqual(provenance)
+  })
+
+  test("a supplied local provenance is threaded through unchanged", () => {
+    const doc = SkillDocBuilder.build(baseSkill({ provenance: { source: "local", autoprime_opt_in: false } }))
+    expect(doc.provenance).toEqual({ source: "local", autoprime_opt_in: false })
+  })
+
   test("token_estimate is derived from the whole content body", () => {
     const short = SkillDocBuilder.build(baseSkill({ content: "abcd" }))
     const long = SkillDocBuilder.build(baseSkill({ content: "abcd".repeat(100) }))

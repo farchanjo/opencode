@@ -167,6 +167,35 @@ describe("Config", () => {
     }),
   )
 
+  it.effect(
+    "decodes experimental.skill_autoprime and skills.autoprime_urls round-trip (Feature 052 T001/T004)",
+    () =>
+      Effect.sync(() => {
+        const decoded = Schema.decodeUnknownSync(ConfigV1.Info)({
+          skills: {
+            urls: ["https://example.test/skills/"],
+            autoprime_urls: ["https://example.test/skills/"],
+          },
+          experimental: {
+            skill_autoprime: { enabled: true, score_floor: 0.6 },
+          },
+        })
+        expect(decoded.skills?.urls).toEqual(["https://example.test/skills/"])
+        expect(decoded.skills?.autoprime_urls).toEqual(["https://example.test/skills/"])
+        expect(decoded.experimental?.skill_autoprime).toEqual({ enabled: true, score_floor: 0.6 })
+      }),
+  )
+
+  it.effect("skill_autoprime and skills.autoprime_urls default absent (Feature 052 FR1, FR5)", () =>
+    Effect.sync(() => {
+      const decoded = Schema.decodeUnknownSync(ConfigV1.Info)({
+        skills: { urls: ["https://example.test/skills/"] },
+      })
+      expect(decoded.experimental?.skill_autoprime).toBeUndefined()
+      expect(decoded.skills?.autoprime_urls).toBeUndefined()
+    }),
+  )
+
   it.live("returns an empty configuration when directory files do not exist", () =>
     Effect.acquireRelease(
       Effect.promise(() => tmpdir()),

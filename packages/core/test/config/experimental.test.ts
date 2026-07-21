@@ -71,3 +71,70 @@ describe("resolveNarrowingConfig", () => {
     expect(ConfigExperimental.resolveToolSurfaceConfig(undefined, "native").enabled).toBe(false)
   })
 })
+
+/**
+ * Feature 052 (SR-C) / T002 — the `skill_autoprime` config resolver. Asserts the
+ * composed gate is `skill_autoprime.enabled && semantic_narrowing.skills.enabled`
+ * (FR1) — either config absent, or either flag false, resolves fully off — and that
+ * `score_floor`/`maxChunks`/`maxTokens` fall back to their defaults (FR2, FR4) unless
+ * a caller supplies the live-resolved `Budget.Retrieval` slice.
+ */
+describe("resolveAutoSkillConfig", () => {
+  test("both configs absent resolve fully off with every default", () => {
+    const resolved = ConfigExperimental.resolveAutoSkillConfig(undefined, undefined)
+    expect(resolved).toEqual({
+      enabled: false,
+      scoreFloor: ConfigExperimental.AUTO_SKILL_DEFAULTS.scoreFloor,
+      maxChunks: ConfigExperimental.AUTO_SKILL_DEFAULTS.maxChunks,
+      maxTokens: ConfigExperimental.AUTO_SKILL_DEFAULTS.maxTokens,
+    })
+  })
+
+  test("score_floor default is 0.75", () => {
+    expect(ConfigExperimental.AUTO_SKILL_DEFAULTS.scoreFloor).toBe(0.75)
+  })
+
+  test("skill_autoprime enabled with the skills surface off still resolves off (composed gate)", () => {
+    const resolved = ConfigExperimental.resolveAutoSkillConfig({ skills: { enabled: false } }, { enabled: true })
+    expect(resolved.enabled).toBe(false)
+  })
+
+  test("skill_autoprime absent, even with the skills surface on, resolves off (composed gate)", () => {
+    const resolved = ConfigExperimental.resolveAutoSkillConfig({ skills: { enabled: true } }, undefined)
+    expect(resolved.enabled).toBe(false)
+  })
+
+  test("skill_autoprime.enabled false, with the skills surface on, resolves off (composed gate)", () => {
+    const resolved = ConfigExperimental.resolveAutoSkillConfig({ skills: { enabled: true } }, { enabled: false })
+    expect(resolved.enabled).toBe(false)
+  })
+
+  test("both skill_autoprime.enabled and the skills surface true resolve the composed gate on", () => {
+    const resolved = ConfigExperimental.resolveAutoSkillConfig({ skills: { enabled: true } }, { enabled: true })
+    expect(resolved.enabled).toBe(true)
+  })
+
+  test("a custom score_floor overrides the strict default", () => {
+    const resolved = ConfigExperimental.resolveAutoSkillConfig(
+      { skills: { enabled: true } },
+      { enabled: true, score_floor: 0.5 },
+    )
+    expect(resolved.scoreFloor).toBe(0.5)
+  })
+
+  test("a supplied Budget.Retrieval slice overrides the local maxChunks/maxTokens mirrors", () => {
+    const resolved = ConfigExperimental.resolveAutoSkillConfig(
+      { skills: { enabled: true } },
+      { enabled: true },
+      { max_skill_chunks: 3, max_skill_tokens: 1_200 },
+    )
+    expect(resolved.maxChunks).toBe(3)
+    expect(resolved.maxTokens).toBe(1_200)
+  })
+
+  test("absent Budget.Retrieval falls back to the local AUTO_SKILL_DEFAULTS mirrors", () => {
+    const resolved = ConfigExperimental.resolveAutoSkillConfig({ skills: { enabled: true } }, { enabled: true })
+    expect(resolved.maxChunks).toBe(ConfigExperimental.AUTO_SKILL_DEFAULTS.maxChunks)
+    expect(resolved.maxTokens).toBe(ConfigExperimental.AUTO_SKILL_DEFAULTS.maxTokens)
+  })
+})

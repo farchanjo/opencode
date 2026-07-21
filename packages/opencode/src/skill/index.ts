@@ -14,6 +14,7 @@ import { FrontmatterError } from "@opencode-ai/core/v1/config/error"
 import { ConfigMarkdown } from "@/config/markdown"
 import { RuntimeFlags } from "@/effect/runtime-flags"
 import { Glob } from "@opencode-ai/core/util/glob"
+import { Documents } from "@opencode-ai/schema/semantic/documents"
 import { Discovery } from "./discovery"
 import { isRecord } from "@/util/record"
 import { escapeHtml } from "@/util/html"
@@ -34,13 +35,39 @@ const CUSTOMIZE_OPENCODE_SKILL_DESCRIPTION =
   "Use ONLY when the user is editing or creating opencode's own configuration: opencode.json, opencode.jsonc, files under .opencode/, or files under ~/.config/opencode/. Also use when creating or fixing opencode agents, subagents, skills, plugins, MCP servers, or permission rules. Do not use for the user's own application code, or for any project that is not configuring opencode itself."
 const CUSTOMIZE_OPENCODE_SKILL_BODY = SkillPlugin.CustomizeOpencodeContent
 
+// Feature 052 (SR-C) / FR5 — the discovery-stamped trust marker distinguishing a
+// user-authored LOCAL skill from a remote `cfg.skills.urls` pack. Reuses the SAME
+// `SkillProvenance` shape `SkillDoc` carries (`packages/schema/src/semantic/documents.ts`)
+// so the live skill state and the index-time projection never disagree about a skill's
+// trust class; never a second, forked shape.
+export type Provenance = Documents.SkillProvenance
+
+// The provenance every local-directory scan stamps (global external dirs, project
+// up-scans, `config.directories()`, `cfg.skills?.paths`) and the built-in skill carries —
+// `autoprime_opt_in` is meaningless for a local skill and always false (FR5).
+const LOCAL_PROVENANCE: Provenance = { source: "local", autoprime_opt_in: false }
+
 export const Info = Schema.Struct({
   name: Schema.String,
   description: Schema.optional(Schema.String),
   location: Schema.String,
   content: Schema.String,
+  provenance: Documents.SkillProvenance,
 })
 export type Info = Schema.Schema.Type<typeof Info>
+
+/**
+ * Whether a skill is eligible for Tier-2 `<auto_skills>` auto-injection (FR5): a local
+ * skill always is; a remote pack only when its OWN `autoprime_opt_in` is explicitly true.
+ * NEVER consulted for Tier-1 `<available_skills>` listing or `skill`-tool loading — both
+ * stay unconditional regardless of this predicate's result (spec FR5, Non-Goals). Pure
+ * and total; the seam the fourth retrieval pass's provenance filter and the render
+ * pass's eligibility check both code against.
+ */
+export function isAutoprimable(skill: Pick<Info, "provenance">): boolean {
+  const { source, autoprime_opt_in } = skill.provenance
+  return source === "local" || (source === "remote-pack" && autoprime_opt_in === true)
+}
 
 const Issue = Schema.StructWithRest(
   Schema.Struct({
@@ -84,13 +111,20 @@ type State = {
   dirs: Set<string>
 }
 
+type DiscoveryMatch = {
+  readonly match: string
+  readonly provenance: Provenance
+}
+
 type DiscoveryState = {
-  matches: string[]
+  matches: DiscoveryMatch[]
   dirs: string[]
 }
 
 type ScanState = {
-  matches: Set<string>
+  // Keyed by absolute match path; a later stamp for the same path overrides an
+  // earlier one, same de-dup semantics the prior `Set<string>` already had.
+  matches: Map<string, Provenance>
   dirs: Set<string>
 }
 
@@ -102,7 +136,12 @@ export interface Interface {
   readonly available: (agent?: Agent.Info) => Effect.Effect<Info[]>
 }
 
-const add = Effect.fnUntraced(function* (state: State, match: string, events: EventV2Bridge.Service["Service"]) {
+const add = Effect.fnUntraced(function* (
+  state: State,
+  match: string,
+  provenance: Provenance,
+  events: EventV2Bridge.Service["Service"],
+) {
   const md = yield* Effect.tryPromise({
     try: () => ConfigMarkdown.parse(match),
     catch: (err) => err,
@@ -136,6 +175,7 @@ const add = Effect.fnUntraced(function* (state: State, match: string, events: Ev
     description: md.data.description,
     location: match,
     content: md.content,
+    provenance,
   }
 })
 
@@ -143,6 +183,7 @@ const scan = Effect.fnUntraced(function* (
   state: ScanState,
   root: string,
   pattern: string,
+  provenance: Provenance,
   opts?: { dot?: boolean; scope?: string },
 ) {
   const matches = yield* Effect.tryPromise({
@@ -165,7 +206,7 @@ const scan = Effect.fnUntraced(function* (
   )
 
   for (const match of matches) {
-    state.matches.add(match)
+    state.matches.set(match, provenance)
     state.dirs.add(path.dirname(match))
   }
 })
@@ -180,7 +221,7 @@ const discoverSkills = Effect.fnUntraced(function* (
   directory: string,
   worktree: string,
 ) {
-  const state: ScanState = { matches: new Set(), dirs: new Set() }
+  const state: ScanState = { matches: new Map(), dirs: new Set() }
 
   const externalDirs: string[] = []
   if (!disableExternalSkills) {
@@ -190,7 +231,7 @@ const discoverSkills = Effect.fnUntraced(function* (
     for (const dir of externalDirs) {
       const root = path.join(global.home, dir)
       if (!(yield* fsys.isDir(root))) continue
-      yield* scan(state, root, EXTERNAL_SKILL_PATTERN, { dot: true, scope: "global" })
+      yield* scan(state, root, EXTERNAL_SKILL_PATTERN, LOCAL_PROVENANCE, { dot: true, scope: "global" })
     }
 
     const upDirs = yield* fsys
@@ -198,13 +239,13 @@ const discoverSkills = Effect.fnUntraced(function* (
       .pipe(Effect.catch(() => Effect.succeed([] as string[])))
 
     for (const root of upDirs) {
-      yield* scan(state, root, EXTERNAL_SKILL_PATTERN, { dot: true, scope: "project" })
+      yield* scan(state, root, EXTERNAL_SKILL_PATTERN, LOCAL_PROVENANCE, { dot: true, scope: "project" })
     }
   }
 
   const configDirs = yield* config.directories()
   for (const dir of configDirs) {
-    yield* scan(state, dir, OPENCODE_SKILL_PATTERN)
+    yield* scan(state, dir, OPENCODE_SKILL_PATTERN, LOCAL_PROVENANCE)
   }
 
   const cfg = yield* config.get()
@@ -216,18 +257,23 @@ const discoverSkills = Effect.fnUntraced(function* (
       continue
     }
 
-    yield* scan(state, dir, SKILL_PATTERN)
+    yield* scan(state, dir, SKILL_PATTERN, LOCAL_PROVENANCE)
   }
 
+  // Feature 052 (SR-C) / FR5: a remote pack's chunks are never auto-injected unless
+  // its OWN url is present in the NEW, separate `autoprime_urls` allowlist — `urls`
+  // itself is never changed, and a pack absent from the allowlist defaults false.
+  const autoprimeUrls = new Set(cfg.skills?.autoprime_urls ?? [])
   for (const url of cfg.skills?.urls ?? []) {
     const pulledDirs = yield* discovery.pull(url)
+    const provenance: Provenance = { source: "remote-pack", pack_ref: url, autoprime_opt_in: autoprimeUrls.has(url) }
     for (const dir of pulledDirs) {
-      yield* scan(state, dir, SKILL_PATTERN)
+      yield* scan(state, dir, SKILL_PATTERN, provenance)
     }
   }
 
   return {
-    matches: Array.from(state.matches),
+    matches: Array.from(state.matches, ([match, provenance]) => ({ match, provenance })),
     dirs: Array.from(state.dirs),
   }
 })
@@ -237,7 +283,7 @@ const loadSkills = Effect.fnUntraced(function* (
   discovered: DiscoveryState,
   events: EventV2Bridge.Service["Service"],
 ) {
-  yield* Effect.forEach(discovered.matches, (match) => add(state, match, events), {
+  yield* Effect.forEach(discovered.matches, (entry) => add(state, entry.match, entry.provenance, events), {
     concurrency: "unbounded",
     discard: true,
   })
@@ -280,6 +326,7 @@ const layer = Layer.effect(
           description: CUSTOMIZE_OPENCODE_SKILL_DESCRIPTION,
           location: "<built-in>",
           content: CUSTOMIZE_OPENCODE_SKILL_BODY,
+          provenance: LOCAL_PROVENANCE,
         }
         yield* loadSkills(s, yield* InstanceState.get(discovered), events)
         return s

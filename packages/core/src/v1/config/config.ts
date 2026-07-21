@@ -242,6 +242,10 @@ export const Info = Schema.Struct({
         description:
           "Feature 051 live per-turn narrowing config for the agents/skills surfaces (tools reuse 'tool_search'). Absent, or every gate false, keeps the full-set passthrough floor (identical to today).",
       }),
+      skill_autoprime: Schema.optional(NarrowingConfig.AutoSkillConfig).annotate({
+        description:
+          "Feature 052 fourth retrieval pass gate over skill_chunks (Tier-2 <auto_skills> auto-priming), a SEPARATE surface from semantic_narrowing that composes with (never replaces) its 'skills' gate. Absent, or enabled false, keeps the Tier-1-only floor (identical to today).",
+      }),
     }),
   ),
 }).annotate({ identifier: "Config" })

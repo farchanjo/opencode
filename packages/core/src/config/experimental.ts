@@ -2,6 +2,7 @@ export * as ConfigExperimental from "./experimental"
 
 import { NarrowingConfig } from "@opencode-ai/schema/semantic/narrowing-config"
 import { ToolConfig } from "@opencode-ai/schema/semantic/tool-config"
+import type { Budget } from "@opencode-ai/schema/routing/budget"
 import { Schema } from "effect"
 import { Catalog } from "../catalog"
 import { Policy as PolicyV2 } from "../policy"
@@ -49,6 +50,15 @@ export class Experimental extends Schema.Class<Experimental>("ConfigV2.Experimen
    * to pre-Feature-051 behavior (FR6, AC7).
    */
   semantic_narrowing: NarrowingConfig.SemanticNarrowingConfig.pipe(Schema.optional),
+  /**
+   * Feature 052 (SR-C): the fourth `skill_chunks` retrieval pass gate, a config surface
+   * SEPARATE from (never nested inside) `semantic_narrowing` above. Absent, or
+   * `enabled: false`, is the full Tier-1-only floor: no fourth retrieval pass, no
+   * `<auto_skills>` block — byte-identical to Feature 051 behavior (FR1). The composed
+   * effective gate a caller resolves via `resolveAutoSkillConfig` is
+   * `skill_autoprime.enabled && semantic_narrowing.skills.enabled`.
+   */
+  skill_autoprime: NarrowingConfig.AutoSkillConfig.pipe(Schema.optional),
 }) {}
 
 /**
@@ -156,3 +166,48 @@ export const narrowingSurfaceEnabled = (
   config: NarrowingConfig.SemanticNarrowingConfig | undefined,
   surface: NarrowingSurface,
 ): boolean => resolveNarrowingConfig(config)[surface]
+
+/**
+ * Feature 052 (SR-C) — provisional bound defaults for the `skill_autoprime` config,
+ * applied when `experimental.skill_autoprime` (or its fields) is absent. `scoreFloor`
+ * mirrors the CUE `#ScoreFloor` default (0.75, FR2). `maxChunks`/`maxTokens` mirror the
+ * grounded `Budget.Retrieval` defaults (`DEFAULT_ROUTING_BUDGET.retrieval`,
+ * `packages/opencode/src/routing/adapters/outbound/config-adapter.ts`) — a LOCAL MIRROR
+ * only, never a second budget constant; a caller holding the live-resolved
+ * `Budget.Policy.retrieval` should pass it to `resolveAutoSkillConfig` to override these
+ * mirrors (FR4, spent exclusively by the Tier-2 render pass, never by this resolver).
+ */
+export const AUTO_SKILL_DEFAULTS = Object.freeze({
+  scoreFloor: 0.75,
+  maxChunks: 8,
+  maxTokens: 4_000,
+})
+
+/** The resolved `skill_autoprime` config; the structural seam the fourth retrieval pass
+ * and the `<auto_skills>` render pass both code against (FR1, FR2, FR4). */
+export interface ResolvedAutoSkillConfig {
+  readonly enabled: boolean
+  readonly scoreFloor: number
+  readonly maxChunks: number
+  readonly maxTokens: number
+}
+
+/**
+ * Resolve the Feature 052 `skill_autoprime` config. The effective `enabled` gate is
+ * `skill_autoprime.enabled && semantic_narrowing.skills.enabled` (FR1) — either config
+ * missing, or either flag false, resolves fully off; `scoreFloor` defaults to the strict
+ * CUE default (FR2). `retrieval`, when supplied, is the live-resolved `Budget.Policy.
+ * retrieval` slice this feature's render pass spends `max_skill_chunks`/`max_skill_tokens`
+ * from (FR4) — absent, `AUTO_SKILL_DEFAULTS`' local mirrors are used instead. Pure and
+ * total, mirroring `resolveNarrowingConfig`'s shape exactly.
+ */
+export const resolveAutoSkillConfig = (
+  narrowing: NarrowingConfig.SemanticNarrowingConfig | undefined,
+  autoSkill: NarrowingConfig.AutoSkillConfig | undefined,
+  retrieval?: Pick<Budget.Retrieval, "max_skill_chunks" | "max_skill_tokens">,
+): ResolvedAutoSkillConfig => ({
+  enabled: (autoSkill?.enabled ?? false) && resolveNarrowingConfig(narrowing).skills,
+  scoreFloor: autoSkill?.score_floor ?? AUTO_SKILL_DEFAULTS.scoreFloor,
+  maxChunks: retrieval?.max_skill_chunks ?? AUTO_SKILL_DEFAULTS.maxChunks,
+  maxTokens: retrieval?.max_skill_tokens ?? AUTO_SKILL_DEFAULTS.maxTokens,
+})

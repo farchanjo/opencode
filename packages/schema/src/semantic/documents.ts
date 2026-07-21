@@ -126,6 +126,24 @@ export const AgentDoc = Schema.Struct({
 }).annotate({ identifier: "SemanticDocuments.AgentDoc" })
 export type AgentDoc = Schema.Schema.Type<typeof AgentDoc>
 
+// --- auto-skill-semantic-chunk-auto-priming-fourth-retrieval-pass.cue: provenance ---
+
+// SkillProvenance is the Feature 052 (SR-C) trust-boundary marker distinguishing a
+// user-authored LOCAL skill from a remote `cfg.skills.urls` pack (spec FR5, ADR-0052,
+// `#SkillProvenance` in the feature's CUE schema). Shared verbatim between the live
+// `Skill.Info` (`packages/opencode/src/skill/index.ts`) and this document's
+// `SkillDoc.provenance` so the index-time projection and the live skill state never
+// disagree about a skill's trust class. `pack_ref` (the pulled URL) is present only
+// when `source` is `"remote-pack"`; `autoprime_opt_in` defaults `false` and is ignored
+// (never consulted) when `source` is `"local"`, since local skills are unconditionally
+// Tier-2-eligible subject only to the `#ScoreFloor` confidence check.
+export const SkillProvenance = Schema.Struct({
+  source: Schema.Literals(["local", "remote-pack"]),
+  pack_ref: Schema.optional(Schema.String),
+  autoprime_opt_in: Schema.Boolean,
+}).annotate({ identifier: "SemanticDocuments.SkillProvenance" })
+export type SkillProvenance = Schema.Schema.Type<typeof SkillProvenance>
+
 // --- skill-doc.cue -----------------------------------------------------------
 
 // SkillDoc is the `skills` collection summary projection entity; id is the canonical skill id (FR11, C9).
@@ -137,6 +155,7 @@ export const SkillDoc = Schema.Struct({
   compat: SkillCompat,
   cost: SkillCost,
   availability: DocAvailability,
+  provenance: SkillProvenance,
 }).annotate({ identifier: "SemanticDocuments.SkillDoc" })
 export type SkillDoc = Schema.Schema.Type<typeof SkillDoc>
 

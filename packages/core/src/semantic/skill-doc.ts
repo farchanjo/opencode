@@ -17,7 +17,7 @@
 export * as SkillDocBuilder from "./skill-doc"
 
 import { createHash } from "node:crypto"
-import type { SkillDoc } from "@opencode-ai/schema/semantic/documents"
+import type { SkillDoc, SkillProvenance } from "@opencode-ai/schema/semantic/documents"
 import { Projection } from "./projection"
 import { Token } from "../util/token"
 
@@ -28,7 +28,18 @@ export interface SkillInfoLike {
   readonly slash?: boolean
   /** The whole skill body — feeds `Token.estimate` here and `skill-chunk.ts` exclusively; NEVER stored on the doc. */
   readonly content: string
+  /**
+   * Feature 052 (SR-C): the discovery-stamped trust marker (FR5). Optional so callers not
+   * yet threading `Skill.Info.provenance` through still compile; absent resolves to the
+   * `DEFAULT_PROVENANCE` local floor below — never a broader default than what discovery
+   * itself would stamp for a local skill.
+   */
+  readonly provenance?: SkillProvenance
 }
+
+/** The safe default when a caller has not yet threaded live provenance (FR5) — same shape
+ * `discoverSkills`'s local-directory scans stamp, never the more-privileged remote-pack shape. */
+export const DEFAULT_PROVENANCE: SkillProvenance = { source: "local", autoprime_opt_in: false }
 
 const stableHash = (value: unknown): string => createHash("sha256").update(JSON.stringify(value)).digest("hex")
 
@@ -71,5 +82,6 @@ export const build = (input: SkillInfoLike): SkillDoc => {
       enabled: true,
       available: true,
     },
+    provenance: input.provenance ?? DEFAULT_PROVENANCE,
   }
 }

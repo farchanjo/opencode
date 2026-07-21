@@ -2,7 +2,7 @@ export * as NarrowingConfig from "./narrowing-config"
 
 import { Schema } from "effect"
 import { Enabled } from "./text-values"
-import { LatencyBudgetMs } from "./values"
+import { Confidence, LatencyBudgetMs } from "./values"
 
 // Mirrors doc/arch/schemas/wire-live-per-turn-semantic-narrowing-of-agents-skills-and.cue
 // (package semantic.livequery) for the Feature 051 live per-turn narrowing config
@@ -33,3 +33,22 @@ export const SemanticNarrowingConfig = Schema.Struct({
   debug_log: Schema.optional(Schema.Boolean),
 }).annotate({ identifier: "SemanticConfig.SemanticNarrowingConfig" })
 export type SemanticNarrowingConfig = Schema.Schema.Type<typeof SemanticNarrowingConfig>
+
+// Mirrors doc/arch/schemas/auto-skill-semantic-chunk-auto-priming-fourth-retrieval-pass.cue
+// (package semantic.autoskill) for the Feature 052 (SR-C) fourth retrieval pass over
+// `skill_chunks`. A SEPARATE top-level config surface from `SemanticNarrowingConfig`
+// above (never nested inside it) — the effective gate a caller resolves is
+// `skill_autoprime.enabled && semantic_narrowing.skills.enabled` (FR1); this struct
+// never duplicates the `skills` gate itself.
+
+// AutoSkillConfig is the Feature 052 config surface: `enabled` (default false, FR1)
+// composes with, never replaces, `SemanticNarrowingConfig.skills`; `score_floor` is the
+// minimum rerank confidence a `skill_chunk` candidate must clear before consideration
+// (FR2), reusing the SAME real-valued [0,1] `Confidence` domain `SemanticScore.confidence`
+// already carries — resolved to the strict default (0.75) by `resolveAutoSkillConfig`
+// when absent, per `#AutoSkillConfig`/`#ScoreFloor` in the feature's CUE schema.
+export const AutoSkillConfig = Schema.Struct({
+  enabled: Enabled, // default false (FR1)
+  score_floor: Schema.optional(Confidence), // default 0.75 (FR2)
+}).annotate({ identifier: "SemanticConfig.AutoSkillConfig" })
+export type AutoSkillConfig = Schema.Schema.Type<typeof AutoSkillConfig>
