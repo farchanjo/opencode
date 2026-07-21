@@ -20,6 +20,7 @@ import {
   deltaFromUsage,
   recordTurn,
   recordTurnAndEvaluate,
+  retryDelta,
   evaluateLiveBudget,
   exceedsTurnLimit,
   headroomFor,
@@ -115,6 +116,65 @@ describe("consumption recording (FR-A1, FR-A2, FR-F3-a/b)", () => {
     expect(after2?.throughput.context_tokens_used).toBe(1500)
     expect(after2?.throughput.output_tokens_used).toBe(300)
     expect(after2?.cost.cost_usd_used).toBeCloseTo(0.08, 6)
+  })
+})
+
+// =============================================================================
+// Feature 050 FR12 — resilience.retry_count is now live (fed by semantic
+// data-plane retries), activating the previously-inert retry_depth knob.
+// =============================================================================
+
+describe("resilience.retry_count accumulation (Feature 050 FR12)", () => {
+  test("retryDelta zeros every field but retries", () => {
+    expect(retryDelta(2)).toEqual({ turns: 0, contextTokens: 0, outputTokens: 0, costUsd: 0, timeMs: 0, retries: 2 })
+  })
+
+  test("retryDelta clamps a non-finite/negative count to 0", () => {
+    expect(retryDelta(-1).retries).toBe(0)
+    expect(retryDelta(Number.NaN).retries).toBe(0)
+  })
+
+  test("accumulateConsumption folds delta.retries into resilience.retry_count across calls", () => {
+    const once = accumulateConsumption(ZERO_CONSUMPTION, retryDelta(1))
+    expect(once.resilience.retry_count).toBe(1)
+    const twice = accumulateConsumption(once, retryDelta(2))
+    expect(twice.resilience.retry_count).toBe(3)
+    const thrice = accumulateConsumption(twice, delta({ retries: 1 }))
+    expect(thrice.resilience.retry_count).toBe(4)
+  })
+
+  test("a delta with no `retries` field (old shape) never increments retry_count", () => {
+    const prior: Budget.Consumption = {
+      ...ZERO_CONSUMPTION,
+      resilience: { retry_count: 5, validation_count: 1, escalation_count: 0 },
+    }
+    const after = accumulateConsumption(prior, delta())
+    expect(after.resilience.retry_count).toBe(5)
+  })
+
+  test("golden: an old-shape delta (no `retries`) yields a byte-identical result to before Feature 050", () => {
+    const prior: Budget.Consumption = {
+      ...ZERO_CONSUMPTION,
+      resilience: { retry_count: 0, validation_count: 2, escalation_count: 1 },
+    }
+    const d = delta({ contextTokens: 100, outputTokens: 50, costUsd: 0.01, timeMs: 200 })
+    const after = accumulateConsumption(prior, d)
+    expect(after).toEqual({
+      throughput: { turns_used: 1, context_tokens_used: 100, output_tokens_used: 50 },
+      concurrency: prior.concurrency,
+      retrieval: prior.retrieval,
+      cost: { time_ms_used: 200, cost_usd_used: 0.01 },
+      resilience: { retry_count: 0, validation_count: 2, escalation_count: 1 },
+    })
+  })
+
+  test("validation_count and escalation_count are carried untouched regardless of retries", () => {
+    const prior: Budget.Consumption = {
+      ...ZERO_CONSUMPTION,
+      resilience: { retry_count: 0, validation_count: 7, escalation_count: 3 },
+    }
+    const after = accumulateConsumption(prior, retryDelta(4))
+    expect(after.resilience).toEqual({ retry_count: 4, validation_count: 7, escalation_count: 3 })
   })
 })
 

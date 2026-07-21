@@ -73,6 +73,10 @@ export interface ConsumptionDelta {
   readonly outputTokens: number
   readonly costUsd: number
   readonly timeMs: number
+  /** Data-plane retries observed for this response (Feature 050 FR12) — folded
+   * into `resilience.retry_count`. Optional; a delta without it (the pre-050
+   * shape) is equivalent to `0`, so old call sites accumulate byte-identically. */
+  readonly retries?: number
 }
 
 /** Live `Session.getUsage` shape this module reads (the numeric spend only). */
@@ -98,11 +102,30 @@ function safe(value: number): number {
   return Number.isFinite(value) && value > 0 ? value : 0
 }
 
+/** Zero-or-positive retry count; a missing/non-finite/negative `retries` folds
+ * to 0 so a malformed delta can never corrupt the resilience running total. */
+function safeRetries(delta: ConsumptionDelta): number {
+  const retries = delta.retries
+  return retries === undefined ? 0 : safe(retries)
+}
+
+/**
+ * Create a `ConsumptionDelta` that reports ONLY retries (every other field
+ * zeroed) — the shape a data-plane retry site (Feature 050 FR12: T007's
+ * `withDataPlaneRetry`, T021's dimension-probe retries) reports without
+ * hand-building a full usage delta.
+ */
+export function retryDelta(count: number): ConsumptionDelta {
+  return { turns: 0, contextTokens: 0, outputTokens: 0, costUsd: 0, timeMs: 0, retries: safe(count) }
+}
+
 /**
  * Fold a per-response delta onto the session's prior `Budget.Consumption` — the
- * running total across the session's turns (FR-A2). Only the throughput and cost
- * dimensions are updated from a live response; concurrency / retrieval /
- * resilience carry the prior values unchanged (Phase 3 fills them).
+ * running total across the session's turns (FR-A2). Throughput and cost update
+ * from a live response; `resilience.retry_count` accumulates `delta.retries`
+ * (Feature 050 FR12 — fed by semantic data-plane retries, no longer inert);
+ * `validation_count`/`escalation_count` and concurrency/retrieval still carry
+ * the prior values unchanged (future phases fill them).
  */
 export function accumulateConsumption(prior: Budget.Consumption, delta: ConsumptionDelta): Budget.Consumption {
   return {
@@ -118,7 +141,10 @@ export function accumulateConsumption(prior: Budget.Consumption, delta: Consumpt
       time_ms_used: prior.cost.time_ms_used + delta.timeMs,
       cost_usd_used: prior.cost.cost_usd_used + delta.costUsd,
     },
-    resilience: prior.resilience,
+    resilience: {
+      ...prior.resilience,
+      retry_count: prior.resilience.retry_count + safeRetries(delta),
+    },
   }
 }
 
@@ -133,14 +159,16 @@ export interface BudgetEnforcement {
   readonly decision: Decision
   /** True only for a HARD-STOP outcome (`blocked` / `error`). An `escalation`
    * (resilience threshold) is NOT a hard stop — it is advisory here and wired to
-   * halt the turn only in Phase 3 (see `isHardStop`). */
+   * halt the turn only in a future phase (see `isHardStop`). */
   readonly breached: boolean
 }
 
 /** A hard-stop outcome halts the turn (`ctx.blocked`). `escalation` is deliberately
  * excluded: a resilience threshold asks the caller to reclassify/escalate, not to
- * halt — and the resilience dimension is not yet fed live counts (Phase 3), so it
- * can only fire on operator-recorded spend. Only `blocked`/`error` set `ctx.blocked`. */
+ * halt. `resilience.retry_count` is now live (Feature 050 FR12 — accumulated from
+ * semantic data-plane retries via `accumulateConsumption`); `validation_count` /
+ * `escalation_count` are still unfed, so an `escalation` outcome can only fire on
+ * retry_depth today. Only `blocked`/`error` set `ctx.blocked`. */
 export function isHardStop(outcome: Outcome): boolean {
   return outcome === "blocked" || outcome === "error"
 }
@@ -173,8 +201,9 @@ function perResponseView(cumulative: Budget.Consumption, delta: ConsumptionDelta
  *   - `checkCost` runs over the CUMULATIVE total (`token_budget` = context+output
  *     summed across turns; `cost_usd`/`time_ms` cumulative) — the genuinely
  *     cumulative dimensions.
- *   - retrieval / resilience run over the cumulative total (zero live counts in
- *     Phase 2b).
+ *   - retrieval / resilience run over the cumulative total; `retry_count` is a
+ *     real accumulated count (Feature 050 FR12), `validation_count`/
+ *     `escalation_count` remain unfed (future phases).
  * A breach is the engine's explicit typed outcome — never a truncated or reduced
  * value (FR-B2, FR-B3).
  */
