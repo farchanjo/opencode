@@ -40,6 +40,7 @@ import { ModelV2 } from "@opencode-ai/core/model"
 import type { Budget } from "@opencode-ai/schema/routing/budget"
 import type { Enums } from "@opencode-ai/schema/routing/enums"
 import type { Decision } from "@opencode-ai/schema/routing/decision"
+import type { RoutingConfig } from "@opencode-ai/schema/routing/config"
 import type { ConfigEntry, ConfigPort } from "@/operator/application/ports/config-port"
 import { contentHash } from "@/operator/adapters/outbound/config-service"
 import { createConfigAdapter, toRoutingConfigSource } from "@/routing/adapters/outbound/config-adapter"
@@ -325,6 +326,75 @@ function hierarchyRoleOf(profile: Enums.RoutingProfile): Enums.HierarchyRole {
   return profile === "manager" ? "manager" : "worker"
 }
 
+// =============================================================================
+// Feature 045 — activation mode. `never`/disabled is the no-op path; `auto`
+// resolves once per session (drift-cache memoized); `always` re-evaluates every
+// turn so a role/pool/config change takes effect next turn without a new session.
+// The mode read collapses a disabled engine to `never`, so a single value drives
+// both the routing gate and the caller-seam short-circuit bypass.
+// =============================================================================
+
+/** Read the effective activation mode from the routing authorities, collapsing a
+ * disabled engine to `"never"`. Throwing/hanging is handled by `boundMode`. */
+async function readActivationMode(
+  config: RoutingResolveConfigLike,
+  run: <A>(effect: Effect.Effect<A>) => Promise<A>,
+): Promise<RoutingConfig.RoutingMode> {
+  const source = toRoutingConfigSource(createConfigAdapter({ config: sessionConfigReadPort(config, run) }))
+  const effective = await source.resolve()
+  const activation = effective.config.activation
+  return activation.enabled ? activation.mode : "never"
+}
+
+/** Bound the mode read on the prompt hot path: a crash/rejection or a wedged FS
+ * degrades to `"never"` (the no-op path) instead of blocking, inheriting the F037
+ * hang-safety contract. */
+function boundMode(read: () => Promise<RoutingConfig.RoutingMode>): Effect.Effect<RoutingConfig.RoutingMode> {
+  return Effect.promise(() => read().catch(() => "never" as RoutingConfig.RoutingMode)).pipe(
+    Effect.timeoutOrElse({
+      duration: RESOLVE_TIMEOUT_MS,
+      orElse: () => Effect.succeed("never" as RoutingConfig.RoutingMode),
+    }),
+  )
+}
+
+export interface RoutingActivationDeps {
+  readonly config: RoutingResolveConfigLike
+}
+
+export type ReadRoutingMode = () => Effect.Effect<RoutingConfig.RoutingMode>
+
+/** Feature 045 — a hang-safe reader of the effective activation mode for the
+ * session model-selection seam. The seam consults it (only when a persisted model
+ * would otherwise short-circuit routing) to decide whether `always` mode must
+ * re-evaluate this turn. Degrades to `"never"` on any failure/timeout, so it can
+ * never block or crash the prompt path. */
+export function createRoutingActivationReader(deps: RoutingActivationDeps): ReadRoutingMode {
+  return () =>
+    Effect.gen(function* () {
+      const context = yield* Effect.context<never>()
+      const run = <A>(effect: Effect.Effect<A>): Promise<A> => Effect.runPromiseWith(context)(effect)
+      return yield* boundMode(() => readActivationMode(deps.config, run))
+    }).pipe(Effect.catchCause(() => Effect.succeed("never" as RoutingConfig.RoutingMode)))
+}
+
+export interface RoutingConsultInput {
+  readonly explicitModel: boolean
+  readonly hasPersistedModel: boolean
+  readonly mode: RoutingConfig.RoutingMode
+}
+
+/** Feature 045 — the pure session-seam decision: consult the routing resolver this
+ * turn? An explicit `--model` / agent-pinned model ALWAYS wins (never consulted).
+ * Otherwise routing is consulted when there is no persisted session model (the
+ * msg1 boundary) OR the mode is `always` (re-evaluate every turn, bypassing the
+ * persisted-model short-circuit). `auto` / `never` keep the persisted-model
+ * short-circuit — byte-identical to pre-045. */
+export function shouldConsultRouting(input: RoutingConsultInput): boolean {
+  if (input.explicitModel) return false
+  return !input.hasPersistedModel || input.mode === "always"
+}
+
 export function createRoutingResolver(deps: RoutingResolveDeps): ResolveRoutingModel {
   const decisionRefs = createRoutingSessionStateStore()
   // Evict the paired RoutingSessionState entry whenever the drift cache drops a
@@ -363,13 +433,16 @@ export function createRoutingResolver(deps: RoutingResolveDeps): ResolveRoutingM
     input: ResolveRoutingModelInput,
     run: <A>(effect: Effect.Effect<A>) => Promise<A>,
   ): Promise<ResolvedRoutingModel | undefined> {
-    // 1) Gate — Smart Routing must be explicitly enabled in `auto` mode.
+    // 1) Gate — Smart Routing must be explicitly enabled in a routing mode
+    // (`auto` OR `always`; Feature 045). A disabled engine or `never` mode is the
+    // no-op path. Per-turn re-evaluation vs. drift-cache memoization is decided by
+    // the caller closure from the same mode; this gate only admits routing.
     const routingConfigSource = toRoutingConfigSource(
       createConfigAdapter({ config: sessionConfigReadPort(deps.config, run) }),
     )
     const effective = await routingConfigSource.resolve()
     const activation = effective.config.activation
-    if (!(activation.enabled && activation.mode === "auto")) return undefined
+    if (!(activation.enabled && activation.mode !== "never")) return undefined
 
     // 2) Evaluate — compose the routing service over the session-layer seams.
     const candidates = createCandidateSource({
@@ -416,23 +489,34 @@ export function createRoutingResolver(deps: RoutingResolveDeps): ResolveRoutingM
 
   return (input) =>
     Effect.gen(function* () {
-      // Per-session drift guard: reuse the first resolution for every later
-      // message in the same session (null = resolved-to-fallback).
-      if (driftCache.has(input.sessionID)) return driftCache.get(input.sessionID) ?? undefined
-
       // Capture the caller's context — it carries the request `InstanceRef`
       // binding — so every outbound seam runs bound by construction.
       const context = yield* Effect.context<never>()
       const run = <A>(effect: Effect.Effect<A>): Promise<A> => Effect.runPromiseWith(context)(effect)
+
+      // Feature 045 — the activation MODE governs memoization. `never`/disabled →
+      // no routing (byte-identical to the no-op path). `auto` → resolve ONCE per
+      // session and reuse the first decision for every later turn (the drift
+      // guard, so a long conversation never flips models mid-stream). `always` →
+      // RE-EVALUATE every turn so a role/pool/config change takes effect next turn
+      // without a new session; the drift cache is neither read nor written.
+      // Reading the mode first (rather than after `resolveOnce`) closes the
+      // auto→always mid-session flip: an entry can only ever be memoized in `auto`.
+      const mode = yield* boundMode(() => readActivationMode(deps.config, run))
+      if (mode === "never") return undefined
+      const memoize = mode === "auto"
+      if (memoize && driftCache.has(input.sessionID)) return driftCache.get(input.sessionID) ?? undefined
+
       // Hang-proofing: bound the ENTIRE attempt (fs mkdir/commit + evaluate +
       // provider + auth) so a stuck FS cannot block the prompt path. `.catch`
-      // handles crashes/rejections; `timeoutOrElse` handles a HANG — both
-      // degrade to `undefined` (→ static default), and the result is cached so a
-      // transient stall is not re-attempted every message in the session.
+      // handles crashes/rejections; `timeoutOrElse` handles a HANG — both degrade
+      // to `undefined` (→ static default). In `auto` the result is cached so a
+      // transient stall is not re-attempted every message in the session; `always`
+      // deliberately re-attempts each turn.
       const resolved = yield* Effect.promise(() => resolveOnce(input, run).catch(() => undefined)).pipe(
         Effect.timeoutOrElse({ duration: RESOLVE_TIMEOUT_MS, orElse: () => Effect.succeed(undefined) }),
       )
-      driftCache.set(input.sessionID, resolved ?? null)
+      if (memoize) driftCache.set(input.sessionID, resolved ?? null)
       return resolved
     }).pipe(Effect.catchCause(() => Effect.succeed(undefined)))
 }

@@ -179,6 +179,22 @@ const layer = Layer.effect(
       consumptionStore: routingSessionState,
     })
 
+    // Feature 045 — a hang-safe reader of the effective activation mode. The model-
+    // selection seams below consult it only when a persisted session model would
+    // otherwise short-circuit routing AND no explicit model is present (msg2+). The
+    // mode cannot be known WITHOUT reading it, so this read fires on every such
+    // persisted-model turn in ALL modes (never/auto/always), not only `always`;
+    // under `always` routing then RE-EVALUATES every turn (a role/pool change takes
+    // effect next turn without a new session), while `auto`/`never` keep the
+    // persisted-model short-circuit. The read is cheap: `config.get`/`getGlobal`
+    // are TTL-cached in-memory (no filesystem I/O per turn), and it is triple-
+    // guarded (`.catch`→"never", `timeoutOrElse` 1.5s→"never", `catchCause`→"never"),
+    // so it can never block or crash the prompt path (see routing-resolve.ts). msg1
+    // (no persisted model) skips the read entirely and is byte-identical to pre-045.
+    const readRoutingMode = RoutingResolve.createRoutingActivationReader({
+      config: { get: () => config.get(), getGlobal: () => config.getGlobal() },
+    })
+
     // Feature 042 / Phase 2 — session-local hierarchy dispatch resolver. Consulted
     // ONLY in the implicit-default branch of the Task spawn seam below (an explicit
     // `task.model` and an agent-pinned subagent model always win); returns
@@ -612,24 +628,32 @@ const layer = Layer.effect(
               throw error
             }
             // Architect model precedence (shell path mirror; Feature 037 Phase 1 +
-            // Feature 042 / ADR-0042):
-            //   --model / agent-pinned  ▶  main-context selected model  ▶  routing
-            //   (pool fallback)  ▶  static default.
-            // The Architect (primary/root session) ALWAYS keeps the main-context
-            // selected model; routing is the configurable fallback, consulted only
-            // when no model was selected. Explicit `--model` and an agent-pinned
-            // model still win.
-            const selected = input.model || agent.model ? undefined : yield* selectedModel(input.sessionID)
-            const routed =
-              input.model || agent.model || selected
-                ? undefined
-                : yield* resolveRoutingModel({
-                    sessionID: input.sessionID,
-                    turnID: input.messageID ?? input.sessionID,
-                    taskText: input.command,
-                    scope: "session",
-                  })
-            const model = input.model ?? agent.model ?? selected ?? routed ?? (yield* currentModel(input.sessionID))
+            // Feature 042 / ADR-0042 + Feature 045 / ADR-0045):
+            //   --model / agent-pinned  ▶  routing (always-mode re-eval)  ▶
+            //   main-context selected model  ▶  static default.
+            // The Architect (primary/root session) keeps the main-context selected
+            // model in `auto`/`never`; explicit `--model` and an agent-pinned model
+            // ALWAYS win. Under `always` mode routing RE-EVALUATES every turn,
+            // bypassing the persisted-model (`selected`) short-circuit — but never an
+            // explicit model. `routed ?? selected` orders routing ahead of the
+            // persisted model only when routing actually re-evaluated (always-mode);
+            // in `auto` at most one of the two is set, so ordering is unchanged.
+            const explicit = !!(input.model || agent.model)
+            const selected = explicit ? undefined : yield* selectedModel(input.sessionID)
+            const mode = !explicit && selected ? yield* readRoutingMode() : "auto"
+            const routed = RoutingResolve.shouldConsultRouting({
+              explicitModel: explicit,
+              hasPersistedModel: !!selected,
+              mode,
+            })
+              ? yield* resolveRoutingModel({
+                  sessionID: input.sessionID,
+                  turnID: input.messageID ?? input.sessionID,
+                  taskText: input.command,
+                  scope: "session",
+                })
+              : undefined
+            const model = input.model ?? agent.model ?? routed ?? selected ?? (yield* currentModel(input.sessionID))
             const userMsg: SessionV1.User = {
               id: input.messageID ?? MessageID.ascending(),
               sessionID: input.sessionID,
@@ -833,28 +857,36 @@ const layer = Layer.effect(
         throw error
       }
 
-      // Architect model precedence (Feature 037 Phase 1 + Feature 042 / ADR-0042):
-      //   --model / agent-pinned  ▶  main-context selected model  ▶  routing (pool
-      //   fallback)  ▶  static default.
-      // The primary/root session IS the Architect: the model it is running as (the
-      // main-context SELECTED model) ALWAYS wins — the routing engine never
-      // overrides it. Routing (`role_pools`-driven) is the CONFIGURABLE FALLBACK,
-      // consulted ONLY when the main context selected no model (a fresh session
-      // with only the provider default). Explicit `--model` and an agent-pinned
-      // model still win over everything. A child/subagent session always arrives
-      // with `input.model` set (the spawn-decided model), so this branch governs
-      // the root Architect alone.
-      const selected = input.model || ag.model ? undefined : yield* selectedModel(input.sessionID)
-      const routed =
-        input.model || ag.model || selected
-          ? undefined
-          : yield* resolveRoutingModel({
-              sessionID: input.sessionID,
-              turnID: input.messageID ?? input.sessionID,
-              taskText: taskTextFromParts(input.parts),
-              scope: "session",
-            })
-      const model = input.model ?? ag.model ?? selected ?? routed ?? (yield* currentModel(input.sessionID))
+      // Architect model precedence (Feature 037 Phase 1 + Feature 042 / ADR-0042 +
+      // Feature 045 / ADR-0045):
+      //   --model / agent-pinned  ▶  routing (always-mode re-eval)  ▶  main-context
+      //   selected model  ▶  static default.
+      // The primary/root session IS the Architect. Explicit `--model` and an
+      // agent-pinned model ALWAYS win over everything (the top invariant, in every
+      // mode). In `auto`/`never` the main-context SELECTED model wins and routing is
+      // the CONFIGURABLE FALLBACK consulted only on the first turn (no persisted
+      // model). In `always` mode routing RE-EVALUATES every turn, bypassing the
+      // persisted-model (`selected`) short-circuit, so a role/pool/config change
+      // takes effect on the next turn without a new session — but still never over
+      // an explicit model. The mode is read ONLY when a persisted model exists
+      // (msg2+), so msg1/auto is byte-identical. A child/subagent session always
+      // arrives with `input.model` set, so this branch governs the root Architect.
+      const explicit = !!(input.model || ag.model)
+      const selected = explicit ? undefined : yield* selectedModel(input.sessionID)
+      const mode = !explicit && selected ? yield* readRoutingMode() : "auto"
+      const routed = RoutingResolve.shouldConsultRouting({
+        explicitModel: explicit,
+        hasPersistedModel: !!selected,
+        mode,
+      })
+        ? yield* resolveRoutingModel({
+            sessionID: input.sessionID,
+            turnID: input.messageID ?? input.sessionID,
+            taskText: taskTextFromParts(input.parts),
+            scope: "session",
+          })
+        : undefined
+      const model = input.model ?? ag.model ?? routed ?? selected ?? (yield* currentModel(input.sessionID))
       const same = ag.model && model.providerID === ag.model.providerID && model.modelID === ag.model.modelID
       const full =
         !input.variant && ag.variant && same

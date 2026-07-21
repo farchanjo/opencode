@@ -362,11 +362,16 @@ export function createHierarchyDispatchResolver(deps: HierarchyResolveDeps): Res
     // whether a model happens to be named.
     if (input.parentRole === "worker") return undefined
 
-    // 1) Gate — Smart Routing must be explicitly enabled in `auto` mode.
+    // 1) Gate — Smart Routing must be explicitly enabled in a routing mode (`auto`
+    // OR `always`; Feature 045). `always` is a superset of `auto`'s aggressiveness:
+    // hierarchy delegation + fan-out admission engage on every qualifying spawn, not
+    // just the first. A disabled engine or `never` mode is the no-op path (each Task
+    // spawn is keyed by its unique `spawnKey`, so there is no per-turn memoization to
+    // bypass here — every spawn re-decides).
     const port = createConfigAdapter({ config: sessionConfigReadPort(deps.config, run) })
     const effective = await port.resolveEffective()
     const cfg = effective.config
-    if (!(cfg.activation.enabled && cfg.activation.mode === "auto")) return undefined
+    if (!(cfg.activation.enabled && cfg.activation.mode !== "never")) return undefined
 
     const hierarchy = cfg.enforcement.hierarchy
     const budget = cfg.enforcement.budget

@@ -554,8 +554,9 @@ const layer = Layer.effect(
             // by-design background launch would regress fire-and-continue; they are
             // tracked informationally and woken via `inject` on every terminal signal
             // (FR-D1), never starving the wake. The aggregate is populated ONLY under
-            // auto-mode hierarchy dispatch (FR-E1), so a plain/disabled session has NO
-            // aggregate and this is a NO-OP — the null short-circuit runs BEFORE any
+            // routing-mode hierarchy dispatch (FR-E1; `auto` OR `always` per Feature
+            // 045), so a plain/disabled session has NO aggregate and this is a NO-OP
+            // — the null short-circuit runs BEFORE any
             // config read, byte-identical to pre-F044. Composed AFTER the budget gate (a
             // budget-blocked turn stays blocked; this only ADDS the foreground-pending
             // reason). Hang/crash-safe (any defect degrades to a no-op; a genuine
@@ -566,7 +567,14 @@ const layer = Layer.effect(
               const aggregate = routingStore.get(ctx.sessionID).aggregate
               if (!aggregate) return
               const enforcement = yield* resolveRoutingEnforcement()
-              if (!(enforcement.activation.enabled && enforcement.activation.mode === "auto")) return
+              // Feature 045 — the completion gate engages in any routing mode
+              // (`auto` OR `always`, i.e. `mode !== "never"`), reconciled with the
+              // F042 hierarchy gate: `always` populates the orchestration aggregate
+              // (hierarchy dispatch now fires on every spawn), so the Manager
+              // completion gate must fire under `always` too, or a Manager could
+              // report complete with foreground Workers still pending. A disabled
+              // session has no aggregate and this remains a no-op (byte-identical).
+              if (!(enforcement.activation.enabled && enforcement.activation.mode !== "never")) return
               const gate = OrchestrationAggregate.managerCompletionGate(aggregate)
               if (gate.outcome !== "blocked") return
               const error = parse(
