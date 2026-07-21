@@ -14,10 +14,18 @@
  *     `configured:true` and the global activation (`enabled` + `mode`);
  *   - (b) `routing.status --scope global` and `smart.status --scope global` AGREE on the
  *     activation (enabled + mode/auto) for the same global document;
- *   - (c) `routing.status --scope project` still reads the project `routing` authority and reports
- *     `configured:false` when no project document exists — UNCHANGED;
- *   - (d) a bare `routing.status` (no explicit scope, project bound) still reads the project
- *     `routing` authority — full back-compat.
+ *   - (c) `routing.status --scope project` now SHADOWS the global config (Feature 040 supersedes
+ *     the Feature 036 project/bare `configured:false` residual): with only `global:routing` set it
+ *     reports the shadowed activation and AGREES with `smart.status --scope project`; with no
+ *     routing document anywhere it is honestly `configured:false` / `activation:null`;
+ *   - (d) a bare `routing.status` (no explicit scope, project bound) shadows the global config too.
+ *
+ * NOTE (Feature 040): Option A re-points the project/bare `routing.status` read at the layered
+ * effective config (`resolveEffective`: project > global > default) — the SAME read `smart.status`
+ * consumes — so a global-only activation surfaces at the default scope. This DELIBERATELY supersedes
+ * the Feature 036 accepted residual that the project/bare read reported `configured:false` under a
+ * global-only config (recorded in ADR-0040 and the ADR-0036 residual note). The (c)/(d) expectations
+ * below are UPDATED to the shadowed behavior, not weakened.
  */
 import { describe, expect, test } from "bun:test"
 import {
@@ -148,12 +156,31 @@ describe("Feature 036 (b) — routing.status and smart.status agree at global sc
 })
 
 // =============================================================================
-// (c) routing.status --scope project is unchanged (reads the project routing authority).
+// (c) routing.status --scope project SHADOWS the global config (Feature 040 supersession).
 // =============================================================================
-describe("Feature 036 (c) — routing.status --scope project stays project-scoped", () => {
-  test("reads the project routing authority and reports configured:false when absent", async () => {
+describe("Feature 036 (c) — routing.status --scope project shadows the global config (Feature 040)", () => {
+  test("with only global:routing set, project scope reports the shadowed activation and agrees with smart.status", async () => {
     const { tuiPort, config } = wiredStack(freshStore())
     await config.compareAndSet({ authority: "global:routing", expectedVersion: null, payload: GLOBAL_ROUTING, nowMs: 1 })
+    expect(await config.get("routing")).toBe(null)
+
+    // Feature 040: the project/bare read now resolves the layered effective config, so the
+    // global-only activation shadows into project scope (the write target stays `routing`).
+    const effective = await readStatus(tuiPort, "routing.status", "project")
+    expect(effective.authority).toBe("routing")
+    expect(effective.configured).toBe(true)
+    expect(effective.status).toBe("configured")
+    expect(effective.activation).toEqual({ enabled: true, mode: "auto" })
+
+    // Parity: routing.status --scope project now AGREES with smart.status --scope project.
+    const smart = await readStatus(tuiPort, "smart.status", "project")
+    const activation = effective.activation as { enabled: boolean; mode: string }
+    expect(activation.enabled).toBe(smart.enabled as boolean)
+    expect(activation.mode === "auto").toBe(smart.auto as boolean)
+  })
+
+  test("with NO routing document anywhere, project scope is honestly unconfigured (activation null)", async () => {
+    const { tuiPort } = wiredStack(freshStore())
 
     const effective = await readStatus(tuiPort, "routing.status", "project")
     expect(effective.authority).toBe("routing")
@@ -164,15 +191,16 @@ describe("Feature 036 (c) — routing.status --scope project stays project-scope
 })
 
 // =============================================================================
-// (d) a bare routing.status (no explicit scope, project bound) stays project — back-compat.
+// (d) a bare routing.status (no explicit scope, project bound) shadows the global config too.
 // =============================================================================
-describe("Feature 036 (d) — a bare routing.status stays project (back-compat)", () => {
-  test("omitting requestedScope with a bound project reads the project routing authority", async () => {
+describe("Feature 036 (d) — a bare routing.status shadows the global config (Feature 040)", () => {
+  test("omitting requestedScope with a bound project reports the shadowed global activation", async () => {
     const { tuiPort, config } = wiredStack(freshStore())
     await config.compareAndSet({ authority: "global:routing", expectedVersion: null, payload: GLOBAL_ROUTING, nowMs: 1 })
 
     const effective = await readStatus(tuiPort, "routing.status")
     expect(effective.authority).toBe("routing")
-    expect(effective.configured).toBe(false)
+    expect(effective.configured).toBe(true)
+    expect(effective.activation).toEqual({ enabled: true, mode: "auto" })
   })
 })

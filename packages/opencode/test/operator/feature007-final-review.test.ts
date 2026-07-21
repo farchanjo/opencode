@@ -18,6 +18,7 @@ import { createOperatorHttpHandler, resolveAuthFromHeaders } from "@/operator/ht
 import { assertOperatorRequestAccess } from "@/operator/http/loopback"
 import { resolveOperatorClientIp, setOperatorRequestIpResolver } from "@/operator/http/client-ip"
 import { createTestOperatorStack } from "@/operator/stack-test"
+import { DEFAULT_ROUTING_CONFIG } from "@/routing/adapters/outbound/config-adapter"
 import type { CommandRequest } from "@opencode-ai/core/operator"
 
 function req(overrides: Partial<CommandRequest> = {}): CommandRequest {
@@ -40,10 +41,13 @@ describe("B1/T040 Config-backed status (not stub)", () => {
   test("routing.status / semantic.binding.status return configured/version query", async () => {
     const lock = createProcessMutexLockPort()
     const store = createDurableOperatorStore({ config: createFakeConfigService(), lock })
+    // Feature 040 — routing.status now projects the EFFECTIVE (schema-decoded) activation via
+    // `resolveEffective`, so its fixture must be a schema-valid RoutingConfig document (not a
+    // bare `{ activation: { enabled: true } }` stub that the effective read would reject).
     await store.config.compareAndSet({
       authority: "routing",
       expectedVersion: null,
-      payload: { activation: { enabled: true } },
+      payload: { ...DEFAULT_ROUTING_CONFIG, activation: { enabled: true, mode: "auto", strict_gates: true } },
       nowMs: 1,
     })
     const stack = createTestOperatorStack({ mutationPorts: {
