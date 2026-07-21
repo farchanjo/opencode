@@ -89,6 +89,25 @@ contract is active out-of-box or gated on Smart Routing activation like F042/F04
   single Worker crash would hold the Manager turn open forever — a deadlock on
   failure, the exact hazard the hang/crash-safety contract forbids. Completion is
   about all delegated work being SETTLED, not all of it SUCCEEDING.
+- **Option A3 — hard-block the launching turn on a BACKGROUND Worker too.**
+  Rejected: a `background`-launched Worker (and a foreground Worker PROMOTED to the
+  background) is fire-and-continue BY DESIGN under the experimental
+  background-subagent contract (`tool/task.ts` `BACKGROUND_STARTED` — the launch
+  returns immediately and the launching turn finishes normally, telling the model to
+  end its response). Error-blocking the launching turn on such a Worker would REGRESS
+  that contract: the pre-F044 launch finished normally, and it must again. So the
+  ENFORCING completion gate is scoped to FOREGROUND (awaited) delegation — where the
+  Task tool call already blocks the turn until the Worker settles, making the gate a
+  correct typed consistency assertion — while BACKGROUND / promoted Workers are
+  tracked INFORMATIONALLY in the roll-up, updated + woken on every terminal signal
+  via the background `inject` re-prompt (FR-D1), but never flipping the launching
+  turn to blocked/error. This is the honest reconciliation: the invariant "a Manager
+  never SILENTLY finishes with delegated work outstanding" is enforced where it can
+  be (foreground) and made truthful where enforcement would contradict the platform
+  contract (background = an explicit, model-visible fire-and-continue, not a silent
+  finish). The in-memory aggregate is released with the launching prompt's run-loop
+  (`session/prompt.ts` :1566); the Worker's Todo content is durably persisted
+  independently (`session/todo.ts`).
 
 ### Wake — event-driven vs polling (open question 2)
 
@@ -162,14 +181,19 @@ Key decisions recorded:
    first-class, never dropped; the roll-up counters always sum to the delegated
    count.
 
-3. **The completion gate requires TERMINAL, not SUCCESS; a failure surfaces
-   (Option A1).** A Manager turn is held at the `processor.ts` response-loop seam
-   while any delegated Worker is `pending`; it settles when every Worker is
-   `done | failed | aborted`. The gate reuses the pure `completionGate` (:135-147)
-   `blocked` vocabulary and composes with the F043 budget gate (a Manager already
-   budget-blocked stays blocked; this only adds the "Workers still pending"
-   reason). A failure surfaces into the turn — it never deadlocks or silently
-   finishes.
+3. **The completion gate requires TERMINAL, not SUCCESS, and enforces on
+   FOREGROUND delegation only; a failure surfaces (Option A1 + Option A3).** A
+   Manager turn is held at the `processor.ts` response-loop seam while any
+   FOREGROUND (awaited) delegated Worker is `pending`; it settles when every
+   foreground Worker is `done | failed | aborted`. BACKGROUND / promoted Workers are
+   fire-and-continue and are DELIBERATELY excluded from the enforcing block (Option
+   A3) — they are tracked informationally in the roll-up and woken on every terminal
+   signal, but never error-block the launching turn (that would regress the
+   background-subagent fire-and-continue contract). The gate reuses the pure
+   `completionGate` (:135-147) `blocked` vocabulary and composes with the F043 budget
+   gate (a Manager already budget-blocked stays blocked; this only adds the
+   "foreground Workers still pending" reason). A failure surfaces into the turn — it
+   never deadlocks or silently finishes.
 
 4. **Each Worker result passes an ordered SHAPE → POLICY → DOMAIN chain at
    acceptance (Option D1).** SHAPE (a decodable `task_result` envelope) and POLICY

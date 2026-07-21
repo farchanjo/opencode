@@ -2,7 +2,7 @@
 id: 019f8373-943c-7c43-b0e6-c8f82fadc8e6
 number: 044
 slug: compose-the-hierarchy-orchestration-contract-so-a-manager
-status: tasked
+status: analyzed
 created_at: 2026-07-21T06:53:37.725112Z
 ---
 # Feature Specification: Compose The Hierarchy Orchestration Contract So A Manager
@@ -162,13 +162,34 @@ Priority uses P1 (must have), P2 (should have), and P3 (could have).
 
 ### Group B — the completion gate (FR-B)
 
-5. **FR-B1 — a Manager turn is gated on all delegated Workers being terminal.**
-   A Manager turn MUST NOT be reported complete while any delegated Worker in the
-   aggregate is in a non-terminal (`pending`) `WorkerLifecycle`. The gate
-   predicate is: EVERY delegated child is in a terminal state
-   (`done | failed | aborted`). Until the predicate holds, the Manager turn is
-   held open (mirroring the foreground `raceFirst` block already at
-   `tool/task.ts` :418-451, generalized from one child to the whole delegated set).
+5. **FR-B1 — a Manager turn is gated on all FOREGROUND delegated Workers being
+   terminal.** A Manager turn MUST NOT be reported complete while any FOREGROUND
+   (awaited-in-turn) delegated Worker in the aggregate is in a non-terminal
+   (`pending`) `WorkerLifecycle`. The enforcing gate predicate is: every
+   FOREGROUND delegated child is in a terminal state (`done | failed | aborted`).
+   Until the predicate holds, the Manager turn is held open (mirroring the
+   foreground `raceFirst` block already at `tool/task.ts` :418-451, generalized
+   from one child to the whole foreground delegated set). A foreground Worker is
+   structurally terminal by the turn boundary anyway — its Task tool call blocks
+   the turn until it settles — so the gate is a typed consistency assertion of
+   that invariant at the response-loop seam, never a false or wake-starving block.
+
+   **Background / promoted Workers are fire-and-continue, tracked informationally,
+   and NOT gate-blocked.** A `background`-launched Worker (and a foreground Worker
+   PROMOTED to the background) is fire-and-continue by the experimental
+   background-subagent contract (`tool/task.ts` `BACKGROUND_STARTED` — the launch
+   returns immediately and the launching turn finishes normally). Hard-blocking the
+   launching turn on such a Worker would REGRESS that contract (the pre-F044 launch
+   finished normally and must again), so a background Worker is EXCLUDED from the
+   enforcing gate: it is recorded in the roll-up counters (informational), its
+   `WorkerOutcome` is updated on its terminal transition, and it WAKES the Manager
+   on every terminal signal via the background `inject` re-prompt (FR-D1) — but it
+   never flips the launching turn to blocked/error. The in-memory aggregate is
+   released with the launching prompt's run-loop (`session/prompt.ts` :1566), so the
+   informational roll-up is bounded to the launch; the Worker's own Todo content is
+   durably persisted independently (`session/todo.ts`). This is the honest
+   reconciliation of the enforcement invariant with the fire-and-continue contract
+   (ADR-0044 Decision #3, rejected alternative A3 "block-on-background").
 
 6. **FR-B2 — a failed child SURFACES, it does not silently block.** The gate
    requires every child to be TERMINAL, not every child to have SUCCEEDED: a
@@ -375,11 +396,13 @@ mode, dispatching Worker children through the Task spawn seam over the shared
   session id, each with a `WorkerLifecycle` and a bounded `TodoSummary` roll-up,
   and the roll-up counters sum to N.
 
-- **A Manager turn is gated while a Worker is pending (FR-B1, FR-B3, FR-F3-b).**
-  Given at least one delegated Worker is still `pending`,
+- **A Manager turn is gated while a foreground Worker is pending (FR-B1, FR-B3, FR-F3-b).**
+  Given at least one FOREGROUND (awaited) delegated Worker is still `pending`,
   When the Manager reaches its turn-boundary,
   Then the completion gate returns `blocked` with the pending count and the
-  Manager turn is held open — it is not reported complete.
+  Manager turn is held open — it is not reported complete. A `background` / promoted
+  Worker still pending does NOT block the launching turn (fire-and-continue,
+  tracked informationally, woken on every terminal signal).
 
 - **A failed Worker surfaces and satisfies the terminal gate (FR-A3, FR-B2, FR-F3-c).**
   Given every delegated Worker is terminal but one is `failed`,
@@ -507,12 +530,16 @@ Acceptance Scenario above). This section fixes the decisions ADR-0044 formalizes
   released with the session (`store.clear` :447). No parallel dispatch store.
   Acceptance hook AC "A Manager records a roll-up of every delegated Worker".
 
-- **C2 — the completion gate requires TERMINAL, not SUCCESS.** A Manager turn
-  settles when every delegated Worker is in a terminal state
-  (`done | failed | aborted`); a `failed`/`aborted` Worker satisfies the gate and
-  is SURFACED (block-on-failure was rejected — it deadlocks a Manager on a Worker
-  crash). The gate reuses the pure `completionGate` (:135-147) `blocked` vocabulary.
-  Acceptance hooks AC "A Manager turn is gated while a Worker is pending" and
+- **C2 — the completion gate requires TERMINAL, not SUCCESS, and enforces on
+  FOREGROUND delegation only.** A Manager turn settles when every FOREGROUND
+  delegated Worker is in a terminal state (`done | failed | aborted`); a
+  `failed`/`aborted` Worker satisfies the gate and is SURFACED (block-on-failure
+  was rejected — it deadlocks a Manager on a Worker crash). BACKGROUND / promoted
+  Workers are fire-and-continue and are tracked informationally, never gate-blocked
+  (block-on-background was rejected — it regresses the experimental
+  background-subagent contract, ADR-0044 Decision #3, rejected alternative A3). The
+  gate reuses the pure `completionGate` (:135-147) `blocked` vocabulary. Acceptance
+  hooks AC "A Manager turn is gated while a foreground Worker is pending" and
   "A failed Worker surfaces and satisfies the terminal gate".
 
 - **C3 — the validation chain is SHAPE → POLICY → DOMAIN, ordered, fail-fast.**
