@@ -18,6 +18,7 @@
  * projection live in the `packages/opencode/src/semantic/**` application layer.
  */
 
+export * as AgentDocBuilder from "./agent-doc"
 export * as BindingLifecycle from "./binding-lifecycle"
 export * as Degradation from "./degradation"
 export * as FreshnessGate from "./freshness-gate"
@@ -27,5 +28,7 @@ export * as Pipeline from "./pipeline"
 export * as Projection from "./projection"
 export * as QueryCache from "./query-cache"
 export * as SemanticInstruments from "./semantic-instruments"
+export * as SkillChunker from "./skill-chunk"
+export * as SkillDocBuilder from "./skill-doc"
 export * as TieBreak from "./tie-break"
 export * as ToolPass from "./tool-pass"
