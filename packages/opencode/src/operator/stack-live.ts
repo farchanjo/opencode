@@ -65,8 +65,21 @@ import { createOperatorAuthorityResolver } from "./application/command-authority
 import { SemanticStackWiring } from "./semantic/stack-wiring"
 import { SemanticBackendLive } from "./semantic/backend-live"
 import { RerankProbe } from "./semantic/rerank-probe"
-import type { MilvusBinding } from "./semantic/milvus-binding"
+import { MilvusBinding } from "./semantic/milvus-binding"
+import { SemanticRegistryBackend } from "./semantic/registry-backend"
 import { MilvusComposition } from "@/semantic/milvus-composition"
+import { LiveDocSource } from "@/semantic/live-doc-source"
+import { OutputSpoolStore } from "@/semantic/output-spool-store"
+import { SessionSpoolWriter } from "@/session/output-spool-writer"
+import { ReconcileLock } from "@/semantic/reconcile-lock"
+import { EmbeddingsHttpClient } from "@/semantic/embeddings-http-client"
+import { EmbeddingClient } from "@/semantic/embedding-client"
+import { BindingRuntime } from "@/semantic/binding-runtime"
+import { AgentDocBuilder } from "@opencode-ai/core/semantic/agent-doc"
+import { DEFAULT_ROUTING_BUDGET } from "@/routing/adapters/outbound/config-adapter"
+import type { IndexPort } from "@opencode-ai/protocol/semantic/ports"
+import type { IndexError } from "@opencode-ai/protocol/semantic/commands"
+import { Skill } from "@/skill"
 import { McpStackWiring } from "./mcp/stack-wiring"
 import { McpBackendLive } from "./mcp/backend-live"
 import { TelemetryStackWiring } from "./telemetry/stack-wiring"
@@ -557,21 +570,26 @@ export async function createLiveOperatorStack(input: CreateLiveOperatorStackInpu
   // is never logged or returned). A required-but-unresolvable secret, an unreachable endpoint, or a
   // non-passing probe fails HONESTLY (`validation_failed` / nothing committed), never a fabricated
   // `validated`.
+  // Feature 050 / T023 (FR4) — the SecretRef -> Authorization header resolver, extracted so
+  // BOTH the reranker validation probe and the new production embeddings client (below) share
+  // ONE resolution path over the SAME keychain internal-material seam — never a third inline
+  // copy (plan.md "Reuse contract" #1).
+  const resolveProviderAuthHeader = async (secretRef: string): Promise<string | null> => {
+    const colon = secretRef.indexOf(":")
+    if (colon <= 0) return null
+    const backend = secretRef.slice(0, colon)
+    if (backend !== "keychain" && backend !== "env-ref") return null
+    const rest = secretRef.slice(colon + 1)
+    const at = rest.lastIndexOf("@v")
+    const name = at >= 0 ? rest.slice(0, at) : rest
+    const version = at >= 0 ? Number(rest.slice(at + 2)) : 1
+    if (name.length === 0 || !Number.isInteger(version) || version < 1) return null
+    const material = await keychainSecrets.resolveSecretMaterial?.({ backend, name, version })
+    return material ? `Bearer ${material}` : null
+  }
   const rerankProbe = RerankProbe.createRerankValidationProbe({
     http: RerankProbe.createFetchRerankHttpClient(),
-    resolveAuthHeader: async (secretRef) => {
-      const colon = secretRef.indexOf(":")
-      if (colon <= 0) return null
-      const backend = secretRef.slice(0, colon)
-      if (backend !== "keychain" && backend !== "env-ref") return null
-      const rest = secretRef.slice(colon + 1)
-      const at = rest.lastIndexOf("@v")
-      const name = at >= 0 ? rest.slice(0, at) : rest
-      const version = at >= 0 ? Number(rest.slice(at + 2)) : 1
-      if (name.length === 0 || !Number.isInteger(version) || version < 1) return null
-      const material = await keychainSecrets.resolveSecretMaterial?.({ backend, name, version })
-      return material ? `Bearer ${material}` : null
-    },
+    resolveAuthHeader: resolveProviderAuthHeader,
   })
   const milvusAddress = process.env["OPENCODE_SEMANTIC_MILVUS_ADDRESS"]?.trim()
   const insecureMilvus = process.env["OPENCODE_SEMANTIC_MILVUS_INSECURE"] === "1"
@@ -581,6 +599,107 @@ export async function createLiveOperatorStack(input: CreateLiveOperatorStackInpu
     insecure: insecureMilvus,
     token: process.env["OPENCODE_SEMANTIC_MILVUS_TOKEN"] || undefined,
   })
+  // Feature 050 / T023 (FR9) — read the active embedding binding for both the data-plane
+  // embed client and the reconcile projection context's pinned binding version. A structural
+  // (duck-typed) read over the SAME persisted `semantic` authority document
+  // `registry-backend.ts`'s private `readDoc` decodes — this composition root never re-derives
+  // that schema, it only reads the same field names `BindingRuntime.resolveActiveBinding`
+  // (Wave 1) already joins provider/model back through (FR4, mirrors `planValidateReranker`'s
+  // inline join, `registry-backend.ts:1005`, rather than re-deriving the shape).
+  const semanticProjectId = process.env["OPENCODE_SEMANTIC_PROJECT_ID"] ?? "opencodedev"
+  const readActiveEmbeddingBinding = async (): Promise<BindingRuntime.ActiveBinding | undefined> => {
+    const entry = await store.config.get(SemanticRegistryBackend.AUTHORITY)
+    if (!entry) return undefined
+    return BindingRuntime.resolveActiveBinding(entry.payload as BindingRuntime.RegistryDocumentView, "embedding")
+  }
+
+  // Feature 050 / T023 (FR5) — the data-plane embed closure the LiveDocSource embeds
+  // agent/skill/skill-chunk ranking text through, bound to the ACTIVE embedding binding (never
+  // a hardcoded provider). A missing active binding rejects rather than fabricating a vector
+  // (mirrors the honest-gap comment at `milvus-binding.ts:76-77`).
+  const DATA_PLANE_EMBED_BATCH_SIZE = 32
+  const embedForLiveDocSource = async (texts: readonly string[]): Promise<ReadonlyArray<readonly number[]>> => {
+    const active = await readActiveEmbeddingBinding()
+    if (!active) throw new Error("createLiveDocSource: no active embedding binding configured")
+    const http = EmbeddingsHttpClient.createFetchEmbeddingsHttpClient({
+      secretRef: active.secretRef || null,
+      resolveAuthHeader: resolveProviderAuthHeader,
+    })
+    return EmbeddingClient.embed(
+      { http },
+      { baseUrl: active.baseUrl, model: active.modelRef, texts, maxBatchSize: DATA_PLANE_EMBED_BATCH_SIZE },
+    )
+  }
+
+  // Feature 050 / T023 (FR9) — the live agent/skill readers, mirroring the SAME AppRuntime +
+  // InstanceRef pattern the MCP/agent reads above already use (~L601, L627-637): `Agent.Info`
+  // (`id: name`, `permission` singular) and `Skill.Info` (`name`/`description`/`content`) are
+  // mapped onto the Wave-1 builders' minimal structural input shapes.
+  const readLiveAgents = (): Promise<readonly AgentDocBuilder.AgentInfoLike[]> =>
+    AppRuntime.runPromise(
+      Effect.gen(function* () {
+        const svc = yield* Agent.Service
+        const agents = yield* svc.list()
+        return agents.map((a) => ({
+          id: a.name,
+          description: a.description,
+          mode: a.mode,
+          hidden: a.hidden ?? false,
+          color: a.color,
+          permissions: a.permission,
+        }))
+      }).pipe(Effect.provideService(InstanceRef, instance)),
+    )
+  const readLiveSkills = (): Promise<readonly LiveDocSource.SkillSourceInput[]> =>
+    AppRuntime.runPromise(
+      Effect.gen(function* () {
+        const svc = yield* Skill.Service
+        const skills = yield* svc.all()
+        return skills.map((s) => ({ name: s.name, description: s.description, content: s.content }))
+      }).pipe(Effect.provideService(InstanceRef, instance)),
+    )
+
+  // Feature 050 / T023 (FR9) — the mandatory scalar partition filters for `skills`/`skill_chunks`
+  // (they carry no `DocScope` of their own, `data-model.md` "SkillDoc field mapping"); mirrors the
+  // SAME `project`/`project` scope `AgentDocBuilder.build` stamps for agents.
+  const semanticFilters = (projectId: string) => ({ projectId, scope: "project", visibility: "project" })
+
+  // Feature 050 / T023 (FR8) — the real chunk-body spool store, replacing the non-resolvable
+  // `boundedSpool` stub, over the SAME shared process-wide control store + spool root the
+  // outputspool domain already reads (never a second connection). Absent (fail-open store) ->
+  // no `LiveDocSource` is composed, keeping the honest `milvus_unavailable` floor.
+  const liveDocSource =
+    outputControlStore !== undefined
+      ? LiveDocSource.createLiveDocSource({
+          agents: readLiveAgents,
+          skills: readLiveSkills,
+          embed: embedForLiveDocSource,
+          spool: OutputSpoolStore.createOutputSpoolStore({
+            writer: SessionSpoolWriter.createSessionSpoolWriter({ store: outputControlStore, spoolRoot }),
+            reader: outputSpoolBackend,
+          }),
+          // Embed-skip (FR9): a fresh read of the currently indexed hashes per collection, over
+          // the SAME bound MilvusPort `runMaintenance` already calls `enumerateIndexed` on
+          // (`milvus-binding.ts:172-175`) — never a second `LiveDocSource.collect` parameter.
+          indexedHashes: milvusPort
+            ? async (collection) => {
+                const result = await AppRuntime.runPromise(
+                  milvusPort
+                    .enumerateIndexed({ collection, projectId: semanticProjectId })
+                    .pipe(Effect.match({ onFailure: () => ({ docs: [] }), onSuccess: (r) => r })),
+                )
+                return new Map(result.docs.map((doc) => [doc.canonicalId, doc.contentHash]))
+              }
+            : undefined,
+          chunking: {
+            maxChunks: DEFAULT_ROUTING_BUDGET.retrieval.max_skill_chunks,
+            chunkSizeTokens: 512,
+            overlapTokens: 64,
+          },
+          filters: semanticFilters,
+        })
+      : undefined
+
   const milvus: MilvusBinding.MilvusIndexBindingDeps | undefined =
     milvusAddress && milvusAddress.length > 0 && milvusPort !== undefined
       ? {
@@ -601,9 +720,47 @@ export async function createLiveOperatorStack(input: CreateLiveOperatorStackInpu
               ? { reachable: false, latencyMs: Date.now() - started }
               : { reachable: health.reachable, latencyMs: health.latencyMs }
           },
+          // Feature 050 / T023 (FR9, FR10) — the live-doc source + reconcile projection context
+          // (the P0 canonical project id plus the currently pinned embedding binding version,
+          // carried UNCHANGED across a reconcile). The job-summary spool sink is left at its
+          // `boundedSpool` default (`milvus-binding.ts:116-118`) — that log sink is NOT the chunk
+          // store `liveDocSource` already wires above.
+          source: liveDocSource,
+          context: liveDocSource
+            ? async () => {
+                const active = await readActiveEmbeddingBinding()
+                return { projectId: semanticProjectId, bindingVersion: active?.bindingVersion ?? 0 }
+              }
+            : undefined,
         }
       : undefined
-  const semanticBackend = SemanticBackendLive.createLiveSemanticBackend({ config: store.config, milvus, milvusPort, rerankProbe })
+
+  // Feature 050 / T023 (FR10) — serialize an incremental reconcile against a full reindex for
+  // this profile via the Wave-1 `ReconcileLock`, so an in-flight alias-swap can never orphan a
+  // concurrent reconcile's upserts. Keyed on the profile root (`OPENCODE_CONFIG_DIR`, or the
+  // default config path when unset) so distinct profiles never contend on the same lock file.
+  const semanticReconcileLock = ReconcileLock.createReconcileLock({
+    lockRoot: path.join(Global.Path.state, "semantic-index-locks"),
+  })
+  const withSemanticReconcileLock = <A>(effect: Effect.Effect<A, IndexError>, holder: string): Effect.Effect<A, IndexError> =>
+    Effect.gen(function* () {
+      const handle = yield* semanticReconcileLock.acquire({ profileId: Global.Path.config, holder }).pipe(
+        Effect.mapError((cause): IndexError => ({ type: "milvus_unavailable", reason: `semantic index lock ${cause.type}` })),
+      )
+      return yield* effect.pipe(Effect.ensuring(handle.release()))
+    })
+  const withLockedMaintenance = (port: IndexPort): IndexPort => ({
+    ...port,
+    reindex: (input) => withSemanticReconcileLock(port.reindex(input), "reindex"),
+    reconcile: (input) => withSemanticReconcileLock(port.reconcile(input), "reconcile"),
+  })
+  const semanticBackend = SemanticBackendLive.createLiveSemanticBackend({
+    config: store.config,
+    milvus,
+    milvusPort,
+    rerankProbe,
+    override: milvus ? { index: withLockedMaintenance(MilvusBinding.createMilvusIndexPort(milvus)) } : undefined,
+  })
   const semanticWiring = SemanticStackWiring.createSemanticDomainWiring({ backend: semanticBackend })
 
   // === Feature 008 / 014 T008 — mcp domain port composition =================
