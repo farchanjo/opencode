@@ -18,6 +18,8 @@ import type { RoutingConfig } from "@opencode-ai/schema/routing/config"
 import type { Enums } from "@opencode-ai/schema/routing/enums"
 import {
   createHierarchyDispatchResolver,
+  createLiveHierarchyResolve,
+  toHierarchyDispatchExtra,
   classifyChildRole,
   poolModelsForRole,
   resolveRoleModel,
@@ -26,6 +28,7 @@ import {
   escalateWorkerToManager,
   shouldConsultHierarchy,
   type HierarchyResolveDeps,
+  type LiveHierarchyResolveDeps,
   type ResolveHierarchyDispatchInput,
 } from "@/session/routing-hierarchy"
 import type { ResolvedRoutingModel } from "@/session/routing-resolve"
@@ -763,5 +766,128 @@ describe("Feature 048 — applyManagerPersona (FR8)", () => {
 
   test("a manager-role spawn in heuristic mode is unchanged (no persona, byte-identical)", () => {
     expect(applyManagerPersona("do the thing", "manager", false)).toBe("do the thing")
+  })
+})
+
+// =============================================================================
+// Feature 049 — the LIVE LLM `task`-tool spawn seam (createLiveHierarchyResolve).
+//
+// The per-invocation resolver injected into `ctx.extra`. It reuses the SAME engine
+// resolver + consult guard as `handleSubtask`, reshaping the decision into the
+// `{ route | blocked | degraded }` contract `tool/task.ts` consumes. These tests
+// prove the wiring the bug lacked: an LLM-path spawn under force_manager routes the
+// child to `role_pools.manager` (not parent inheritance); a pinned agent still
+// wins; off/no-route yields `undefined`; and a blocked edge surfaces.
+// =============================================================================
+
+const FM_CFG = routingConfig({
+  enabled: true,
+  mode: "auto",
+  orchestrationMode: "force_manager",
+  rolePools: { worker: ["worker-model"], manager: ["manager-model"] },
+})
+
+const MAIN_CTX: ResolvedRoutingModel = { providerID: "anthropic", modelID: "main-ctx-model" } as never
+
+function liveSeam(
+  config: RoutingConfig.Info,
+  fakes: Fakes = {},
+  overrides: Partial<LiveHierarchyResolveDeps> = {},
+) {
+  const store = createRoutingSessionStateStore()
+  const resolve = createHierarchyDispatchResolver({ ...deps(config, fakes), store })
+  const run = createLiveHierarchyResolve({
+    resolve,
+    store,
+    parentSessionId: "ses_parent",
+    parentRole: "architect",
+    parentDepth: 0,
+    mainContextModel: MAIN_CTX,
+    ...overrides,
+  })
+  return { store, run }
+}
+
+describe("Feature 049 — createLiveHierarchyResolve (live LLM task-tool seam)", () => {
+  test("force_manager routes an LLM task child to role_pools.manager with a ready dispatch payload", async () => {
+    const { run } = liveSeam(FM_CFG)
+    const out = await Effect.runPromise(
+      run({ taskText: "add a small helper function", spawnKey: "spawn_live_1", hasAgentPinnedModel: false }),
+    )
+    if (out?.kind !== "route") throw new Error("expected route")
+    // The child model is the MANAGER pool model — NOT the parent's main-context model.
+    expect(out.model).toEqual({ providerID: "anthropic", modelID: "manager-model" } as never)
+    expect(out.model.modelID).not.toBe(MAIN_CTX.modelID)
+    expect(out.dispatch.forceManager).toBe(true)
+    expect(out.dispatch.denyExecutionTools).toBe(true) // orchestration_only: manager child cannot mutate
+    expect(out.dispatch.maxDepth).toBe(2)
+    expect(out.dispatch.lineageStub.child_role).toBe("manager")
+  })
+
+  test("an agent-pinned child model short-circuits the resolver (pinned wins, no route)", async () => {
+    const { run } = liveSeam(FM_CFG)
+    const out = await Effect.runPromise(
+      run({ taskText: "add a small helper function", spawnKey: "spawn_live_2", hasAgentPinnedModel: true }),
+    )
+    expect(out).toBeUndefined()
+  })
+
+  test("smart routing off → undefined (the seam falls through to parent inheritance)", async () => {
+    const { run } = liveSeam(routingConfig({ enabled: false, mode: "never", rolePools: {} }))
+    const out = await Effect.runPromise(run({ taskText: "x", spawnKey: "spawn_live_3", hasAgentPinnedModel: false }))
+    expect(out).toBeUndefined()
+  })
+
+  test("heuristic single-domain spawn → a direct Worker route, forceManager false (byte-identical path)", async () => {
+    const { run } = liveSeam(routingConfig({ enabled: true, mode: "auto", rolePools: { worker: ["worker-model"] } }))
+    const out = await Effect.runPromise(
+      run({ taskText: "add a small helper function", spawnKey: "spawn_live_4", hasAgentPinnedModel: false }),
+    )
+    if (out?.kind !== "route") throw new Error("expected route")
+    expect(out.model).toEqual({ providerID: "anthropic", modelID: "worker-model" } as never)
+    expect(out.dispatch.forceManager).toBe(false)
+  })
+
+  test("an over-depth edge surfaces as a blocked decision (never a silent inheritance)", async () => {
+    // A Manager parent at depth 2 → Worker child depth 3 > engine max (2).
+    const { run } = liveSeam(FM_CFG, {}, { parentRole: "manager", parentDepth: 2 })
+    const out = await Effect.runPromise(run({ taskText: "x", spawnKey: "spawn_live_5", hasAgentPinnedModel: false }))
+    if (out?.kind !== "blocked") throw new Error("expected blocked")
+    expect(out.rejection.reason).toBe("depth_exceeded")
+  })
+
+  test("force_manager with an unresolvable manager pool → degraded (surfaced), not undefined", async () => {
+    const { run } = liveSeam(FM_CFG, { authProviders: [] })
+    const out = await Effect.runPromise(
+      run({ taskText: "add a small helper function", spawnKey: "spawn_live_6", hasAgentPinnedModel: false }),
+    )
+    if (out?.kind !== "degraded") throw new Error("expected degraded")
+    expect(out.reason).toBe("model_unresolved")
+    expect(out.childRole).toBe("manager")
+  })
+})
+
+describe("Feature 049 — toHierarchyDispatchExtra (shared route→dispatch mapping)", () => {
+  test("maps a route decision to the F042/F048 dispatch payload one way", () => {
+    const store = createRoutingSessionStateStore()
+    const extra = toHierarchyDispatchExtra(
+      {
+        kind: "route",
+        model: { providerID: "anthropic", modelID: "manager-model" } as never,
+        childRole: "manager",
+        childDepth: 1,
+        executionAllowed: false,
+        maxDepth: 2,
+        fanoutGranted: 1,
+        forceManager: true,
+        lineageStub: { parent_session_id: "ses_parent", parent_role: "architect", child_role: "manager" },
+      },
+      store,
+    )
+    expect(extra.denyExecutionTools).toBe(true) // !executionAllowed
+    expect(extra.forceManager).toBe(true)
+    expect(extra.maxDepth).toBe(2)
+    expect(extra.lineageStub.child_role).toBe("manager")
+    expect(extra.store).toBe(store)
   })
 })

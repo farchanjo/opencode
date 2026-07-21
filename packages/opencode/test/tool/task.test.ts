@@ -24,6 +24,8 @@ import { disposeAllInstances } from "../fixture/fixture"
 import { testEffect } from "../lib/effect"
 import { ProviderV2 } from "@opencode-ai/core/provider"
 import { ModelV2 } from "@opencode-ai/core/model"
+import { RoutingHierarchy } from "@/session/routing-hierarchy"
+import { createRoutingSessionStateStore } from "@/session/routing-state"
 
 afterEach(async () => {
   await disposeAllInstances()
@@ -980,6 +982,171 @@ describe("tool.task", () => {
 
       expect((yield* jobs.get(child.id))?.status).toBe("cancelled")
       expect((yield* jobs.get(grandchild.id))?.status).toBe("cancelled")
+    }),
+  )
+
+  // ===========================================================================
+  // Feature 049 — the live LLM `task`-tool spawn path consumes the per-invocation
+  // hierarchy resolver injected into `ctx.extra` (the seam the bug omitted). These
+  // drive `TaskTool.execute` directly with a `hierarchyResolve` closure and assert
+  // the routed model reaches the child (not parent inheritance), that a pinned
+  // agent model still wins, that the default path is byte-identical, and that a
+  // blocked decision fails the spawn.
+  // ===========================================================================
+
+  const managerRef = {
+    providerID: ProviderV2.ID.make("anthropic"),
+    modelID: ModelV2.ID.make("manager-model"),
+  }
+
+  const routeResolve = (store: ReturnType<typeof createRoutingSessionStateStore>, parentSessionId: string) =>
+    ((_input) =>
+      Effect.succeed({
+        kind: "route",
+        model: managerRef,
+        dispatch: {
+          store,
+          lineageStub: { parent_session_id: parentSessionId, parent_role: "architect", child_role: "manager" },
+          denyExecutionTools: true,
+          maxDepth: 2,
+          forceManager: true,
+        },
+      })) satisfies RoutingHierarchy.LiveHierarchyResolve
+
+  it.instance("Feature 049 — a routed live spawn runs the child on the routed model + records lineage", () =>
+    Effect.gen(function* () {
+      const sessions = yield* Session.Service
+      const { chat, assistant } = yield* seed()
+      const tool = yield* TaskTool
+      const def = yield* tool.init()
+      const store = createRoutingSessionStateStore()
+      let seen: SessionPrompt.PromptInput | undefined
+      // The child's routing state is released post-completion (bounded retention),
+      // so capture the recorded lineage DURING the run (the child session id is the
+      // prompt's own session id).
+      let roleAtRun: string | null | undefined
+      const promptOps = stubOps({
+        onPrompt: (input) => {
+          seen = input
+          roleAtRun = store.get(SessionID.make(input.sessionID)).hierarchyRole
+        },
+      })
+
+      const result = yield* def.execute(
+        { description: "inspect bug", prompt: "look into the cache key path", subagent_type: "general" },
+        {
+          sessionID: chat.id,
+          messageID: assistant.id,
+          agent: "build",
+          abort: new AbortController().signal,
+          extra: { promptOps, hierarchyResolve: routeResolve(store, chat.id) },
+          messages: [],
+          metadata: () => Effect.void,
+          ask: () => Effect.void,
+        },
+      )
+
+      // The child ran on the ROUTED manager model, not the parent's model (ref).
+      expect(seen?.model).toEqual(managerRef)
+      expect(result.metadata.model).toEqual(managerRef)
+      // The dispatch lineage was recorded on the shared store as a manager child.
+      expect(roleAtRun).toBe("manager")
+      // The manager child is created under orchestration-only tool denies.
+      const kid = yield* sessions.get(SessionID.make(result.metadata.sessionId))
+      expect(kid.permission?.some((r) => r.permission === "*" && r.action === "deny")).toBe(true)
+    }),
+  )
+
+  it.instance("Feature 049 — without a resolver the child inherits the parent model (byte-identical)", () =>
+    Effect.gen(function* () {
+      const { chat, assistant } = yield* seed()
+      const tool = yield* TaskTool
+      const def = yield* tool.init()
+      let seen: SessionPrompt.PromptInput | undefined
+      const promptOps = stubOps({ onPrompt: (input) => (seen = input) })
+
+      yield* def.execute(
+        { description: "inspect bug", prompt: "look into the cache key path", subagent_type: "general" },
+        {
+          sessionID: chat.id,
+          messageID: assistant.id,
+          agent: "build",
+          abort: new AbortController().signal,
+          extra: { promptOps },
+          messages: [],
+          metadata: () => Effect.void,
+          ask: () => Effect.void,
+        },
+      )
+
+      expect(seen?.model).toEqual(ref)
+    }),
+  )
+
+  it.instance(
+    "Feature 049 — an agent-pinned model wins over the routed model (precedence)",
+    () =>
+      Effect.gen(function* () {
+        const { chat, assistant } = yield* seed()
+        const tool = yield* TaskTool
+        const def = yield* tool.init()
+        const store = createRoutingSessionStateStore()
+        let seen: SessionPrompt.PromptInput | undefined
+        const promptOps = stubOps({ onPrompt: (input) => (seen = input) })
+
+        yield* def.execute(
+          { description: "inspect bug", prompt: "look into the cache key path", subagent_type: "pinned" },
+          {
+            sessionID: chat.id,
+            messageID: assistant.id,
+            agent: "build",
+            abort: new AbortController().signal,
+            extra: { promptOps, hierarchyResolve: routeResolve(store, chat.id) },
+            messages: [],
+            metadata: () => Effect.void,
+            ask: () => Effect.void,
+          },
+        )
+
+        // The pinned agent's own model wins over the routed manager model.
+        expect(seen?.model).toEqual({
+          providerID: ProviderV2.ID.make("test"),
+          modelID: ModelV2.ID.make("pinned-model"),
+        })
+      }),
+    { config: { agent: { pinned: { mode: "subagent", model: "test/pinned-model" } } } },
+  )
+
+  it.instance("Feature 049 — a blocked hierarchy decision surfaces as a failed spawn (no child created)", () =>
+    Effect.gen(function* () {
+      const sessions = yield* Session.Service
+      const { chat, assistant } = yield* seed()
+      const tool = yield* TaskTool
+      const def = yield* tool.init()
+      const blockResolve: RoutingHierarchy.LiveHierarchyResolve = () =>
+        Effect.succeed({
+          kind: "blocked",
+          rejection: { reason: "depth_exceeded", detail: "delegation depth 3 exceeds effective max 2" },
+        })
+
+      const exit = yield* def
+        .execute(
+          { description: "inspect bug", prompt: "look into the cache key path", subagent_type: "general" },
+          {
+            sessionID: chat.id,
+            messageID: assistant.id,
+            agent: "build",
+            abort: new AbortController().signal,
+            extra: { promptOps: stubOps(), hierarchyResolve: blockResolve },
+            messages: [],
+            metadata: () => Effect.void,
+            ask: () => Effect.void,
+          },
+        )
+        .pipe(Effect.exit)
+
+      expect(Exit.isFailure(exit)).toBe(true)
+      expect(yield* sessions.children(chat.id)).toHaveLength(0)
     }),
   )
 })
