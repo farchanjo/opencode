@@ -27,6 +27,7 @@ import type { Retrieval } from "@opencode-ai/schema/semantic/retrieval"
 import type {
   QueryFingerprint,
   RetrievalRequest,
+  SkillChunkRetrievalRequest,
   SkillRetrievalRequest,
   ToolRetrievalRequest,
   ToolSource,
@@ -63,6 +64,10 @@ export interface PipelineRunnerDeps {
   readonly skills?: EntityRevalidator
   /** Optional live tool registry check; identity when absent (`ToolPass` revalidates internally in production). */
   readonly tools?: EntityRevalidator
+  /** Feature 052 — the chunk pass's OWN revalidation: a chunk id is dropped when its parent
+   * skill no longer resolves live (`Pipeline.run` revalidates skills only, `pipeline.ts:157`);
+   * identity when absent. Provenance eligibility (FR5) is enforced downstream in `live-narrowing.ts`. */
+  readonly chunks?: EntityRevalidator
   readonly latencyBudgetMs: number
   readonly filters: MandatoryFilters
 }
@@ -131,7 +136,7 @@ export function createPipelineRunner(deps: PipelineRunnerDeps): PipelineRunnerPo
   }
 
   const recallHits = async (
-    collection: "agents" | "skills" | "tools",
+    collection: "agents" | "skills" | "tools" | "skill_chunks",
     dense: readonly number[],
     topK: number,
   ): Promise<readonly Hit[]> => {
@@ -205,7 +210,7 @@ export function createPipelineRunner(deps: PipelineRunnerDeps): PipelineRunnerPo
 
   const runEntitySurface = async (
     request: RetrievalRequest,
-    collection: "agents" | "skills",
+    collection: "agents" | "skills" | "skill_chunks",
     revalidator: EntityRevalidator | undefined,
     signal: AbortSignal,
   ): Promise<PipelineOutcome> => {
@@ -297,5 +302,7 @@ export function createPipelineRunner(deps: PipelineRunnerDeps): PipelineRunnerPo
     runAgents: (request: RetrievalRequest) => withDeadline((signal) => runEntitySurface(request, "agents", deps.agents, signal), deps.latencyBudgetMs),
     runSkills: (request: SkillRetrievalRequest) => withDeadline((signal) => runEntitySurface(request, "skills", deps.skills, signal), deps.latencyBudgetMs),
     runTools: (request: ToolRetrievalRequest) => withDeadline((signal) => runToolSurface(request, signal), deps.latencyBudgetMs),
+    runSkillChunks: (request: SkillChunkRetrievalRequest) =>
+      withDeadline((signal) => runEntitySurface(request, "skill_chunks", deps.chunks, signal), deps.latencyBudgetMs),
   }
 }

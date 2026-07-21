@@ -40,6 +40,7 @@ describe("RoutingSessionStateStore", () => {
       consumption: null,
       aggregate: null,
       narrowedSets: null,
+      autoSkillInjected: null,
     })
   })
 
@@ -95,5 +96,34 @@ describe("RoutingSessionStateStore", () => {
     const store = createRoutingSessionStateStore()
     store.recordDecision(WORKER, { decisionId: "d1", catalogVersion: "c1", policyVersion: "p1" }, "worker")
     expect(store.get(OTHER).decision).toBeNull()
+  })
+})
+
+describe("RoutingSessionStateStore — autoSkillInjected (Feature 052, FR6)", () => {
+  test("a fresh session reads autoSkillInjected null", () => {
+    const store = createRoutingSessionStateStore()
+    expect(store.get(WORKER).autoSkillInjected).toBeNull()
+  })
+
+  test("recordAutoSkillInjected lazily creates and merges the session dedup set", () => {
+    const store = createRoutingSessionStateStore()
+    store.recordAutoSkillInjected(WORKER, ["alpha", "beta"])
+    store.recordAutoSkillInjected(WORKER, ["beta", "gamma"])
+    expect([...(store.get(WORKER).autoSkillInjected ?? [])].sort()).toEqual(["alpha", "beta", "gamma"])
+  })
+
+  test("the dedup set is released with the session at clear()", () => {
+    const store = createRoutingSessionStateStore()
+    store.recordAutoSkillInjected(WORKER, ["alpha"])
+    store.clear(WORKER)
+    expect(store.get(WORKER).autoSkillInjected).toBeNull()
+  })
+
+  test("the dedup set coexists with the narrowedSets memo", () => {
+    const store = createRoutingSessionStateStore()
+    store.recordNarrowedSets(WORKER, "msg_1", { skills: ["s1"] })
+    store.recordAutoSkillInjected(WORKER, ["alpha"])
+    expect(store.get(WORKER).narrowedSets).toEqual({ key: "msg_1", sets: { skills: ["s1"] } })
+    expect([...(store.get(WORKER).autoSkillInjected ?? [])]).toEqual(["alpha"])
   })
 })

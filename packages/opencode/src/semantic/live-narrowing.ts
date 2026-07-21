@@ -18,17 +18,18 @@
 export * as LiveNarrowing from "./live-narrowing"
 
 import { Duration, Effect } from "effect"
-import type { RetrievalPort, ToolRetrievalPort } from "@opencode-ai/protocol/semantic/ports"
+import type { RetrievalPort, SkillChunkRetrievalPort, ToolRetrievalPort } from "@opencode-ai/protocol/semantic/ports"
 import type {
   RetrievalFilters,
   RetrievalRequest,
+  SkillChunkRetrievalRequest,
   SkillRetrievalRequest,
   TaskProfile,
   ToolRetrievalRequest,
 } from "@opencode-ai/protocol/semantic/commands"
 import { ConfigExperimental } from "@opencode-ai/core/config/experimental"
 import type { SessionID } from "@/session/schema"
-import type { NarrowedSets, NarrowedSetsMemo, RoutingSessionStateStore } from "@/session/routing-state"
+import type { AutoSkillChunkRef, NarrowedSets, NarrowedSetsMemo, RoutingSessionStateStore } from "@/session/routing-state"
 export type { NarrowedSets } from "@/session/routing-state"
 
 // =============================================================================
@@ -133,14 +134,47 @@ export const narrowingAccessors = (store: RoutingSessionStateStore): NarrowingSt
   },
 })
 
+/**
+ * Feature 052 (FR1, FR2, FR4) — the resolved `skill_autoprime` config the fourth surface
+ * consumes. `enabled` is the COMPOSED gate (`skill_autoprime.enabled &&
+ * semantic_narrowing.skills.enabled`) the caller resolves; `scoreFloor` is the FR2 confidence
+ * floor consulted here; `maxChunks`/`maxTokens` are the FR4 render budgets threaded through to
+ * `SystemPrompt.autoSkills` unchanged (never spent by this pass). A minimal structural type so
+ * the concurrent config resolver plugs in without this module importing it.
+ */
+export interface AutoSkillNarrowConfig {
+  readonly enabled: boolean
+  readonly scoreFloor: number
+  readonly maxChunks: number
+  readonly maxTokens: number
+}
+
+/**
+ * Feature 052 (FR5, FR6) — the parent-skill metadata one chunk id resolves to, supplied by an
+ * injected resolver (the concurrent provenance surface plugs in here). `undefined` from the
+ * resolver means the parent skill no longer resolves live OR its provenance is unknown — the
+ * chunk is dropped (revalidation, fail-safe: no injection). `skillName` is the FR6 dedup key.
+ */
+export interface AutoSkillChunkMeta {
+  readonly skillName: string
+  readonly source: "local" | "remote-pack"
+  readonly autoprimeOptIn: boolean
+}
+
 export interface NarrowForTurnDeps {
   readonly gates: NarrowingGates
-  readonly retrieval: RetrievalPort & ToolRetrievalPort
+  readonly retrieval: RetrievalPort & ToolRetrievalPort & Partial<SkillChunkRetrievalPort>
   readonly state: NarrowingStateAccessors
   readonly warn: (message: string) => void
   readonly debugLog?: (surface: NarrowingSurfaceName, kept: readonly string[], dropped: readonly string[]) => void
   /** Project scope for the retrieval requests; defaults to the empty project when absent. */
   readonly projectId?: string
+  /** Feature 052 (FR1) — the composed `skill_autoprime` config; absent/disabled skips the
+   * fourth pass entirely (no retrieval call, no `chunks` memo field). */
+  readonly autoSkill?: AutoSkillNarrowConfig
+  /** Feature 052 (FR5, FR6) — resolve one chunk id to its parent skill's provenance + name;
+   * absent (or an unresolved id) drops the chunk before the confidence floor is consulted. */
+  readonly resolveChunkMeta?: (chunkId: string) => AutoSkillChunkMeta | undefined
 }
 
 export interface NarrowForTurnInput {
@@ -202,6 +236,78 @@ const runSurface = async (
 }
 
 // =============================================================================
+// Fourth surface (FR1, FR2, FR5) — skill_chunks
+// =============================================================================
+
+/** The minimal chunk-candidate shape the fourth surface reads off `RetrievalResult` (FR1). */
+interface ChunkCandidateLike {
+  readonly canonicalId: string
+  readonly canonicalVersion: string
+  readonly chunkRef?: string
+  readonly score: { readonly confidence: number }
+}
+
+interface ChunkSurfaceOutcome {
+  readonly chunks?: readonly AutoSkillChunkRef[]
+  readonly degraded: boolean
+}
+
+const CHUNK_PASSTHROUGH: ChunkSurfaceOutcome = { degraded: false }
+
+/** Derive a chunk's parent skill id by stripping the `_c<n>` suffix the chunker mints (`skill-chunk.ts:77`). */
+const parentSkillIdOf = (chunkId: string): string => chunkId.replace(/_c\d+$/, "")
+
+/**
+ * Provenance-filter (FR5), confidence-floor (FR2), and dedup a chunk candidate set into ranked
+ * `AutoSkillChunkRef`s. A candidate is dropped when: its parent skill no longer resolves
+ * (`resolveMeta` → undefined, revalidation); its provenance is not auto-prime-eligible
+ * (`local`, or `remote-pack` with explicit opt-in); or its confidence is below the floor. Pure.
+ */
+const toChunkRefs = (
+  candidates: readonly ChunkCandidateLike[],
+  autoSkill: AutoSkillNarrowConfig,
+  resolveMeta: ((chunkId: string) => AutoSkillChunkMeta | undefined) | undefined,
+): readonly AutoSkillChunkRef[] => {
+  const out: AutoSkillChunkRef[] = []
+  const seen = new Set<string>()
+  for (const candidate of candidates) {
+    if (seen.has(candidate.canonicalId)) continue
+    const meta = resolveMeta?.(parentSkillIdOf(candidate.canonicalId))
+    if (!meta) continue
+    if (!(meta.source === "local" || (meta.source === "remote-pack" && meta.autoprimeOptIn))) continue
+    if (candidate.score.confidence < autoSkill.scoreFloor) continue
+    seen.add(candidate.canonicalId)
+    out.push({
+      chunkId: candidate.canonicalId,
+      skillName: meta.skillName,
+      score: candidate.score.confidence,
+      bodyRef: { outputRef: candidate.chunkRef ?? candidate.canonicalVersion, offset: 0, limit: 0 },
+    })
+  }
+  return out
+}
+
+/**
+ * Run the fourth (skill_chunks) surface under the SAME shared deadline, fail-open. A rejection
+ * or timeout resolves to a degraded passthrough; a zero-hit / below-floor / provenance-excluded
+ * / revalidation-emptied result resolves to a (non-degraded) passthrough (FR2, FR7). No retries.
+ */
+const runChunkSurface = async (
+  retrieve: () => Effect.Effect<{ readonly candidates: readonly ChunkCandidateLike[] }, unknown>,
+  budgetMs: number,
+  autoSkill: AutoSkillNarrowConfig,
+  resolveMeta: ((chunkId: string) => AutoSkillChunkMeta | undefined) | undefined,
+): Promise<ChunkSurfaceOutcome> => {
+  try {
+    const result = await Effect.runPromise(retrieve().pipe(Effect.timeout(Duration.millis(budgetMs))))
+    const refs = toChunkRefs(result.candidates, autoSkill, resolveMeta)
+    return { chunks: refs.length > 0 ? refs : undefined, degraded: false }
+  } catch {
+    return { degraded: true }
+  }
+}
+
+// =============================================================================
 // Request assembly
 // =============================================================================
 
@@ -209,6 +315,7 @@ interface SurfaceRequests {
   readonly agents: RetrievalRequest
   readonly skills: SkillRetrievalRequest
   readonly tools: ToolRetrievalRequest
+  readonly chunks: SkillChunkRetrievalRequest
 }
 
 /** Build the three surface requests from ONE per-turn `TaskProfile` (single embed, FR1). */
@@ -226,6 +333,7 @@ const buildRequests = (deps: NarrowForTurnDeps, input: NarrowForTurnInput): Surf
     agents: base,
     skills: { ...base, selectedAgentCanonicalId: input.agent, maxSkillChunks: 0 },
     tools: { ...base, collection: "tools" },
+    chunks: { ...base, collection: "skill_chunks" },
   }
 }
 
@@ -234,11 +342,22 @@ const buildRequests = (deps: NarrowForTurnDeps, input: NarrowForTurnInput): Surf
 // =============================================================================
 
 /** Assemble the memo: absent surface = passthrough; tools gets the essential-tool floor merged (FR4). */
-const assembleSets = (agents: SurfaceOutcome, skills: SurfaceOutcome, tools: SurfaceOutcome): NarrowedSets => {
-  const sets: { agents?: readonly string[]; skills?: readonly string[]; tools?: readonly string[] } = {}
+const assembleSets = (
+  agents: SurfaceOutcome,
+  skills: SurfaceOutcome,
+  tools: SurfaceOutcome,
+  chunk: ChunkSurfaceOutcome,
+): NarrowedSets => {
+  const sets: {
+    agents?: readonly string[]
+    skills?: readonly string[]
+    tools?: readonly string[]
+    chunks?: readonly AutoSkillChunkRef[]
+  } = {}
   if (agents.ranked) sets.agents = agents.ranked
   if (skills.ranked) sets.skills = skills.ranked
   if (tools.ranked) sets.tools = mergeFloor(tools.ranked)
+  if (chunk.chunks) sets.chunks = chunk.chunks
   return sets
 }
 
@@ -273,20 +392,29 @@ export const narrowForTurn = async (deps: NarrowForTurnDeps, input: NarrowForTur
   if (memo && memo.key === input.lastUserID) return memo.sets
   if (input.promptText.length < gates.minPromptLength) return memo ? memo.sets : {}
 
+  // Feature 052 (FR1) — the fourth surface's composed gate: `skill_autoprime.enabled` (the
+  // resolved `deps.autoSkill.enabled`) AND the existing Feature 051 skills gate must both be on,
+  // and the facade must expose the chunk pass. Either gate off skips the pass entirely — no
+  // retrieval call, no `chunks` memo field.
+  const chunksEnabled = !!deps.autoSkill?.enabled && gates.skills && typeof deps.retrieval.retrieveSkillChunks === "function"
+
   const requests = buildRequests(deps, input)
   const budget = gates.latencyBudgetMs
-  const [agents, skills, tools] = await Promise.all([
+  const [agents, skills, tools, chunk] = await Promise.all([
     gates.agents ? runSurface(() => deps.retrieval.retrieveAgents(requests.agents), budget) : Promise.resolve(PASSTHROUGH_OUTCOME),
     gates.skills ? runSurface(() => deps.retrieval.retrieveSkills(requests.skills), budget) : Promise.resolve(PASSTHROUGH_OUTCOME),
     toolsEnabled ? runSurface(() => deps.retrieval.retrieveTools(requests.tools), budget) : Promise.resolve(PASSTHROUGH_OUTCOME),
+    chunksEnabled && deps.autoSkill
+      ? runChunkSurface(() => deps.retrieval.retrieveSkillChunks!(requests.chunks), budget, deps.autoSkill, deps.resolveChunkMeta)
+      : Promise.resolve(CHUNK_PASSTHROUGH),
   ])
 
-  if (agents.degraded || skills.degraded || tools.degraded) {
+  if (agents.degraded || skills.degraded || tools.degraded || chunk.degraded) {
     deps.warn("semantic narrowing degraded: one or more surfaces passed through to the full catalog")
   }
   emitDebug(deps, { agents, skills, tools })
 
-  const sets = assembleSets(agents, skills, tools)
+  const sets = assembleSets(agents, skills, tools, chunk)
   deps.state.writeMemo(input.sessionID, input.lastUserID, sets)
   return sets
 }

@@ -417,6 +417,16 @@ export interface SkillRetrievalRequest extends RetrievalRequest {
   readonly maxSkillChunks: number
 }
 
+/**
+ * Feature 052 skill-chunk pass request — a single-collection recall over `skill_chunks`,
+ * reusing `RetrievalResult` (candidates carry `kind: "skill_chunk"` and `chunkRef`). The
+ * `collection` discriminant is fixed, mirroring `ToolRetrievalRequest`; the pass shares the
+ * turn's single embedding and reranker binding with the other three surfaces (FR1).
+ */
+export interface SkillChunkRetrievalRequest extends RetrievalRequest {
+  readonly collection: Extract<CollectionKind, "skill_chunks"> // fixed discriminator; CollectionKind reused (FR1)
+}
+
 /** Explicit degraded outcome; never a silent empty result and never an auto-selected substitute model (FR24, C1, C20). */
 export interface DegradationOutcome {
   readonly rung: DegradationRung

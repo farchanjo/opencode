@@ -34,6 +34,7 @@ const build = () => {
       cacheHit: true,
       effective: { embeddingBindingVersion: 4, rerankerBindingVersion: 2, languageTag: "pt-BR" },
     }),
+    runSkillChunks: async () => outcome([{ canonicalId: "skill-x_c0", canonicalVersion: "hash0", rerank: null, dense: 0.7, sparse: 0.3 }]),
   }
   const facade = RetrievalFacade.createRetrievalFacade({ pipeline, recorder: { record: (d) => recorded.push(d) } })
   return { facade, recorded }

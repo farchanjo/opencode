@@ -19,7 +19,7 @@ export * as SemanticRetrieval from "./retrieval-service"
 
 import { Context, Effect, Layer } from "effect"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
-import type { RetrievalPort, ToolRetrievalPort } from "@opencode-ai/protocol/semantic/ports"
+import type { RetrievalPort, SkillChunkRetrievalPort, ToolRetrievalPort } from "@opencode-ai/protocol/semantic/ports"
 import { RetrievalFacade } from "@/semantic/retrieval-facade"
 import type { PipelineRunnerPort, RetrievalRecorder } from "@/semantic/retrieval-facade"
 import { PipelineRunner } from "@/semantic/pipeline-runner"
@@ -28,8 +28,8 @@ import type { MilvusPort } from "@/semantic/milvus-adapter"
 import type { EmbeddingsHttpPort } from "@/semantic/embedding-client"
 import type { NativeRerankHttpPort, StructuredChatHttpPort } from "@/semantic/rerank-client"
 
-/** The service interface is the composed retrieval + tool-retrieval facade surface. */
-export type Interface = RetrievalPort & ToolRetrievalPort
+/** The service interface is the composed retrieval + tool-retrieval + skill-chunk facade surface. */
+export type Interface = RetrievalPort & ToolRetrievalPort & SkillChunkRetrievalPort
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/SemanticRetrieval") {}
 
@@ -41,6 +41,7 @@ const UNAVAILABLE_RUNNER: PipelineRunnerPort = {
   runAgents: () => Promise.reject(new Error("semantic retrieval unavailable: no active embedding binding")),
   runSkills: () => Promise.reject(new Error("semantic retrieval unavailable: no active embedding binding")),
   runTools: () => Promise.reject(new Error("semantic retrieval unavailable: no active embedding binding")),
+  runSkillChunks: () => Promise.reject(new Error("semantic retrieval unavailable: no active embedding binding")),
 }
 
 /**

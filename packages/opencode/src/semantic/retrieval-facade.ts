@@ -28,6 +28,7 @@ import type {
   RetrievalError,
   RetrievalRequest,
   RetrievalResult,
+  SkillChunkRetrievalRequest,
   SkillRetrievalRequest,
   ToolCandidate,
   ToolDegradationOutcome,
@@ -36,7 +37,7 @@ import type {
   ToolRetrievalResult,
   ToolSource,
 } from "@opencode-ai/protocol/semantic/commands"
-import type { RetrievalPort, ToolRetrievalPort } from "@opencode-ai/protocol/semantic/ports"
+import type { RetrievalPort, SkillChunkRetrievalPort, ToolRetrievalPort } from "@opencode-ai/protocol/semantic/ports"
 
 /** One ranked row from the pipeline: the score components and the canonical identity/version. */
 export interface RankedRow {
@@ -89,6 +90,9 @@ export interface PipelineRunnerPort {
   readonly runSkills: (request: SkillRetrievalRequest) => Promise<PipelineOutcome>
   /** Feature 009 tool pass (stages 1–6 + 9); bound to `packages/core/src/semantic/tool-pass.ts` (C2). */
   readonly runTools: (request: ToolRetrievalRequest) => Promise<ToolPipelineOutcome>
+  /** Feature 052 skill-chunk pass; a single-collection recall over `skill_chunks`, bound
+   * to the SAME `Pipeline.run` seam as `runSkills` with its own parent-skill revalidation (FR1). */
+  readonly runSkillChunks: (request: SkillChunkRetrievalRequest) => Promise<PipelineOutcome>
 }
 
 /** A content-free sink recording the effective binding versions and language tag on the decision (FR16, C22). */
@@ -121,6 +125,9 @@ function toCandidate(row: RankedRow, kind: RetrievalCandidate["kind"], rank: num
       confidence: clamp01(row.rerank ?? row.dense),
     },
     revalidated: true,
+    // Feature 052 — a skill_chunk's content ref IS its content hash (the spool `output_ref`
+    // the Feature 050 chunker mints), carried on `canonicalVersion` from the recall row (FR40, C9).
+    ...(kind === "skill_chunk" ? { chunkRef: row.canonicalVersion } : {}),
   }
 }
 
@@ -183,7 +190,9 @@ function assembleTools(outcome: ToolPipelineOutcome): ToolRetrievalResult {
  * record the content-free decision and assemble a ranked, revalidated result; a
  * budget overflow is a typed error, never a silent truncation (FR38, C8).
  */
-export const createRetrievalFacade = (deps: RetrievalFacadeDeps): RetrievalPort & ToolRetrievalPort => {
+export const createRetrievalFacade = (
+  deps: RetrievalFacadeDeps,
+): RetrievalPort & ToolRetrievalPort & SkillChunkRetrievalPort => {
   const retrieveAgents = (request: RetrievalRequest): Effect.Effect<RetrievalResult, RetrievalError> => {
     const overflow = budgetError(request)
     if (overflow) return Effect.fail(overflow)
@@ -232,7 +241,28 @@ export const createRetrievalFacade = (deps: RetrievalFacadeDeps): RetrievalPort 
     )
   }
 
-  return { retrieveAgents, retrieveSkills, retrieveTools }
+  /**
+   * Feature 052 skill-chunk pass. Runs the injected `runSkillChunks` (a single-collection
+   * recall over `skill_chunks` with its own parent-skill revalidation), records the
+   * content-free decision, and assembles a bounded, revalidated ranked result whose
+   * candidates carry `kind: "skill_chunk"` and `chunkRef`; a budget overflow is a typed
+   * error, never a silent truncation. A sibling port on the same facade (FR1).
+   */
+  const retrieveSkillChunks = (request: SkillChunkRetrievalRequest): Effect.Effect<RetrievalResult, RetrievalError> => {
+    const overflow = budgetError(request)
+    if (overflow) return Effect.fail(overflow)
+    return Effect.tryPromise({
+      try: () => deps.pipeline.runSkillChunks(request),
+      catch: (): RetrievalError => ({ type: "timeout" }),
+    }).pipe(
+      Effect.map((outcome) => {
+        deps.recorder.record(outcome.effective)
+        return assemble(outcome, "skill_chunk")
+      }),
+    )
+  }
+
+  return { retrieveAgents, retrieveSkills, retrieveTools, retrieveSkillChunks }
 }
 
 /**

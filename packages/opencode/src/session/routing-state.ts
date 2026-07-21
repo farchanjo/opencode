@@ -41,10 +41,34 @@ export interface RoutingDecisionRef {
  * `live-narrowing.ts` normalizes every degenerate/empty retrieval outcome to absent
  * before this memo is written (FR3).
  */
+/**
+ * Feature 052 (FR1) — a resolved reference to one auto-primeable skill chunk carried on the
+ * `chunks` narrowing surface: the chunk id, its parent skill name (the dedup key, FR6), the
+ * `[0,1]` confidence (score-floor filtered, FR2), and the Feature 005 `body_ref` the render
+ * pass resolves through `OutputSpoolStore.resolve` (FR3). Never chunk content — an id/name/
+ * score/ref only, same content-free classification as the other three surfaces' ranked ids.
+ */
+export interface AutoSkillBodyRef {
+  readonly outputRef: string
+  readonly offset: number
+  readonly limit: number
+}
+export interface AutoSkillChunkRef {
+  readonly chunkId: string
+  readonly skillName: string
+  readonly score: number
+  readonly bodyRef: AutoSkillBodyRef
+}
+
 export interface NarrowedSets {
   readonly agents?: readonly string[]
   readonly skills?: readonly string[]
   readonly tools?: readonly string[]
+  /** Feature 052 (FR1) — the turn's ranked auto-skill chunk refs. Absent means passthrough
+   * (no `<auto_skills>` block); a present-but-empty list is never a valid state —
+   * `live-narrowing.ts` normalizes every degenerate/below-floor/provenance-excluded outcome
+   * to absent before this memo is written (FR2, FR3). */
+  readonly chunks?: readonly AutoSkillChunkRef[]
 }
 
 /**
@@ -74,6 +98,11 @@ export interface RoutingSessionState {
    * `lastUser.id`; `null` until the turn's `narrowForTurn` completes a non-degenerate
    * pass. Released with the session (see `clear`). */
   readonly narrowedSets: NarrowedSetsMemo | null
+  /** Feature 052 (FR6) — the session-scoped set of skill names already rendered into an
+   * `<auto_skills>` block; a skill in this set is never auto-injected again this session
+   * (Tier-1 listing and `skill`-tool loading are unaffected). `null` until the first
+   * injection. Released with the session (see `clear`). */
+  readonly autoSkillInjected: ReadonlySet<string> | null
 }
 
 function empty(sessionId: SessionID): RoutingSessionState {
@@ -85,6 +114,7 @@ function empty(sessionId: SessionID): RoutingSessionState {
     consumption: null,
     aggregate: null,
     narrowedSets: null,
+    autoSkillInjected: null,
   }
 }
 
@@ -155,6 +185,10 @@ export interface RoutingSessionStateStore {
    * `lastUser.id`. Read back via `get(sessionId).narrowedSets`; cleared with the rest
    * of the state at `clear`. */
   readonly recordNarrowedSets: (sessionId: SessionID, key: string, sets: NarrowedSets) => RoutingSessionState
+  /** Feature 052 (FR6) — record every skill name actually rendered into an `<auto_skills>`
+   * block this turn, merging into the session-scoped dedup set (lazily created); cleared with
+   * the rest of the state at `clear`. Idempotent — re-recording a name is a no-op. */
+  readonly recordAutoSkillInjected: (sessionId: SessionID, skillNames: readonly string[]) => RoutingSessionState
   readonly clear: (sessionId: SessionID) => void
 }
 
@@ -206,6 +240,13 @@ export function createRoutingSessionStateStore(): RoutingSessionStateStore {
 
     recordNarrowedSets(sessionId, key, sets) {
       return put({ ...current(sessionId), narrowedSets: { key, sets } })
+    },
+
+    recordAutoSkillInjected(sessionId, skillNames) {
+      const state = current(sessionId)
+      const merged = new Set(state.autoSkillInjected ?? [])
+      for (const name of skillNames) merged.add(name)
+      return put({ ...state, autoSkillInjected: merged })
     },
 
     clear(sessionId) {

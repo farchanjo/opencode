@@ -14,6 +14,7 @@ import { RoutingResolve } from "./routing-resolve"
 import { RoutingHierarchy } from "./routing-hierarchy"
 import { RoutingSessionStore } from "./routing-session-store"
 import { SemanticRetrieval } from "@/semantic/retrieval-service"
+import { OutputSpoolStore } from "@/semantic/output-spool-store"
 import { LiveNarrowing } from "@/semantic/live-narrowing"
 import { ConfigExperimental } from "@opencode-ai/core/config/experimental"
 
@@ -69,6 +70,19 @@ globalThis.AI_SDK_LOG_WARNINGS = false
 
 const decodeMessageInfo = Schema.decodeUnknownExit(SessionV1.Info)
 const decodeMessagePart = Schema.decodeUnknownExit(SessionV1.Part)
+
+// Feature 052 — the `skill_autoprime` block read structurally (the concurrent config surface owns
+// the authored schema); only the two knobs the fourth surface consumes are typed here.
+interface AutoSkillConfigLike {
+  readonly enabled?: boolean
+  readonly score_floor?: number
+}
+/** Feature 052 (FR2) — the strict default confidence floor when unset (ADR-0052). */
+const AUTO_SKILL_SCORE_FLOOR = 0.75
+/** Feature 052 (FR4) — the render-time budgets (Budget.Retrieval.max_skill_chunks/max_skill_tokens
+ * defaults) applied until an operator config overrides them via the concurrent config resolver. */
+const AUTO_SKILL_MAX_CHUNKS = 4
+const AUTO_SKILL_MAX_TOKENS = 2000
 const MAX_MCP_RESOURCE_BLOB_BYTES = 10 * 1024 * 1024
 const SUPPORTED_MCP_RESOURCE_ATTACHMENT_MIMES = new Set([
   "application/pdf",
@@ -188,6 +202,16 @@ const layer = Layer.effect(
         const semanticRetrieval = retrievalOption.value
         const info = yield* config.get()
         const narrowing = ConfigExperimental.resolveNarrowingConfig(info.experimental?.semantic_narrowing)
+        // Feature 052 (FR1) — the fourth surface's `skill_autoprime` gate, read structurally so
+        // the concurrent config resolver plugs in without a hard import; the effective gate is
+        // `skill_autoprime.enabled && semantic_narrowing.skills.enabled` (composed here).
+        const autoprime = (info.experimental as { skill_autoprime?: AutoSkillConfigLike } | undefined)?.skill_autoprime
+        const autoSkill = {
+          enabled: (autoprime?.enabled ?? false) && narrowing.skills,
+          scoreFloor: autoprime?.score_floor ?? AUTO_SKILL_SCORE_FLOOR,
+          maxChunks: AUTO_SKILL_MAX_CHUNKS,
+          maxTokens: AUTO_SKILL_MAX_TOKENS,
+        }
         // The tools surface reuses the Feature 009 `tool_search` gate, never a
         // duplicated switch: tools are ranked only when BOTH consumption surfaces
         // (native + MCP) are explicitly enabled — conservative by construction.
@@ -214,6 +238,7 @@ const layer = Layer.effect(
                 ? (surface, kept, dropped) => debugRows.push({ surface, kept, dropped })
                 : undefined,
               projectId: process.env["OPENCODE_SEMANTIC_PROJECT_ID"] ?? "opencodedev",
+              autoSkill,
             },
             input,
           ),
@@ -221,6 +246,33 @@ const layer = Layer.effect(
         for (const message of warnings) yield* Effect.logWarning(message, { "session.id": input.sessionID })
         for (const row of debugRows) yield* Effect.logDebug("semantic narrowing", row)
         return sets
+      })
+
+    // Feature 052 (FR3, FR6, FR8) — render the memoized `chunks` surface into an `<auto_skills>`
+    // block beside `<available_skills>`. Soft by construction: an absent `OutputSpoolStore.Service`
+    // mount (or an absent/degenerate `chunks` surface) returns `undefined`, keeping the system
+    // prompt byte-identical to Feature 051. The session dedup set + recorder are the shared routing
+    // store; the debug flag reuses Feature 051's `debug_log`, content-free (ids + scores only).
+    const buildAutoSkills = (agent: Agent.Info, chunks: LiveNarrowing.NarrowedSets["chunks"], sessionID: SessionID) =>
+      Effect.gen(function* () {
+        if (!chunks || chunks.length === 0) return undefined
+        const spoolOption = yield* Effect.serviceOption(OutputSpoolStore.Service)
+        if (Option.isNone(spoolOption)) return undefined
+        const info = yield* config.get()
+        const debugOn = ConfigExperimental.resolveNarrowingConfig(info.experimental?.semantic_narrowing).debugLog
+        const debugRows: Array<{ chunkId: string; score: number }> = []
+        const block = yield* sys.autoSkills(agent, chunks, {
+          spool: spoolOption.value,
+          maxChunks: AUTO_SKILL_MAX_CHUNKS,
+          maxTokens: AUTO_SKILL_MAX_TOKENS,
+          injected: routingSessionState.get(sessionID).autoSkillInjected ?? new Set<string>(),
+          record: (names) => {
+            routingSessionState.recordAutoSkillInjected(sessionID, names)
+          },
+          debug: debugOn ? (rows) => debugRows.push(...rows) : undefined,
+        })
+        for (const row of debugRows) yield* Effect.logDebug("auto-skill injected", row)
+        return block
       })
 
     // Feature 037 / Phase 1 — session-local Smart Routing resolver. Consulted ONLY
@@ -1610,8 +1662,9 @@ const layer = Layer.effect(
 
             yield* plugin.trigger("experimental.chat.messages.transform", {}, { messages: msgs })
 
-            const [skills, env, instructions, mcpInstructions, modelMsgs] = yield* Effect.all([
+            const [skills, autoSkills, env, instructions, mcpInstructions, modelMsgs] = yield* Effect.all([
               sys.skills(agent, narrowed.skills),
+              buildAutoSkills(agent, narrowed.chunks, sessionID),
               sys.environment(model),
               instruction.system().pipe(Effect.orDie),
               sys.mcp(agent, session.permission),
@@ -1622,6 +1675,7 @@ const layer = Layer.effect(
               ...instructions,
               ...(mcpInstructions ? [mcpInstructions] : []),
               ...(skills ? [skills] : []),
+              ...(autoSkills ? [autoSkills] : []),
             ]
             const format = lastUser.format ?? { type: "text" as const }
             if (format.type === "json_schema") system.push(STRUCTURED_OUTPUT_SYSTEM_PROMPT)

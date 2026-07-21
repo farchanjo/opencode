@@ -73,6 +73,7 @@ import type {
   ShowBindingOutput,
   ShowCollectionsInput,
   ShowCollectionsOutput,
+  SkillChunkRetrievalRequest,
   SkillRetrievalRequest,
   TestProviderInput,
   TestProviderOutput,
@@ -217,6 +218,19 @@ export interface EvalPort {
  */
 export interface ToolRetrievalPort {
   readonly retrieveTools: (input: ToolRetrievalRequest) => Effect.Effect<ToolRetrievalResult, ToolRetrievalError>
+}
+
+/**
+ * Feature 052 skill-chunk retrieval seam — the fourth pass the Feature 006 wire contract
+ * already reserved (`RetrievalCandidate.kind: "skill_chunk"`, `chunkRef`) but never wired.
+ * Composed by the SAME facade alongside `retrieveAgents`/`retrieveSkills`/`retrieveTools`
+ * — a sibling port, not a second facade. Runs a single-collection recall over
+ * `skill_chunks` and returns a `RetrievalResult` whose candidates carry
+ * `kind: "skill_chunk"` and `chunkRef` (the Feature 005 content ref); never reached by a
+ * live route until the `skill_autoprime` gate composes on (FR1).
+ */
+export interface SkillChunkRetrievalPort {
+  readonly retrieveSkillChunks: (input: SkillChunkRetrievalRequest) => Effect.Effect<RetrievalResult, RetrievalError>
 }
 
 /**

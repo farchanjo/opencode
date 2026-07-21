@@ -16,7 +16,7 @@ import type { MandatoryFilters, MilvusPort } from "@/semantic/milvus-adapter"
 import type { EmbeddingsHttpPort } from "@/semantic/embedding-client"
 import type { NativeRerankHttpPort } from "@/semantic/rerank-client"
 import type { ActiveBinding } from "@/semantic/binding-runtime"
-import type { RetrievalRequest, ToolRetrievalRequest } from "@opencode-ai/protocol/semantic/commands"
+import type { RetrievalRequest, SkillChunkRetrievalRequest, ToolRetrievalRequest } from "@opencode-ai/protocol/semantic/commands"
 
 const FILTERS: MandatoryFilters = { projectId: "proj", scope: "project", visibility: "public" }
 const EMBEDDING: ActiveBinding = { baseUrl: "https://emb.local", modelRef: "m", secretRef: "", compatibilityMode: "embedding", bindingVersion: 1 }
@@ -31,14 +31,28 @@ const request = {
   filters: { projectId: "proj" },
 } as unknown as RetrievalRequest
 
-async function seededMilvus(collection: "agents" | "tools"): Promise<MilvusPort> {
+async function seededMilvus(collection: "agents" | "tools", rows?: readonly { canonicalId: string; canonicalVersion: string; dense: number[] }[]): Promise<MilvusPort> {
   const milvus = MilvusAdapter.createFakeMilvusAdapter()
   await Effect.runPromise(
     milvus.upsert({
       collection,
+      rows: (rows ?? [
+        { canonicalId: "cand-a", canonicalVersion: "h1", dense: [1, 0] },
+        { canonicalId: "cand-b", canonicalVersion: "h2", dense: [0, 1] },
+      ]).map((r) => ({ ...r, terms: [], filters: FILTERS })),
+    }),
+  )
+  return milvus
+}
+
+async function seededChunks(): Promise<MilvusPort> {
+  const milvus = MilvusAdapter.createFakeMilvusAdapter()
+  await Effect.runPromise(
+    milvus.upsert({
+      collection: "skill_chunks",
       rows: [
-        { canonicalId: "cand-a", canonicalVersion: "h1", dense: [1, 0], terms: [], filters: FILTERS },
-        { canonicalId: "cand-b", canonicalVersion: "h2", dense: [0, 1], terms: [], filters: FILTERS },
+        { canonicalId: "skill-a_c0", canonicalVersion: "chash0", dense: [1, 0], terms: [], filters: FILTERS },
+        { canonicalId: "skill-a_c1", canonicalVersion: "chash1", dense: [0, 1], terms: [], filters: FILTERS },
       ],
     }),
   )
@@ -128,5 +142,25 @@ describe("createPipelineRunner — tools (FR1)", () => {
     expect(outcome.rows.map((r) => r.canonicalId)).toEqual(["cand-a", "cand-b"])
     expect(outcome.rows[0].canonicalVersion).toBe("h1") // content hash carried on the tool row
     expect(outcome.rows[0].source).toBe("native")
+  })
+})
+
+describe("createPipelineRunner — skill chunks (Feature 052, FR1)", () => {
+  const chunkRequest = { ...request, collection: "skill_chunks" } as unknown as SkillChunkRetrievalRequest
+
+  test("runSkillChunks ranks over the skill_chunks collection, carrying the content hash as the ref leg", async () => {
+    const milvus = await seededChunks()
+    const runner = PipelineRunner.createPipelineRunner({ milvus, embedHttp, bindings: { embedding: EMBEDDING }, latencyBudgetMs: 1000, filters: FILTERS })
+    const outcome = await runner.runSkillChunks(chunkRequest)
+    expect(outcome.rows.map((r) => r.canonicalId)).toEqual(["skill-a_c0", "skill-a_c1"])
+    expect(outcome.rows[0].canonicalVersion).toBe("chash0") // = the spool output_ref
+  })
+
+  test("its own revalidation drops a chunk whose parent skill no longer resolves", async () => {
+    const milvus = await seededChunks()
+    const chunks: EntityRevalidator = { get: async (id) => ({ exists: id === "skill-a_c0", permitted: true }) }
+    const runner = PipelineRunner.createPipelineRunner({ milvus, embedHttp, bindings: { embedding: EMBEDDING }, chunks, latencyBudgetMs: 1000, filters: FILTERS })
+    const outcome = await runner.runSkillChunks(chunkRequest)
+    expect(outcome.rows.map((r) => r.canonicalId)).toEqual(["skill-a_c0"])
   })
 })

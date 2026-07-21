@@ -32,7 +32,7 @@
 export * as OutputSpoolStore from "./output-spool-store"
 
 import { createHash } from "node:crypto"
-import { Effect } from "effect"
+import { Context, Effect } from "effect"
 import type { OperatorPrincipal, SpoolReaderError } from "@opencode-ai/protocol/outputspool/commands"
 import type { ChannelKey } from "@/session/output-spool-writer"
 import { SessionSpoolWriter } from "@/session/output-spool-writer"
@@ -153,3 +153,13 @@ export const createOutputSpoolStore = (deps: OutputSpoolStoreDeps): OutputSpoolS
 }
 
 const readerErrorReason = (e: SpoolReaderError): string => (e.type === "unavailable" ? e.reason : e.type)
+
+/**
+ * Feature 052 — a SOFT context tag for the chunk-body store, resolved via
+ * `Effect.serviceOption` by the `SystemPrompt.autoSkills` render call site (`session/prompt.ts`).
+ * Intentionally NOT provided by a default layer: an absent mount resolves to `None`, so the
+ * `<auto_skills>` render simply no-ops (byte-identical to Feature 051) until a composition root
+ * mounts a live store over the Feature 005 writer + operator reader — the same fail-open,
+ * mount-when-ready posture Feature 051 used for `SemanticRetrieval.Service` before it was wired.
+ */
+export class Service extends Context.Service<Service, OutputSpoolStore>()("@opencode/OutputSpoolStore") {}

@@ -95,10 +95,23 @@ describe("Feature 050 golden disabled path — ToolRetrieval.narrow/narrowRecord
 })
 
 describe("Feature 050 golden disabled path — SystemPrompt.skills byte-identical output (FR13)", () => {
+  const local: Skill.Provenance = { source: "local", autoprime_opt_in: false }
   const fixedSkills: Skill.Info[] = [
-    { name: "zeta", description: "Zeta skill for Z tasks.", location: "/skills/zeta/SKILL.md", content: "zeta body" },
-    { name: "alpha", description: "Alpha skill for A tasks.", location: "/skills/alpha/SKILL.md", content: "alpha body" },
-    { name: "hidden-skill", location: "/skills/hidden/SKILL.md", content: "no description, excluded" },
+    {
+      name: "zeta",
+      description: "Zeta skill for Z tasks.",
+      location: "/skills/zeta/SKILL.md",
+      content: "zeta body",
+      provenance: local,
+    },
+    {
+      name: "alpha",
+      description: "Alpha skill for A tasks.",
+      location: "/skills/alpha/SKILL.md",
+      content: "alpha body",
+      provenance: local,
+    },
+    { name: "hidden-skill", location: "/skills/hidden/SKILL.md", content: "no description, excluded", provenance: local },
   ]
 
   // Reproduces the EXACT join `SystemPrompt.skills` (`session/system.ts:98-110`)
@@ -138,7 +151,9 @@ describe("Feature 050 golden disabled path — SystemPrompt.skills byte-identica
   })
 
   test("an all-undescribed skill set is the honest 'no skills available' floor, never an empty tag block", () => {
-    const undescribed: Skill.Info[] = [{ name: "only", location: "/skills/only/SKILL.md", content: "no description" }]
+    const undescribed: Skill.Info[] = [
+      { name: "only", location: "/skills/only/SKILL.md", content: "no description", provenance: local },
+    ]
     expect(Skill.fmt(undescribed, { verbose: true })).toBe("No skills are currently available.")
   })
 })
