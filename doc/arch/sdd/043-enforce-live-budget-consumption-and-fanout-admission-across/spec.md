@@ -156,6 +156,22 @@ Priority uses P1 (must have), P2 (should have), and P3 (could have).
    the pure engine's (`budget-policy.ts` header) — it is enforced, never
    re-decided at the seam.
 
+> **Clarification (post-review) — per-response ceilings vs cumulative dimensions.**
+> `max_context_tokens` / `max_output_tokens` are PER-RESPONSE window ceilings (the
+> largest single response), NOT cumulative budgets — every step re-sends the full
+> context, so comparing the cumulative token SUM against them spuriously breaches a
+> valid multi-step session within a few steps. The re-evaluation therefore compares
+> each dimension against a value of the right shape: `max_context_tokens` /
+> `max_output_tokens` against the CURRENT response's spend; `max_turns`,
+> `cost.token_budget`, and `cost.cost_usd` against the cumulative running total. The
+> recorded consumption (FR-A2 / FR-D1 `budget_consumed`) stays the running total;
+> only the evaluation mapping is corrected, at the consumption layer
+> (`session/budget-consume.ts` `evaluateLiveBudget`). `max_turns` additionally has a
+> PRE-turn gate (`turns_used + 1 > max_turns` → block before the turn starts) so the
+> countable dimension is honored exactly; token/cost lateness is inherent to
+> post-execution accounting and left as-is. Only `blocked` / `error` halt the turn;
+> a resilience `escalation` is advisory in Phase 2b (no live counts until Phase 3).
+
 ### Group C — fan-out admission against real headroom (FR-C)
 
 7. **FR-C1 — admit every spawn against real cost and token headroom.** Every Task
@@ -207,6 +223,22 @@ Priority uses P1 (must have), P2 (should have), and P3 (could have).
     `routing` and no `global:routing` budget present). An explicit operator budget
     at either scope MUST win verbatim; the defaults are a floor for the absent
     case, never a ceiling imposed over a configured one.
+
+> **Clarification (post-review) — enforcement is gated on effective activation.**
+> "Active out-of-box" means active once Smart Routing is effectively ON, not always.
+> The budget seam records + blocks ONLY when `activation.enabled && mode !== "never"`
+> (active for both `auto` and `always`). Note the seams do NOT share one gate: budget
+> enforcement = `enabled && mode !== "never"`; fan-out admission (`routing-hierarchy.ts`)
+> and model resolution (`routing-resolve.ts`) = `enabled && mode === "auto"` (the
+> pre-existing Feature 037 / 042 decision). This divergence is intentional — under
+> `mode: "always"` budget enforcement runs while fan-out admission is inactive. A
+> session with Smart Routing DISABLED (the shipped default `enabled:false`/`mode:"never"`)
+> is byte-identical to pre-F043 — no recording, no re-evaluation, no block. The
+> sensible default budget therefore protects the operator who ENABLES Smart Routing
+> without configuring every numeric limit. Root-session consumption is cleared when
+> the session's turn completes (mirroring the Feature 042 child-session clear), so a
+> breach can never persist across prompts (permanent-brick fix) and the store never
+> leaks one entry per session.
 
 ### Group F — back-compat and safety proof (FR-F)
 

@@ -199,6 +199,77 @@ the numeric drift between the existing `DEFAULT_ROUTING_BUDGET` (`max_turns` 10,
 `max_workers` 4, `token_budget` 1000000) and this grounded table so the out-of-box
 floor matches the documented decision.
 
+### Post-implementation clarifications (adversarial review)
+
+The initial implementation shipped two defects that materially change the
+documented behavior; the corrections are recorded here so the ADR stays truthful.
+
+1. **Enforcement is gated on effective activation — "active out-of-box" means once
+   Smart Routing is ON, not always.** The first cut enforced the tightened default
+   budget on EVERY session regardless of activation, so an out-of-box session
+   (`activation.enabled:false`/`mode:"never"`, the shipped default) hit the
+   `max_turns` breach, set `ctx.blocked`, and — because root-session consumption was
+   never reset — re-breached on every subsequent prompt, permanently bricking the
+   session. The budget seam now enforces (records + blocks) ONLY when Smart Routing
+   is effectively on — the gate is `activation.enabled && mode !== "never"` (active
+   for both `auto` and `always`). The gates are NOT identical across seams: budget
+   enforcement uses `enabled && mode !== "never"`, whereas the fan-out admission
+   resolver (`routing-hierarchy.ts`) and the model resolver (`routing-resolve.ts`)
+   gate on `enabled && mode === "auto"` (the pre-existing Feature 037 / 042
+   decision). This divergence is intentional — budget enforcement should run
+   whenever routing is enabled and not `never`, while fan-out admission stays
+   `auto`-only. Consequence: under `mode: "always"` the budget seam records + applies
+   the pre-turn `max_turns` block + can set `ctx.blocked`, while fan-out admission is
+   inactive. The sensible default budget therefore protects the operator who ENABLES
+   Smart Routing without configuring every numeric limit; a session with Smart
+   Routing disabled (the default) is byte-identical to pre-F043 (no recording, no
+   re-evaluation, no block). Root-session consumption is also cleared when the
+   session's turn completes (mirroring the Feature 042 child-session clear), so a
+   breach can never persist across prompts and the store never leaks one entry per
+   session.
+2. **Per-response ceilings vs cumulative dimensions.** `max_context_tokens` /
+   `max_output_tokens` are PER-RESPONSE window ceilings (the largest single
+   response), NOT cumulative budgets — every step re-sends the full context, so
+   comparing the cumulative token SUM against them spuriously breaches within a few
+   steps. Enforcement now compares each dimension against a value of the right
+   shape: `max_context_tokens` / `max_output_tokens` against the CURRENT response's
+   spend; `max_turns`, `cost.token_budget`, and `cost.cost_usd` against the
+   cumulative running total (which stays the recorded `accounting.budget_consumed`,
+   FR-D1). The recorded consumption remains the running total (FR-A2); only the
+   EVALUATION mapping is corrected at the consumption layer.
+3. **`max_turns` is gated PRE-turn.** The countable turn dimension is checked
+   before a turn starts (`turns_used + 1 > max_turns` → block), so `max_turns` is
+   honored exactly rather than one turn late. Token/cost lateness is inherent to
+   post-execution accounting and is left as-is (documented).
+4. **`escalation` is not a hard stop.** Only `blocked` / `error` set `ctx.blocked`;
+   a resilience `escalation` is advisory here (its live counts are Phase 3), so it
+   never halts the turn in Phase 2b. A genuine fiber interruption in the budget path
+   is re-raised (never swallowed), and the effective-config resolution is memoized by
+   the routing authorities' CAS VERSIONS (a decode-free stable key) rather than
+   config-object identity — `Config.getGlobal()` returns a fresh merged object on
+   every call under a global profile (the deployed config model), so an identity key
+   would never hit and `resolveEffective` (schema decode + contentHash) would run on
+   every step; the version key hits under a profile yet invalidates on a real config
+   change. Per-worker fan-out pricing reserves `max_context_tokens + max_output_tokens`
+   per worker (cost derived from a documented per-1k-token rate) so the cost/token
+   admission gates are conservative but not inert.
+
+Known limitations / intentional edges (Phase 2b):
+
+- **`max_context_tokens` under-enforces by cache-read/write tokens.** The
+  per-response context ceiling compares against `usage.tokens.input`, which excludes
+  provider cache-read/write tokens, so the true context window can slightly exceed
+  the ceiling before a breach. This is the SAFE direction (never a spurious breach);
+  a cache-inclusive token count is deferred.
+- **Interrupt re-raise uses `Cause.hasInterruptsOnly`.** A pure user-abort is
+  correctly re-raised; the swallow only affects the rare mixed-cause window where a
+  genuine `Fail`/`Die` co-occurs with the interrupt in the same cause. (This effect
+  version exposes `hasInterruptsOnly`, not `isInterruptedOnly`.)
+- **The root finalizer clears the ENTIRE `RoutingSessionState` entry**, not just the
+  consumption field. Verified benign: the decision reference and hierarchy role are
+  re-recorded at the start of each prompt before any read, so nothing stale is
+  observed. Intentional — one `clear` mirrors the Feature 042 child-session clear.
+
 ### Consequences
 
 - Good: the budget engine finally governs the runtime — a session's real spend is
