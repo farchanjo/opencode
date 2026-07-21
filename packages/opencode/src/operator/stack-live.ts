@@ -309,7 +309,10 @@ export async function createLiveOperatorStack(input: CreateLiveOperatorStackInpu
 
   // Catalog seam: the live provider catalog (Provider.Service) is the sole
   // model source — never a hardcoded model id. Health/status classification is
-  // owned by createCatalogAdapter.
+  // owned by createCatalogAdapter. Provider.list() is InstanceState-backed, so
+  // the seam MUST bind InstanceRef (mirrors the config seam above) — Feature 039
+  // fixed the missing bind that died `InstanceRef not provided` and broke
+  // `routing.test`, `capability inspect`, and (via F038) `pools.set`.
   const catalogCandidates: CatalogCandidateService = {
     listModels: () =>
       AppRuntime.runPromise(
@@ -327,7 +330,7 @@ export async function createLiveOperatorStack(input: CreateLiveOperatorStackInpu
               tools: m.capabilities.toolcall,
             })),
           )
-        }),
+        }).pipe(Effect.provideService(InstanceRef, instance)),
       ),
   }
 
@@ -336,7 +339,9 @@ export async function createLiveOperatorStack(input: CreateLiveOperatorStackInpu
   // is that same filter over the whole pool. Routing never fabricates agent
   // identity. Skill/effort metadata is not yet carried on Agent.Info, so the
   // pool exposes empty skills + neutral effort defaults — hard gates + ranking
-  // still apply; documented in data-model.md.
+  // still apply; documented in data-model.md. Agent.Service is InstanceState-backed,
+  // so this seam MUST bind InstanceRef too (Feature 039, same defect as the catalog
+  // seam above).
   const agentResolver: AgentResolver = {
     resolveAgents: () =>
       AppRuntime.runPromise(
@@ -349,7 +354,7 @@ export async function createLiveOperatorStack(input: CreateLiveOperatorStackInpu
             effort: "medium" as const,
             reasoningEffort: "medium" as const,
           }))
-        }),
+        }).pipe(Effect.provideService(InstanceRef, instance)),
       ),
   }
 
