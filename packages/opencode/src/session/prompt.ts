@@ -360,6 +360,10 @@ const layer = Layer.effect(
           taskText: task.prompt,
           scope: "session",
           spawnKey: spawnMessageID,
+          // The parent/main-context model — the Architect's model by definition.
+          // Any architect-tier resolution PREFERS it over the pool (ADR-0042);
+          // inert for the Manager/Worker child roles this seam actually produces.
+          mainContextModel: { providerID: model.providerID, modelID: model.id },
         })
       }
       if (hierarchyRouted?.kind === "blocked") {
@@ -597,11 +601,17 @@ const layer = Layer.effect(
               yield* events.publish(Session.Event.Error, { sessionID: input.sessionID, error: error.toObject() })
               throw error
             }
-            // Feature 037 / Phase 1 — implicit-default model selection (shell
-            // path mirror). Explicit `--model` and an agent-pinned model always
-            // win; routing is consulted only for the implicit default.
+            // Architect model precedence (shell path mirror; Feature 037 Phase 1 +
+            // Feature 042 / ADR-0042):
+            //   --model / agent-pinned  ▶  main-context selected model  ▶  routing
+            //   (pool fallback)  ▶  static default.
+            // The Architect (primary/root session) ALWAYS keeps the main-context
+            // selected model; routing is the configurable fallback, consulted only
+            // when no model was selected. Explicit `--model` and an agent-pinned
+            // model still win.
+            const selected = input.model || agent.model ? undefined : yield* selectedModel(input.sessionID)
             const routed =
-              input.model || agent.model
+              input.model || agent.model || selected
                 ? undefined
                 : yield* resolveRoutingModel({
                     sessionID: input.sessionID,
@@ -609,7 +619,7 @@ const layer = Layer.effect(
                     taskText: input.command,
                     scope: "session",
                   })
-            const model = input.model ?? agent.model ?? routed ?? (yield* currentModel(input.sessionID))
+            const model = input.model ?? agent.model ?? selected ?? routed ?? (yield* currentModel(input.sessionID))
             const userMsg: SessionV1.User = {
               id: input.messageID ?? MessageID.ascending(),
               sessionID: input.sessionID,
@@ -775,6 +785,33 @@ const layer = Layer.effect(
       return yield* provider.defaultModel().pipe(Effect.orDie)
     })
 
+    // Feature 042 / ADR-0042 — the MAIN-CONTEXT SELECTED model: the session-stored
+    // model or, failing that, the last user-message model. Unlike `currentModel`,
+    // it returns `undefined` when NEITHER is present (i.e. only the provider default
+    // would apply) — the distinction between a real user selection and a bare
+    // system default. It is the ARCHITECT's model: the primary/root session ALWAYS
+    // keeps it, and the routing engine never overrides it (see the top-level seams).
+    const selectedModel = Effect.fnUntraced(function* (sessionID: SessionID) {
+      const current = yield* db
+        .select({ model: SessionTable.model })
+        .from(SessionTable)
+        .where(eq(SessionTable.id, sessionID))
+        .get()
+        .pipe(Effect.orDie)
+      if (current?.model) {
+        return {
+          providerID: ProviderV2.ID.make(current.model.providerID),
+          modelID: ModelV2.ID.make(current.model.id),
+          ...(current.model.variant && current.model.variant !== "default" ? { variant: current.model.variant } : {}),
+        }
+      }
+      const match = yield* sessions
+        .findMessage(sessionID, (m) => m.info.role === "user" && !!m.info.model)
+        .pipe(Effect.orDie)
+      if (Option.isSome(match) && match.value.info.role === "user") return match.value.info.model
+      return undefined
+    })
+
     const createUserMessage = Effect.fn("SessionPrompt.createUserMessage")(function* (input: PromptInput) {
       const agentName = input.agent
       const ag = agentName ? yield* agents.get(agentName) : yield* agents.defaultInfo()
@@ -786,12 +823,20 @@ const layer = Layer.effect(
         throw error
       }
 
-      // Feature 037 / Phase 1 — implicit-default model selection. Explicit
-      // `--model` and an agent-pinned model always win, so routing is consulted
-      // ONLY when neither is set; a `undefined` result leaves the static
-      // `currentModel()` path unchanged.
+      // Architect model precedence (Feature 037 Phase 1 + Feature 042 / ADR-0042):
+      //   --model / agent-pinned  ▶  main-context selected model  ▶  routing (pool
+      //   fallback)  ▶  static default.
+      // The primary/root session IS the Architect: the model it is running as (the
+      // main-context SELECTED model) ALWAYS wins — the routing engine never
+      // overrides it. Routing (`role_pools`-driven) is the CONFIGURABLE FALLBACK,
+      // consulted ONLY when the main context selected no model (a fresh session
+      // with only the provider default). Explicit `--model` and an agent-pinned
+      // model still win over everything. A child/subagent session always arrives
+      // with `input.model` set (the spawn-decided model), so this branch governs
+      // the root Architect alone.
+      const selected = input.model || ag.model ? undefined : yield* selectedModel(input.sessionID)
       const routed =
-        input.model || ag.model
+        input.model || ag.model || selected
           ? undefined
           : yield* resolveRoutingModel({
               sessionID: input.sessionID,
@@ -799,7 +844,7 @@ const layer = Layer.effect(
               taskText: taskTextFromParts(input.parts),
               scope: "session",
             })
-      const model = input.model ?? ag.model ?? routed ?? (yield* currentModel(input.sessionID))
+      const model = input.model ?? ag.model ?? selected ?? routed ?? (yield* currentModel(input.sessionID))
       const same = ag.model && model.providerID === ag.model.providerID && model.modelID === ag.model.modelID
       const full =
         !input.variant && ag.variant && same

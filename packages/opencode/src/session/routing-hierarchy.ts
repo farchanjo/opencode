@@ -100,6 +100,12 @@ export interface ResolveHierarchyDispatchInput {
   /** A stable per-spawn key so bounded retention never reuses one spawn's
    * decision for another (each spawn is a FRESH decision — FR-A3). */
   readonly spawnKey: string
+  /** The main-context selected model — the model the primary/parent session is
+   * running as (`input.model ?? agent.model ?? currentModel/default`). It is the
+   * Architect's model by definition: any architect-tier model resolution PREFERS
+   * it over the role pool (Feature 042 refinement, ADR-0042). Absent → the pool
+   * fallback governs. Threaded but inert for Manager/Worker resolution. */
+  readonly mainContextModel?: ResolvedRoutingModel
 }
 
 /** Partial dispatch lineage — the child session id is unknown at the seam (the
@@ -190,10 +196,18 @@ export function classifyChildRole(parentRole: Enums.HierarchyRole, taskText: str
 
 // =============================================================================
 // Role -> pool mapping (Decision #2). The child role selects its candidate pool:
-// Worker -> role_pools.worker, Manager -> role_pools.manager. The Architect (the
-// root) draws from role_pools[decision_model.pool[0]] (the role named by the
-// decision model). Fallbacks: decision_model.pool empty -> role_pools.architect
-// -> role_pools[fallback.floor_role].
+// Worker -> role_pools.worker, Manager -> role_pools.manager.
+//
+// The Architect pool is the CONFIGURABLE FALLBACK ONLY (Feature 042 refinement,
+// ADR-0042): the Architect's model is the main-context selected model FIRST (see
+// `resolveRoleModel`); the routing engine NEVER overrides it. This function is
+// consulted for the Architect ONLY when no main-context model resolves, and it
+// then draws from role_pools[decision_model.pool[0]] (the role named by the
+// decision model), falling back to role_pools.architect then
+// role_pools[fallback.floor_role]. `role_pools` is a GENERIC
+// `Record<roleName, ModelId[]>` — `architect` is a first-class configurable role,
+// resolved here exactly like any other (never special-cased in pools.set / schema).
+// This supersedes the earlier "Architect straight from the pool" choice.
 // =============================================================================
 
 export function poolModelsForRole(config: RoutingConfig.Info, role: Enums.HierarchyRole): ReadonlyArray<string> {
@@ -363,9 +377,11 @@ export function createHierarchyDispatchResolver(deps: HierarchyResolveDeps): Res
     }
 
     // 4) Resolve + verify a concrete model for the child role (reuse Phase 1
-    // provider re-resolution + auth-presence). Any unresolved / unauthenticated
-    // model degrades to `undefined` (parent inheritance) — never a block.
-    const model = await resolveChildModel(cfg, childRole, deps, run)
+    // provider re-resolution + auth-presence). The Architect tier prefers the
+    // main-context model (never overridden by the pool); Manager/Worker resolve
+    // from their own pools. Any unresolved / unauthenticated model degrades to
+    // `undefined` (parent inheritance) — never a block.
+    const model = await resolveRoleModel(cfg, childRole, input.mainContextModel, deps, run)
     if (!model) return undefined
 
     return {
@@ -404,13 +420,32 @@ export function createHierarchyDispatchResolver(deps: HierarchyResolveDeps): Res
     }).pipe(Effect.catchCause(() => Effect.succeed(undefined)))
 }
 
-async function resolveChildModel(
+/**
+ * Resolve a concrete, authenticated model for a hierarchy role.
+ *
+ * ARCHITECT precedence (Feature 042 refinement, ADR-0042):
+ *   main-context selected model  ▶  role_pools.architect  ▶  role_pools[floor_role]
+ * The `mainContextModel` (the model the primary/parent session is running as) is
+ * the Architect's model by definition and ALWAYS wins — the routing engine never
+ * overrides it. It is the LIVE running model, so it is returned directly (no
+ * re-verification); the pool tiers below are consulted ONLY when it is absent.
+ *
+ * MANAGER / WORKER resolve from their own role pools (`role_pools.manager` /
+ * `role_pools.worker`), verified via the Phase 1 provider re-resolution +
+ * auth-presence machinery; `mainContextModel` is ignored for these tiers.
+ *
+ * Any unresolved / unauthenticated pool model degrades to `undefined` (→ parent
+ * inheritance), never a throw.
+ */
+export async function resolveRoleModel(
   cfg: RoutingConfig.Info,
-  childRole: Enums.HierarchyRole,
-  deps: HierarchyResolveDeps,
+  role: Enums.HierarchyRole,
+  mainContextModel: ResolvedRoutingModel | undefined,
+  deps: Pick<HierarchyResolveDeps, "provider" | "auth">,
   run: <A>(effect: Effect.Effect<A>) => Promise<A>,
 ): Promise<ResolvedRoutingModel | undefined> {
-  const pool = poolModelsForRole(cfg, childRole)
+  if (role === "architect" && mainContextModel) return mainContextModel
+  const pool = poolModelsForRole(cfg, role)
   for (const modelId of pool) {
     const providerID = await resolveProviderForModel(deps.provider, run, modelId)
     if (!providerID) continue
