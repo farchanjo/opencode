@@ -608,6 +608,21 @@ specScopeGlobs = [
   #   packages/opencode/test/session/** + test/routing/** — resolver seam tests.
   # Genuinely new path — the live-seam consumption test on the TaskTool surface:
   "packages/opencode/test/tool/task.test.ts",
+
+  # Feature 050 — Wire the semantic index data plane (production pipeline runner,
+  #   doc builders, skill chunker + OutputSpool, LiveDocSource, model-driven
+  #   dimension discovery, data-plane retry). Most seams ALREADY in scope
+  #   (traceability only):
+  #   packages/{schema,core,opencode}/src/**/semantic/** + operator/semantic/**
+  #     + cli/**/semantic/** + both test/semantic/** (Feature 006);
+  #   packages/opencode/src/operator/** (Feature 007) — stack-live composition;
+  #   packages/opencode/src/session/** (Features 017/031) — budget-consume
+  #     retry_count activation;
+  #   packages/core/src/config/experimental.ts (Feature 007) — latencyBudgetMs.
+  # Genuinely new paths — shared transient-retry helper + models.dev metadata seam:
+  "packages/opencode/src/util/effect-http-client.ts",
+  "packages/core/src/models-dev.ts",
+  "packages/core/src/util/token.ts",
 ]
 
 # Waivers for intentional near-empty files (warnings only; errors are never
