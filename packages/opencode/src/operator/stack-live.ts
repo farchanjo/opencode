@@ -25,6 +25,7 @@ import { EventV2Bridge } from "@/event-v2-bridge"
 import { Provider } from "@/provider/provider"
 import { Agent } from "@/agent/agent"
 import { MCP } from "@/mcp"
+import { ToolRegistry } from "@/tool/registry"
 import { InstanceRuntime } from "@/project/instance-runtime"
 import { createLiveConfigServiceLike } from "./adapters/outbound/config-live"
 import { createLiveEventV2AuditPortFromUse } from "./adapters/outbound/event-v2-live"
@@ -703,7 +704,39 @@ export async function createLiveOperatorStack(input: CreateLiveOperatorStackInpu
   // EXACT runtime id (`registry.all()` item id for native/plugin/custom; `mcp.tools()` record key,
   // already `McpCatalog.toolName(client, name)`, for MCP) — the `feature050-tool-id-equality` invariant.
   // `rawParameterSchema` is the native `tool.jsonSchema` / MCP `inputSchema`; `ToolProjection.project`
-  // sanitizes it before anything reaches the index. Mirrors the SAME AppRuntime + InstanceRef pattern.
+  // sanitizes it before anything reaches the index. Mirrors the SAME AppRuntime + InstanceRef pattern
+  // `readLiveAgents`/`readLiveSkills` use: the registry + MCP surfaces enumerate cleanly under the
+  // provided `InstanceRef` (the earlier "uncontainable fork defect" was the `SemanticRetrieval` layer
+  // reading config at build time — fixed in `effect/app-runtime.ts` — not a tool-enumeration escape).
+  const readLiveTools = (): Promise<readonly LiveDocSource.ToolSourceInput[]> =>
+    AppRuntime.runPromise(
+      Effect.gen(function* () {
+        const registry = yield* ToolRegistry.Service
+        const mcp = yield* MCP.Service
+        const native = yield* registry.all()
+        const mcpTools = yield* mcp.tools()
+        const nativeInputs = native.map(
+          (tool): LiveDocSource.ToolSourceInput => ({
+            toolId: tool.id,
+            displayName: tool.id,
+            rawDescription: tool.description ?? "",
+            rawParameterSchema: tool.jsonSchema ?? {},
+            source: "native",
+          }),
+        )
+        const mcpInputs = Object.entries(mcpTools).map(
+          ([toolId, tool]): LiveDocSource.ToolSourceInput => ({
+            toolId,
+            displayName: tool.def.name ?? toolId,
+            rawDescription: tool.def.description ?? "",
+            rawParameterSchema: tool.def.inputSchema ?? {},
+            source: "mcp",
+          }),
+        )
+        return [...nativeInputs, ...mcpInputs]
+      }).pipe(Effect.provideService(InstanceRef, instance)),
+    )
+
   // Feature 050 / T023 (FR9) — the mandatory scalar partition filters for `skills`/`skill_chunks`
   // (they carry no `DocScope` of their own, `data-model.md` "SkillDoc field mapping"); mirrors the
   // SAME `project`/`project` scope `AgentDocBuilder.build` stamps for agents.
@@ -718,11 +751,11 @@ export async function createLiveOperatorStack(input: CreateLiveOperatorStackInpu
       ? LiveDocSource.createLiveDocSource({
           agents: readLiveAgents,
           skills: readLiveSkills,
-          // The `tools` collection's live enumeration walks the session-scoped tool registry (plugin
-          // load + per-tool init fork fibers that require a live session/instance context the operator
-          // CLI does not materialize — an uncontainable `InstanceRef not provided` fork defect). The
-          // tools DATA PLANE (`LiveDocSource` `collectTools` → `ToolProjection` → `toolLiveDoc`) is wired
-          // and unit-tested; a session-context caller (Feature 009/051) supplies `tools` and it upserts.
+          // The `tools` collection's live enumeration walks the tool registry (native/plugin/custom)
+          // plus the connected MCP catalog. Both surfaces resolve cleanly under the provided
+          // `InstanceRef` (see `readLiveTools`), so `collectTools` → `ToolProjection` → `toolLiveDoc`
+          // upserts the live tool docs from the operator CLI, no session context required.
+          tools: readLiveTools,
           embed: embedForLiveDocSource,
           spool: OutputSpoolStore.createOutputSpoolStore({
             writer: SessionSpoolWriter.createSessionSpoolWriter({ store: outputControlStore, spoolRoot }),
