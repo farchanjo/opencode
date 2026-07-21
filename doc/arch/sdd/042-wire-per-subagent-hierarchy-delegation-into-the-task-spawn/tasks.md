@@ -2,7 +2,7 @@
 
 ## Task Breakdown
 
-- [ ] T001 Confirm the seams and the engine surface by reading the code: the spawn
+- [x] T001 Confirm the seams and the engine surface by reading the code: the spawn
   seam is `session/prompt.ts` `handleSubtask` (`:280-345`), inheriting the parent model
   at `:292` (`task.model ? getModel(...) : model`, parent `model` from the caller at
   `:1191-1195`); the pure engine is `routing/domain/hierarchy-dispatcher.ts`
@@ -14,62 +14,62 @@
   to mirror is `session/routing-resolve.ts` (`createRoutingResolver`, timeout, bound
   composition, LRU, provider re-resolution, auth check). Confirm `grep` for
   `HierarchyDispatcher` / `recordDispatch` returns only the domain file + its test.
-- [ ] T002 Add the session-local resolver
+- [x] T002 Add the session-local resolver
   (`packages/opencode/src/session/routing-hierarchy.ts`):
   `createHierarchyDispatchResolver(deps)` composes the pure `HierarchyDispatcher` engine
   and the Feature 001 routing service over the session Provider / Config / Agent / Auth
   interfaces, running every seam on the captured request context (`Effect.context()` +
   `Effect.runPromiseWith`) so candidate resolution is `InstanceRef`-bound by
   construction. It never touches `createLiveOperatorStack`. (FR-A1)
-- [ ] T003 Implement the activation gate and read the hierarchy limits: reuse the Phase 1
+- [x] T003 Implement the activation gate and read the hierarchy limits: reuse the Phase 1
   read-only `ConfigPort` + `createConfigAdapter` + `resolveEffective`; return `undefined`
   unless `activation.enabled && activation.mode === "auto"`; read
   `enforcement.hierarchy.{max_depth, orchestration_only}` from the same effective config.
   (FR-A2)
-- [ ] T004 Implement the Architect classifier (zero-LLM): run `createTaskAnalyzer()` over
+- [x] T004 Implement the Architect classifier (zero-LLM): run `createTaskAnalyzer()` over
   the spawn task text and apply the default rule — direct Worker unless
   (`independentWorkUnits >= 2` AND `domainCount >= 2`) OR `requestedFanout > 1`, then
   Manager; a Manager parent forces a Worker child. Export the thresholds as tunable plan
   constants. NO decision-model LLM call by default (bypass). (FR-A5, FR-A6; Clarifications
   C1, C2)
-- [ ] T005 Enforce legality + depth via `planDispatch`: build the `DispatchRequest` from
+- [x] T005 Enforce legality + depth via `planDispatch`: build the `DispatchRequest` from
   the parent role/depth, the classified child role, the effective budget policy/headroom,
   and the requested fan-out; on `ok:false` map the typed `rejection` to a `{ blocked }`
   outcome; on `ok:true` take `envelope.executionAllowed` and `envelope.lineage` (never
   recompute). Pre-clamp the effective depth ceiling to `min(MAX_DELEGATION_DEPTH,
   hierarchy.max_depth)`. (FR-B1, FR-B2, FR-B3, FR-C2)
-- [ ] T006 Resolve + verify the child-role model by reusing the Phase 1 machinery: pick a
+- [x] T006 Resolve + verify the child-role model by reusing the Phase 1 machinery: pick a
   model id from `models.role_pools[childRole]`, map it to the lexicographically-smallest
   non-deprecated `providerID` (`resolveProviderForModel`), and verify `Auth.get(providerID)`
   is present — else `undefined` (inheritance). (FR-A4)
-- [ ] T007 Wire lineage + escalation: call
+- [x] T007 Wire lineage + escalation: call
   `RoutingSessionState.recordDispatch(childSessionId, envelope.lineage)` on every admitted
   spawn (no-op on mismatch, never throws), and expose an
   `escalateWorkerToManager(...)` wrapper over `HierarchyDispatcher.planEscalation` reusing
   lineage/evidence/OutputRefs so the export gains a production call site. (FR-D1, FR-D2,
   FR-F2)
-- [ ] T008 Make the resolver total and hang-proof: wrap the whole attempt with
+- [x] T008 Make the resolver total and hang-proof: wrap the whole attempt with
   `.catch(() => undefined)` + `Effect.timeoutOrElse({ duration: RESOLVE_TIMEOUT_MS })` +
   a final `Effect.catchCause(() => undefined)`, and cache per-spawn results in a bounded
   LRU. A `{ blocked }` legality outcome survives the wrap as a deliberate typed value.
   (FR-F1)
-- [ ] T009 Edit the spawn seam (`session/prompt.ts` `handleSubtask`): consult the resolver
+- [x] T009 Edit the spawn seam (`session/prompt.ts` `handleSubtask`): consult the resolver
   ONLY when neither `task.model` nor the spawned subagent's pinned model is set, and fold
   it in as `explicit ?? agentPinned ?? hierarchyRouted ?? parentModel` around `:292`;
   source `parentRole` from `RoutingSessionState.get(sessionID).hierarchyRole ?? "architect"`
   and `parentDepth` from the `tool/task.ts` parent-chain walk; surface a `{ blocked }`
   outcome as an explicit spawn error (mirroring the `Agent not found` path). Construct the
   resolver once in the layer beside the Phase 1 one. (FR-E1, FR-E2)
-- [ ] T010 Gate the orchestration-only boundary: thread the `!executionAllowed` +
+- [x] T010 Gate the orchestration-only boundary: thread the `!executionAllowed` +
   `orchestration_only` flag into `taskTool.execute`'s `extra` so `tool/task.ts` extends
   `childToolDenies` (`deriveSubagentSessionPermission`) with the project-mutating /
   test-executing tool classes for a non-Worker child; only a Worker child may mutate/test.
   (FR-C1)
-- [ ] T011 Reconcile the depth walk (`tool/task.ts:104-117`): keep the `subagent_depth`
+- [x] T011 Reconcile the depth walk (`tool/task.ts:104-117`): keep the `subagent_depth`
   guard as the hard backstop; when hierarchy routing is active the effective ceiling is
   `min(subagent_depth, hierarchy.max_depth)`; preserve the legacy error for the
   disabled-hierarchy path. (FR-E3, FR-B3)
-- [ ] T012 Add the regression
+- [x] T012 Add the regression
   (`packages/opencode/test/session/routing-hierarchy.test.ts`) over the resolver with
   faithful Config / Provider / Agent / Auth fakes and the real engine: disabled default →
   `undefined`; enabled + `auto` + populated config → fresh child decision + authenticated
@@ -79,7 +79,7 @@
   unresolved/unauthenticated model → `undefined`; and the classifier boundary
   (single-domain → Worker; ≥2 work-units across ≥2 domains → Manager). No existing
   session/prompt or `tool/task.ts` assertion is weakened. (FR-F3)
-- [ ] T013 Author the speckit corpus (`spec.md`, `plan.md`, `tasks.md`) and
+- [x] T013 Author the speckit corpus (`spec.md`, `plan.md`, `tasks.md`) and
   `adr/0042-wire-per-subagent-hierarchy-delegation-into-the-task-spawn.md` (recording the
   Phase 1/Phase 2 split, the two resolved defaults — the Architect classifier threshold
   and the decision-model-call bypass — as Considered Options, and the fallback/back-compat

@@ -149,12 +149,6 @@ Then  no signal is emitted, no tracer/meter/transport is constructed, and the
 
 ## Observability
 
-How this feature is observed in production: the metrics it emits, the log
-events it writes, and the trace spans it creates. Export telemetry via OTLP
-from the application boundary; keep metric label sets bounded, and carry
-request-scoped identifiers on trace spans. Conventions live in
-`doc/arch/observability/observability.md`.
-
 This feature IS the observability surface for the routing stack: it emits the
 `routing.decision`, `budget.consumption`, `budget.breach`, `hierarchy.fanout`,
 `orchestration.worker`, and `orchestration.gate` signals declared in the
