@@ -66,7 +66,7 @@ import { SemanticStackWiring } from "./semantic/stack-wiring"
 import { SemanticBackendLive } from "./semantic/backend-live"
 import { RerankProbe } from "./semantic/rerank-probe"
 import type { MilvusBinding } from "./semantic/milvus-binding"
-import { MilvusAdapter } from "@/semantic/milvus-adapter"
+import { MilvusComposition } from "@/semantic/milvus-composition"
 import { McpStackWiring } from "./mcp/stack-wiring"
 import { McpBackendLive } from "./mcp/backend-live"
 import { TelemetryStackWiring } from "./telemetry/stack-wiring"
@@ -575,16 +575,12 @@ export async function createLiveOperatorStack(input: CreateLiveOperatorStackInpu
   })
   const milvusAddress = process.env["OPENCODE_SEMANTIC_MILVUS_ADDRESS"]?.trim()
   const insecureMilvus = process.env["OPENCODE_SEMANTIC_MILVUS_INSECURE"] === "1"
-  const milvusPort =
-    milvusAddress && milvusAddress.length > 0
-      ? MilvusAdapter.createGrpcMilvusAdapter({
-          client: MilvusAdapter.createHttpMilvusClient({
-            address: milvusAddress,
-            ssl: !insecureMilvus,
-            authorization: process.env["OPENCODE_SEMANTIC_MILVUS_TOKEN"] || undefined,
-          }),
-        })
-      : undefined
+  // Feature 050 (FR4) — the ONE shared Milvus-port composition; the runner uses the same helper.
+  const milvusPort = MilvusComposition.composeMilvusPort({
+    address: milvusAddress,
+    insecure: insecureMilvus,
+    token: process.env["OPENCODE_SEMANTIC_MILVUS_TOKEN"] || undefined,
+  })
   const milvus: MilvusBinding.MilvusIndexBindingDeps | undefined =
     milvusAddress && milvusAddress.length > 0 && milvusPort !== undefined
       ? {
