@@ -61,6 +61,19 @@ function emptyCatalogBackendOf(config: ConfigPort = createMemoryConfigPort()) {
   return createLivePoolsBackend({ config, clock: CLOCK, catalog: EMPTY_CATALOG_VALIDATOR })
 }
 
+// Feature 039 — a catalog validator that THROWS (a resolver outage, e.g. the
+// operator-stack `InstanceRef not provided` defect this feature fixes). The
+// best-effort validation must SKIP and let the write persist, never fail.
+const THROWING_CATALOG_VALIDATOR = {
+  unknownModelIds: async (): Promise<ReadonlyArray<string>> => {
+    throw new Error("InstanceRef not provided")
+  },
+}
+
+function throwingCatalogBackendOf(config: ConfigPort = createMemoryConfigPort()) {
+  return createLivePoolsBackend({ config, clock: CLOCK, catalog: THROWING_CATALOG_VALIDATOR })
+}
+
 const rolePoolsOf = (payload: unknown) => (payload as RoutingConfig.Info).models.role_pools
 
 describe("T008 — resolve projects the effective role_pools (FR5, FR8)", () => {
@@ -169,26 +182,35 @@ describe("Feature 038 — pools.set validates role-pool ids against the catalog"
     expect(rolePoolsOf(plan.apply(null)).worker).toEqual(["openrouter/openai/gpt-oss-120b"])
   })
 
-  test("an EMPTY (transiently cold) catalog degrades to unavailable, NEVER false-rejects a valid set", async () => {
-    // The BLOCKED defect: a successful-but-empty provider read made the validator
-    // flag EVERY id as unknown, so a fully-valid pools.set was rejected with
-    // invalid_argument while the catalog was cold. It must degrade to `unavailable`
-    // (the same outcome a real catalog outage produces), NOT reject the write.
-    const config = createMemoryConfigPort()
-    const failure = await exit(
-      emptyCatalogBackendOf(config).planSet({
+  test("Feature 039 — an EMPTY (transiently cold) catalog SKIPS validation and PERSISTS the set", async () => {
+    // Feature 038 flagged the empty-catalog case, but degraded pools.set to a
+    // `unavailable` FAILURE — which (once F038 wired validation into the CLI seam)
+    // meant a valid set could not persist while the catalog was cold. Feature 039
+    // makes validation best-effort: a transiently-empty catalog is NON-FATAL, so
+    // the write proceeds (skip-and-persist), never `unavailable`/`invalid_argument`.
+    const plan = await run(
+      emptyCatalogBackendOf().planSet({
         bindings: [{ role: "worker", models: ["gpt-5"] }],
         expectedVersion: INITIAL_CONFIG_VERSION,
         principal: OPERATOR,
       }),
     )
-    expect(failure._tag).toBe("Failure")
-    if (failure._tag === "Failure") {
-      const dump = JSON.stringify(failure.cause.toJSON())
-      expect(dump).toContain("unavailable")
-      expect(dump).not.toContain("invalid_argument")
-    }
-    expect(await config.get("routing")).toBeNull()
+    expect(rolePoolsOf(plan.apply(null)).worker).toEqual(["gpt-5"])
+  })
+
+  test("Feature 039 — a THROWING catalog validator (InstanceRef/outage) SKIPS validation and PERSISTS the set", async () => {
+    // The CONFIRMED regression: the operator-stack catalog seam died
+    // `InstanceRef not provided`, the validator threw, and F038 mapped that to a
+    // `unavailable` FAILURE — so `op pools set` could no longer persist. Best-effort
+    // validation now skips a thrown resolver error and lets the write proceed.
+    const plan = await run(
+      throwingCatalogBackendOf().planSet({
+        bindings: [{ role: "worker", models: ["totally-not-a-model"] }],
+        expectedVersion: INITIAL_CONFIG_VERSION,
+        principal: OPERATOR,
+      }),
+    )
+    expect(rolePoolsOf(plan.apply(null)).worker).toEqual(["totally-not-a-model"])
   })
 
   test("without an injected catalog, pools.set does NOT validate (pre-038 behavior preserved)", async () => {
