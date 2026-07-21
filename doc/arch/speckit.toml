@@ -556,6 +556,20 @@ specScopeGlobs = [
   #   packages/opencode/test/mcp/** (Feature 008 block) — the validator unit test.
   # Genuinely new implement path (the direct ajv/ajv-formats dep the custom Ajv needs):
   "packages/opencode/package.json",                   # add ajv + ajv-formats as direct deps for the custom validator (FR)
+
+  # Feature 040 — Bring the operator TUI to full parity with the op CLI. The routing.configure
+  #   modal prefills from the EFFECTIVE, scope-resolved authority (ADR-0040 Option A): the
+  #   config-status routing.status read resolves the layered effective config, the prefill
+  #   extractor reads the Feature 036 nested activation shape, and the modal threads the Request
+  #   scope + re-reads on switch. All source + test seams are ALREADY in scope and are NOT
+  #   re-added (traceability only):
+  #   packages/opencode/src/operator/** (Feature 007) — createRoutingStatusHandler effective read;
+  #   packages/tui/src/operator/form/** (Feature 017 block) — the prefill extractor + scope thread;
+  #   packages/{opencode/test/operator,tui/test/operator}/** — the parity + regression tests.
+  # Genuinely new paths — the Feature 036 residual this feature DELIBERATELY supersedes (the
+  #   project/bare routing.status `configured:false`-under-global residual now shadows):
+  "doc/arch/adr/0036-fix-the-operator-routing-status-query-so-it-honors-the.md",
+  "doc/arch/sdd/036-fix-the-operator-routing-status-query-so-it-honors-the/**",
 ]
 
 # Waivers for intentional near-empty files (warnings only; errors are never
