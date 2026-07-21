@@ -29,6 +29,7 @@ import type {
 import { ConfigExperimental } from "@opencode-ai/core/config/experimental"
 import type { SessionID } from "@/session/schema"
 import type { NarrowedSets, NarrowedSetsMemo, RoutingSessionStateStore } from "@/session/routing-state"
+export type { NarrowedSets } from "@/session/routing-state"
 
 // =============================================================================
 // Essential-tool floor (FR4-tools) — the CLOSED always-keep list

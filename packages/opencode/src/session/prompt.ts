@@ -174,10 +174,18 @@ const layer = Layer.effect(
     // memo without re-embedding (tool-set stability). Gates all off → `narrowForTurn`
     // returns `{}` with zero I/O, so every ranked param below stays `undefined` and the
     // three seams render their byte-identical full-set floor (FR6, AC7).
-    const semanticRetrieval = yield* SemanticRetrieval.Service
+    //
+    // The dependency on `SemanticRetrieval.Service` is SOFT (resolved via
+    // `Effect.serviceOption` at turn time, not a hard node dep): a composition that
+    // mounts `SessionPrompt` WITHOUT the facade (e.g. a narrow server/test layer graph)
+    // must never fail with "Service not found" — an absent mount behaves exactly like
+    // gates-off (full-set passthrough), which is the feature's own fail-open policy (FR7).
     const narrowingState = LiveNarrowing.narrowingAccessors(routingSessionState)
     const narrowTurn = (input: LiveNarrowing.NarrowForTurnInput) =>
       Effect.gen(function* () {
+        const retrievalOption = yield* Effect.serviceOption(SemanticRetrieval.Service)
+        if (Option.isNone(retrievalOption)) return {} as LiveNarrowing.NarrowedSets
+        const semanticRetrieval = retrievalOption.value
         const info = yield* config.get()
         const narrowing = ConfigExperimental.resolveNarrowingConfig(info.experimental?.semantic_narrowing)
         // The tools surface reuses the Feature 009 `tool_search` gate, never a
@@ -1995,7 +2003,6 @@ export const node = LayerNode.make({
     RuntimeFlags.node,
     Database.node,
     RoutingSessionStore.node,
-    SemanticRetrieval.node,
   ],
 })
 
