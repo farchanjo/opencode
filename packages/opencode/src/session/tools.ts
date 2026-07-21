@@ -75,6 +75,11 @@ export const resolve = Effect.fn("SessionTools.resolve")(function* (input: {
    * seam), shared by both the native and MCP surfaces. Absent → both surfaces
    * stay `ToolRetrieval.PASSTHROUGH` (the full-set floor, byte-identical). */
   rankedTools?: readonly string[]
+  /** Feature 051 — the turn's ranked, revalidated agent-id subset (FR4, agents
+   * seam), threaded into `registry.tools` so `describeTask` narrows the `task`
+   * tool's spawnable-agent PROSE. Absent → the full non-primary agent list,
+   * byte-identical; a hidden agent is always rendered regardless of ranking. */
+  rankedAgents?: readonly string[]
   /** Feature 051 (FR5) — forces `ToolRetrieval.PASSTHROUGH` on both surfaces
    * even when `rankedTools` is present; the orchestrator wave sets this for an
    * orchestration-child session so its tiny allowlist is never narrowed. */
@@ -150,6 +155,7 @@ export const resolve = Effect.fn("SessionTools.resolve")(function* (input: {
     providerID: input.model.providerID,
     agent: input.agent,
     permission: input.session.permission,
+    rankedAgentIds: input.rankedAgents,
   })
   for (const item of ToolRetrieval.narrow(nativeVisible, (t) => t.id, toolsGate ?? ToolRetrieval.PASSTHROUGH)) {
     const schema = ProviderTransform.schema(input.model, ToolJsonSchema.fromTool(item))

@@ -28,7 +28,7 @@ import type {
 } from "@opencode-ai/protocol/semantic/commands"
 import { ConfigExperimental } from "@opencode-ai/core/config/experimental"
 import type { SessionID } from "@/session/schema"
-import type { NarrowedSets, NarrowedSetsMemo } from "@/session/routing-state"
+import type { NarrowedSets, NarrowedSetsMemo, RoutingSessionStateStore } from "@/session/routing-state"
 
 // =============================================================================
 // Essential-tool floor (FR4-tools) — the CLOSED always-keep list
@@ -77,7 +77,9 @@ export const mergeFloor = (ranked: readonly string[]): readonly string[] => {
 interface PermissionRule {
   readonly permission: string
   readonly pattern: string
-  readonly action: "deny" | "allow"
+  /** The live `PermissionV1.Ruleset` action domain is `deny | allow | ask`; the detector only
+   * matches `deny`/`allow`, so `ask` (or any other value) simply fails the structural test. */
+  readonly action: string
 }
 
 /**
@@ -117,6 +119,18 @@ export interface NarrowingStateAccessors {
   readonly readMemo: (sessionID: SessionID) => NarrowedSetsMemo | null
   readonly writeMemo: (sessionID: SessionID, key: string, sets: NarrowedSets) => void
 }
+
+/**
+ * Bridge the shared `RoutingSessionStateStore` (`routing-state.ts`) into the memo view
+ * `narrowForTurn` consumes — the ONE adapter the per-turn call site (`session/prompt.ts`)
+ * threads, so the memo read/write path is defined once and unit-testable in isolation (FR1).
+ */
+export const narrowingAccessors = (store: RoutingSessionStateStore): NarrowingStateAccessors => ({
+  readMemo: (sessionID) => store.get(sessionID).narrowedSets,
+  writeMemo: (sessionID, key, sets) => {
+    store.recordNarrowedSets(sessionID, key, sets)
+  },
+})
 
 export interface NarrowForTurnDeps {
   readonly gates: NarrowingGates

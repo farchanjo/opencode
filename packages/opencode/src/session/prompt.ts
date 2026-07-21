@@ -13,6 +13,9 @@ import { Auth } from "@/auth"
 import { RoutingResolve } from "./routing-resolve"
 import { RoutingHierarchy } from "./routing-hierarchy"
 import { RoutingSessionStore } from "./routing-session-store"
+import { SemanticRetrieval } from "@/semantic/retrieval-service"
+import { LiveNarrowing } from "@/semantic/live-narrowing"
+import { ConfigExperimental } from "@opencode-ai/core/config/experimental"
 
 import { type Tool as AITool, tool, jsonSchema } from "ai"
 import type { JSONSchema7 } from "@ai-sdk/provider"
@@ -162,6 +165,55 @@ const layer = Layer.effect(
     // `tool/task.ts` (dispatch lineage records), so the fan-out admission below sees
     // the real running-total spend recorded by the response loop.
     const routingSessionState = yield* RoutingSessionStore.Service
+
+    // Feature 051 (FR1, FR6-FR8) — the live per-turn narrowing seam. The retrieval
+    // facade is the mounted `SemanticRetrieval.Service` (degraded-but-honest until an
+    // operator binds Milvus + an embedding model); the memo view bridges the SAME
+    // shared routing store above. `narrowTurn` runs ONCE per runLoop step but is
+    // memo-guarded by `lastUser.id`, so every step after the first returns the turn's
+    // memo without re-embedding (tool-set stability). Gates all off → `narrowForTurn`
+    // returns `{}` with zero I/O, so every ranked param below stays `undefined` and the
+    // three seams render their byte-identical full-set floor (FR6, AC7).
+    const semanticRetrieval = yield* SemanticRetrieval.Service
+    const narrowingState = LiveNarrowing.narrowingAccessors(routingSessionState)
+    const narrowTurn = (input: LiveNarrowing.NarrowForTurnInput) =>
+      Effect.gen(function* () {
+        const info = yield* config.get()
+        const narrowing = ConfigExperimental.resolveNarrowingConfig(info.experimental?.semantic_narrowing)
+        // The tools surface reuses the Feature 009 `tool_search` gate, never a
+        // duplicated switch: tools are ranked only when BOTH consumption surfaces
+        // (native + MCP) are explicitly enabled — conservative by construction.
+        const toolsGateOn =
+          ConfigExperimental.resolveToolSurfaceConfig(info.experimental?.tool_search, "native").enabled &&
+          ConfigExperimental.resolveToolSurfaceConfig(info.experimental?.tool_search, "mcp").enabled
+        const warnings: string[] = []
+        const debugRows: Array<{ surface: string; kept: readonly string[]; dropped: readonly string[] }> = []
+        const sets = yield* Effect.promise(() =>
+          LiveNarrowing.narrowForTurn(
+            {
+              gates: {
+                agents: narrowing.agents,
+                skills: narrowing.skills,
+                tools: toolsGateOn,
+                minPromptLength: narrowing.minPromptLength,
+                latencyBudgetMs: narrowing.latencyBudgetMs,
+                debugLog: narrowing.debugLog,
+              },
+              retrieval: semanticRetrieval,
+              state: narrowingState,
+              warn: (message) => warnings.push(message),
+              debugLog: narrowing.debugLog
+                ? (surface, kept, dropped) => debugRows.push({ surface, kept, dropped })
+                : undefined,
+              projectId: process.env["OPENCODE_SEMANTIC_PROJECT_ID"] ?? "opencodedev",
+            },
+            input,
+          ),
+        )
+        for (const message of warnings) yield* Effect.logWarning(message, { "session.id": input.sessionID })
+        for (const row of debugRows) yield* Effect.logDebug("semantic narrowing", row)
+        return sets
+      })
 
     // Feature 037 / Phase 1 — session-local Smart Routing resolver. Consulted ONLY
     // in the implicit-default model branch below (an explicit `--model` and an
@@ -1495,6 +1547,26 @@ const layer = Layer.effect(
               mainContextModel: { providerID: model.providerID, modelID: model.id },
             })
 
+            // Feature 051 (FR1, FR5) — ONE memoized narrowing pass per turn, resolved
+            // here (before the seams) and threaded into all three: `sets.agents` →
+            // `describeTask` via `SessionTools.resolve`'s `rankedAgents`, `sets.tools`
+            // → the native/MCP gate, `sets.skills` → `sys.skills` below. An orchestration
+            // child never narrows its tiny tool allowlist (FR5): `narrowForTurn` already
+            // omits its tools surface, and `skipToolNarrowing` pins the seam to
+            // passthrough belt-and-suspenders.
+            const isOrchestrationChild = LiveNarrowing.isOrchestrationChildRuleset(session.permission ?? [])
+            const promptText = (lastUserMsg?.parts ?? [])
+              .filter((part): part is Extract<SessionV1.Part, { type: "text" }> => part.type === "text")
+              .map((part) => part.text)
+              .join("\n")
+            const narrowed = yield* narrowTurn({
+              sessionID,
+              promptText,
+              lastUserID: lastUser.id,
+              agent: agent.name,
+              isOrchestrationChild,
+            })
+
             const tools = yield* SessionTools.resolve({
               agent,
               session,
@@ -1504,6 +1576,9 @@ const layer = Layer.effect(
               messages: msgs,
               promptOps,
               hierarchyResolve,
+              rankedTools: narrowed.tools,
+              rankedAgents: narrowed.agents,
+              skipToolNarrowing: isOrchestrationChild,
             }).pipe(
               Effect.provideService(Plugin.Service, plugin),
               Effect.provideService(Permission.Service, permission),
@@ -1528,7 +1603,7 @@ const layer = Layer.effect(
             yield* plugin.trigger("experimental.chat.messages.transform", {}, { messages: msgs })
 
             const [skills, env, instructions, mcpInstructions, modelMsgs] = yield* Effect.all([
-              sys.skills(agent),
+              sys.skills(agent, narrowed.skills),
               sys.environment(model),
               instruction.system().pipe(Effect.orDie),
               sys.mcp(agent, session.permission),
@@ -1920,6 +1995,7 @@ export const node = LayerNode.make({
     RuntimeFlags.node,
     Database.node,
     RoutingSessionStore.node,
+    SemanticRetrieval.node,
   ],
 })
 

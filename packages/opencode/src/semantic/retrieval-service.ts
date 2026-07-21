@@ -23,6 +23,10 @@ import type { RetrievalPort, ToolRetrievalPort } from "@opencode-ai/protocol/sem
 import { RetrievalFacade } from "@/semantic/retrieval-facade"
 import type { PipelineRunnerPort, RetrievalRecorder } from "@/semantic/retrieval-facade"
 import { PipelineRunner } from "@/semantic/pipeline-runner"
+import { BindingRuntime } from "@/semantic/binding-runtime"
+import type { MilvusPort } from "@/semantic/milvus-adapter"
+import type { EmbeddingsHttpPort } from "@/semantic/embedding-client"
+import type { NativeRerankHttpPort, StructuredChatHttpPort } from "@/semantic/rerank-client"
 
 /** The service interface is the composed retrieval + tool-retrieval facade surface. */
 export type Interface = RetrievalPort & ToolRetrievalPort
@@ -49,9 +53,60 @@ export function createSemanticRetrievalPort(deps: PipelineRunner.PipelineRunnerD
   return RetrievalFacade.createRetrievalFacade({ pipeline: PipelineRunner.createPipelineRunner(deps), recorder: NOOP_RECORDER })
 }
 
-const layer = Layer.effect(
-  Service,
-  Effect.sync(() => Service.of(RetrievalFacade.createRetrievalFacade({ pipeline: UNAVAILABLE_RUNNER, recorder: NOOP_RECORDER }))),
-)
+/**
+ * Feature 051 (FR9) — the degraded facade over the rejecting `UNAVAILABLE_RUNNER`, exported so
+ * the live composition root (`effect/app-runtime.ts`) can fall open to the SAME honest floor the
+ * default layer ships when no Milvus endpoint / active embedding binding is resolvable. Every
+ * surface call rejects; `live-narrowing.ts` absorbs that into a passthrough (no boot failure).
+ */
+export function createDegradedSemanticRetrievalPort(): Interface {
+  return RetrievalFacade.createRetrievalFacade({ pipeline: UNAVAILABLE_RUNNER, recorder: NOOP_RECORDER })
+}
+
+/**
+ * Feature 051 (FR9) — the pure live-facade assembly the composition root feeds already-resolved
+ * seams (Milvus port, embeddings client, per-mode reranker transports, the persisted registry
+ * document, project scope, latency budget). It joins the active embedding/reranker bindings via
+ * `BindingRuntime.resolveActiveBinding` and builds the production facade through the ONE shared
+ * `createSemanticRetrievalPort` path; a missing Milvus port OR a missing/broken embedding binding
+ * falls open to `createDegradedSemanticRetrievalPort` — never a fabricated endpoint, never a throw.
+ * Kept pure (no `Config`/env/`process` reads) so it is unit-testable without standing up the runtime.
+ */
+export interface LiveRetrievalInput {
+  readonly registryDocument?: BindingRuntime.RegistryDocumentView
+  readonly milvus?: MilvusPort
+  readonly embedHttp: EmbeddingsHttpPort
+  readonly rerankNativeHttp?: NativeRerankHttpPort
+  readonly rerankStructuredHttp?: StructuredChatHttpPort
+  readonly projectId: string
+  readonly latencyBudgetMs: number
+}
+
+export function composeLiveRetrievalPort(input: LiveRetrievalInput): Interface {
+  const doc = input.registryDocument
+  const embedding = doc ? BindingRuntime.resolveActiveBinding(doc, "embedding") : undefined
+  if (input.milvus === undefined || embedding === undefined) return createDegradedSemanticRetrievalPort()
+  const reranker = doc ? BindingRuntime.resolveActiveBinding(doc, "reranker") : undefined
+  const rerankHttp =
+    reranker === undefined
+      ? {}
+      : reranker.compatibilityMode === "structured-chat"
+        ? input.rerankStructuredHttp
+          ? { rerankStructuredHttp: input.rerankStructuredHttp }
+          : {}
+        : input.rerankNativeHttp
+          ? { rerankNativeHttp: input.rerankNativeHttp }
+          : {}
+  return createSemanticRetrievalPort({
+    milvus: input.milvus,
+    embedHttp: input.embedHttp,
+    bindings: reranker ? { embedding, reranker } : { embedding },
+    ...rerankHttp,
+    latencyBudgetMs: input.latencyBudgetMs,
+    filters: { projectId: input.projectId, scope: "project", visibility: "project" },
+  })
+}
+
+const layer = Layer.effect(Service, Effect.sync(() => Service.of(createDegradedSemanticRetrievalPort())))
 
 export const node = LayerNode.make({ service: Service, layer, deps: [] })

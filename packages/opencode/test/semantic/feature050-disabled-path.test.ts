@@ -14,9 +14,12 @@
  *     `SystemPrompt.skills` (`session/system.ts:98-110`) wraps over a fixed
  *     fake skill set — is byte-identical to a stored golden string that
  *     reproduces the EXACT join `SystemPrompt.skills` performs.
- * (c) No `session/**` module imports the Feature 050 runner/facade yet — the
- *     structural floor FR13 requires (Feature 051 is the only future wiring
- *     point).
+ * (c) No `session/**` module imports the Feature 050 pipeline-runner or
+ *     retrieval-facade INTERNALS — those stay encapsulated behind the mounted
+ *     `SemanticRetrieval.Service`. Feature 051 is the sanctioned wiring point:
+ *     `session/prompt.ts` now consumes the facade, but ONLY through the gated
+ *     `semantic/live-narrowing` orchestrator, whose gates-off short-circuit keeps
+ *     the disabled path byte-identical (a/b above prove the rendered floor).
  */
 import { describe, expect, test } from "bun:test"
 import { readFileSync, readdirSync } from "node:fs"
@@ -40,13 +43,25 @@ describe("Feature 050 golden disabled path — ToolRetrieval gates wired at both
     expect(SESSION_TOOLS_SRC).toMatch(/ToolRetrieval\.narrowRecord\([\s\S]*?ToolRetrieval\.PASSTHROUGH\)/)
   })
 
-  test("no session/** module imports the Feature 050 runner or facade (FR13 structural floor)", () => {
+  test("no session/** module imports the Feature 050 pipeline-runner or facade INTERNALS (FR13 encapsulation)", () => {
     const sessionFiles = readdirSync(SESSION_DIR).filter((file) => file.endsWith(".ts"))
     expect(sessionFiles.length).toBeGreaterThan(0)
     for (const file of sessionFiles) {
       const content = readFileSync(path.join(SESSION_DIR, file), "utf8")
-      expect(content).not.toMatch(/semantic\/pipeline-runner|semantic\/retrieval-service|semantic\/retrieval-facade/)
+      // The runner and the raw facade builder stay behind the mounted Service —
+      // no session module reaches past it into the query pipeline internals.
+      expect(content).not.toMatch(/semantic\/pipeline-runner|semantic\/retrieval-facade/)
     }
+  })
+
+  test("prompt.ts wires the mounted facade ONLY through the gated live-narrowing seam (Feature 051)", () => {
+    const promptSrc = readFileSync(path.join(SESSION_DIR, "prompt.ts"), "utf8")
+    // The single sanctioned consumption point: the gated `narrowForTurn` orchestrator.
+    expect(promptSrc).toMatch(/semantic\/live-narrowing/)
+    expect(promptSrc).toMatch(/LiveNarrowing\.narrowForTurn/)
+    // It resolves the mounted Service tag, never the runner/facade internals.
+    expect(promptSrc).toMatch(/semantic\/retrieval-service/)
+    expect(promptSrc).not.toMatch(/semantic\/pipeline-runner|semantic\/retrieval-facade/)
   })
 })
 

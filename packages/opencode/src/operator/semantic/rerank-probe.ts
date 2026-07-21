@@ -164,6 +164,26 @@ function capabilitiesOf(
 }
 
 /**
+ * Feature 051 (FR9) — the production native `/v1/rerank` (profile A) port for the live query
+ * pipeline runner, over the SAME `fetch`-backed JSON transport the validation probe uses. The
+ * solaris P0 default carries no provider secret, so no Authorization header is attached (`null`);
+ * request shaping stays in the ONE `nativePort` builder — never a second copy.
+ */
+export function createNativeRerankHttpPort(fetchImpl: typeof fetch = fetch): NativeRerankHttpPort {
+  return nativePort(createFetchRerankHttpClient(fetchImpl), null)
+}
+
+/**
+ * Feature 051 (FR9) — the production structured-chat (profile B) rerank port for the live query
+ * pipeline runner, over the SAME transport and the ONE `structuredPort` builder. No Authorization
+ * header (the no-secret solaris default); a bound reranker whose `compatibilityMode` is
+ * `structured-chat` routes here, every other bound reranker through `createNativeRerankHttpPort`.
+ */
+export function createStructuredRerankHttpPort(fetchImpl: typeof fetch = fetch): StructuredChatHttpPort {
+  return structuredPort(createFetchRerankHttpClient(fetchImpl), null)
+}
+
+/**
  * A `fetch`-backed JSON transport for the production probe. It POSTs JSON with the resolved
  * Authorization header and parses the JSON response; any transport/parse failure throws, which
  * `rerankNative`/`rerankStructured` catch and surface as a non-pass (honest). The auth header is
