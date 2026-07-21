@@ -4,33 +4,33 @@
 
 ### Phase 1 — Pure core (`packages/core/src/semantic/**`, zero I/O)
 
-- [ ] T001 Add `packages/core/src/semantic/agent-doc.ts`: the pure
+- [x] T001 Add `packages/core/src/semantic/agent-doc.ts`: the pure
   `Agent.Info → AgentDoc` builder (`data-model.md` mapping table) reusing
   `Projection.scrubText`/`sanitizeFields`; derive `identity.content_hash` over
   `{description(scrubbed), mode, hidden, permissions(serialized), color}`,
   `scope.permission_ref` as a stable hash of the serialized `Permission.Ruleset`,
   `classification.role` from `mode`, and honest empty `TagSet`/`[]` defaults for
   every field absent on `Agent.Info` (`domains`/`capabilities`/`tools`/`languages`).
-- [ ] T002 Add `packages/core/src/semantic/skill-doc.ts`: the pure
+- [x] T002 Add `packages/core/src/semantic/skill-doc.ts`: the pure
   `Skill.Info → SkillDoc` builder, sibling to `agent-doc.ts`; derive
   `identity.content_hash` over `{description(scrubbed), slash}` (never over
   `content`), `cost.token_estimate` via `Token.estimate(Skill.Info.content)`
   (`core/util/token.ts`), `compat.permission_ref` as a hash of `skill.name`
   alone, and `[]` defaults for `triggers`/`domains`/`capabilities`/`compat.*`.
-- [ ] T003 Unit tests for both builders in
+- [x] T003 Unit tests for both builders in
   `packages/core/test/semantic/agent-doc.test.ts` and
   `packages/core/test/semantic/skill-doc.test.ts`: field mapping correctness,
   the empty-`TagSet` defaults, the `permission_ref` hash derivation, the
   hidden→`visibility:"project"`+`available:false` mapping (never a widened
   `"shared"` visibility), and that `content_hash` never incorporates `content`.
-- [ ] T004 Add `packages/core/src/semantic/skill-chunk.ts`: the chunker turning
+- [x] T004 Add `packages/core/src/semantic/skill-chunk.ts`: the chunker turning
   `Skill.Info.content` into `SkillChunkDoc[]` via `Projection.chunkBody`
   (`core/src/semantic/projection.ts:133`), capped by `max_skill_chunks`
   (`schema/routing/budget.ts:44`), using `Token.estimate` for the precomputed
   `totalTokens` input; emit chunk ids as `${skill.name}_c${chunk_index}`
   (never `#`, per the `SkillChunkId` brand pattern) and a `SpoolEntry`-shaped
   put request per chunk with the SANITIZED (post-`scrubText`) body only.
-- [ ] T005 Unit tests in
+- [x] T005 Unit tests in
   `packages/core/test/semantic/skill-chunk.test.ts`: chunk window boundaries
   and overlap, the id-pattern-safe separator, the sanitize-before-hash
   ordering (`content_hash` computed over sanitized bytes, never the raw
@@ -39,14 +39,14 @@
 
 ### Phase 2 — Adapters (`packages/opencode/src/semantic/**`, one seam at a time)
 
-- [ ] T006 Add `packages/opencode/src/semantic/milvus-composition.ts`:
+- [x] T006 Add `packages/opencode/src/semantic/milvus-composition.ts`:
   extract the `createGrpcMilvusAdapter(createHttpMilvusClient(...))`
   construction chain out of `packages/opencode/src/operator/stack-live.ts:588-610`
   into ONE shared `MilvusPortComposer.compose(config)` helper; edit
   `stack-live.ts` to call it. Verify via the EXISTING operator stack tests
   (`packages/opencode/test/operator/**`) staying green — no new test file for
   this extraction, per `plan.md`'s regression strategy.
-- [ ] T007 Extend `packages/opencode/src/util/effect-http-client.ts` with
+- [x] T007 Extend `packages/opencode/src/util/effect-http-client.ts` with
   `withDataPlaneRetry<A, E>(schedule, isTransient)`: a sibling to
   `withTransientReadRetry` composed over a plain `Effect.Effect<A, E>`
   (`Effect.retry(Schedule.exponential(500ms).pipe(Schedule.jittered,
@@ -54,12 +54,12 @@
   classifying `milvus_unavailable`/transport-timeout/5xx as transient and
   `invalid_filters`/`dimension_mismatch`/`reranker_not_eligible`/schema
   rejects as never-retryable.
-- [ ] T008 Unit tests in
+- [x] T008 Unit tests in
   `packages/opencode/test/util/effect-http-client-data-plane-retry.test.ts`:
   bounded attempts (≤3), jitter present, transient classification retries,
   domain-error classification never retries, and `cas_conflict` is excluded
   from blind retry (re-read-and-replan is the caller's job, not this helper's).
-- [ ] T009 Add `packages/opencode/src/semantic/embeddings-http-client.ts`:
+- [x] T009 Add `packages/opencode/src/semantic/embeddings-http-client.ts`:
   `createFetchEmbeddingsHttpClient` implementing `EmbeddingsHttpPort`
   (`embedding-client.ts:34-36`) following the `createFetchRerankHttpClient`
   transport shape (`rerank-probe.ts:154-164`) — POST JSON, one resolved
@@ -67,12 +67,12 @@
   (`resolvePolicy`) exclusively, `secretRef: null` produces no header. No
   retry inlined in the raw transport; callers compose `withTransientReadRetry`
   / `withDataPlaneRetry` (T007) outside it.
-- [ ] T010 Unit tests in
+- [x] T010 Unit tests in
   `packages/opencode/test/semantic/embeddings-http-client.test.ts` against a
   fake HTTP transport: request/response shape, `secretRef: null` → no
   Authorization header, a resolved `secretRef` → header present, and a
   non-2xx response surfaces a typed error (never a silent empty vector).
-- [ ] T011 Add `packages/opencode/src/semantic/dimension-probe.ts`: the
+- [x] T011 Add `packages/opencode/src/semantic/dimension-probe.ts`: the
   `DimensionProbe.probe` three-rung ladder — (1) `EmbeddingClient.probe`
   (`embedding-client.ts:67-87`), authoritative; (2) a cached
   previously-probed `ProbedVectorSpace` for the same model/binding version on
@@ -81,13 +81,13 @@
   probe's metric finding onto the shipped `"cosine" | "inner-product"` enum
   at this boundary (never the CUE `"ip"` shorthand). No cache and a failed
   probe returns a typed `DimensionProbeRefusal`, never a default dimension.
-- [ ] T012 Unit tests in
+- [x] T012 Unit tests in
   `packages/opencode/test/semantic/dimension-probe.test.ts` against a fake
   `EmbeddingClient`/`ModelsDev.Service`: probe pass → `ProbedVectorSpace`
   stamped; probe fail + cache hit → cached value used; probe fail + no cache
   → `{type:"no_cached_dimension"}` refusal; catalog/probe mismatch → probe
   wins, warning emitted.
-- [ ] T013 Add `packages/opencode/src/semantic/output-spool-store.ts`: the
+- [x] T013 Add `packages/opencode/src/semantic/output-spool-store.ts`: the
   `OutputSpoolStore` (`put`/`resolve`/`supersede`) façade REUSING the existing
   Feature 005 subsystem — `session/output-spool-writer.ts`
   (`SessionSpoolWriter.ingest`/`.seal`) to write sanitized chunk bodies, and
@@ -96,22 +96,22 @@
   non-resolvable `boundedSpool` stub (`milvus-binding.ts:116-118`).
   `supersede` opens a fresh generation and never mutates sealed bytes in
   place.
-- [ ] T014 Unit tests in
+- [x] T014 Unit tests in
   `packages/opencode/test/semantic/output-spool-store.test.ts` against a fake
   `SessionSpoolWriter`/`OutputSpoolBackend`: put → resolve round-trip returns
   the same sanitized body and `contentHash`; supersede marks the prior ref
   reclaimable and a new `put` yields a distinct ref; a missing ref resolves
   `{type:"not_found"}`.
-- [ ] T015 Add `packages/opencode/src/semantic/reconcile-lock.ts`: the
+- [x] T015 Add `packages/opencode/src/semantic/reconcile-lock.ts`: the
   per-profile `ReconcileLock.acquire`/`release`, CAS-guarded the same way
   `registry-backend.ts` guards the binding document (`readDoc`/
   `guardedPlan`); an incremental reconcile and a full rebuild for the same
   profile are mutually exclusive holders.
-- [ ] T016 Unit tests in
+- [x] T016 Unit tests in
   `packages/opencode/test/semantic/reconcile-lock.test.ts`: a second
   `acquire` while held fails `{type:"held", holder, acquiredAt}`; `release` is
   idempotent; a held-then-released lock allows the next `acquire` to succeed.
-- [ ] T017 Add `packages/opencode/src/semantic/pipeline-runner.ts`:
+- [x] T017 Add `packages/opencode/src/semantic/pipeline-runner.ts`:
   `createProductionPipelineRunner` implementing `PipelineRunnerPort`
   (`retrieval-facade.ts:87-92`) — `runAgents`/`runSkills` embed the prompt
   once (`EmbeddingClient.embed`), build `PipelinePorts` (`pipeline.ts:69-85`)
@@ -122,7 +122,7 @@
   dead hits before the facade's `revalidated:true` stamp applies. Wrap each
   surface call in `Effect.timeout(deps.latencyBudgetMs)`
   (`config/experimental.ts:62`).
-- [ ] T018 Unit tests in
+- [x] T018 Unit tests in
   `packages/opencode/test/semantic/pipeline-runner.test.ts` against fake
   Milvus/embedding/rerank/registry ports: a ranked agent id absent from the
   fake `AgentV2.Service` is dropped and never stamped `revalidated:true`; a
@@ -145,14 +145,14 @@
 
 ### Phase 3 — Wiring (composition root)
 
-- [ ] T021 Edit `packages/opencode/src/operator/semantic/registry-backend.ts:696-702`
+- [x] T021 Edit `packages/opencode/src/operator/semantic/registry-backend.ts:696-702`
   (`generationVectorSpace`): call `dimension-probe.ts`'s `probe` instead of
   `defaultDimension ?? 1024`; edit `planReindexEmbedding` (`:729-768`) to
   propagate a `DimensionProbeRefusal` as a failed effect (typed capability
   gap), never reaching `buildGeneration` with a guessed dimension; assert the
   probed `metric` against the literal `"cosine" | "inner-product"` set before
   it is ever written to the registry document.
-- [ ] T022 Extend `packages/opencode/src/semantic/rerank-probe.ts`'s
+- [x] T022 Extend `packages/opencode/src/semantic/rerank-probe.ts`'s
   `createRerankValidationProbe` (`:117-146`) to capture the transport's
   reported capability envelope (`modes`, `maxDocuments`, `contextWindow`,
   `scoreRange`) into a `RerankCapabilities` value alongside the existing
@@ -165,12 +165,12 @@
   `{baseUrl, modelRef, secretRef, compatibilityMode}` from the active
   `RegistryDocument`, mirroring `planValidateReranker`'s inline join
   (`registry-backend.ts:1005`) rather than re-deriving the shape.
-- [ ] T024 Edit `packages/opencode/src/session/budget-consume.ts:107`: add an
+- [x] T024 Edit `packages/opencode/src/session/budget-consume.ts:107`: add an
   `incrementRetryCount` helper called from every T007/T021 retry site,
   accumulating into `ConsumptionResilience.retry_count` via the existing
   `RoutingSessionStateStore.accumulateConsumption` path, activating the
   previously-inert `resilience.retry_depth` budget knob.
-- [ ] T025 Register the production facade as a per-instance singleton in
+- [x] T025 Register the production facade as a per-instance singleton in
   `packages/opencode/src/semantic/retrieval-facade.ts` (or its composition
   entry point): declare it with the canonical
   `Context.Service<...>()("@opencode/semantic/RetrievalFacade")` pattern
