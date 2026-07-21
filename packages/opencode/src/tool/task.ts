@@ -8,6 +8,8 @@ import { SessionID, MessageID } from "../session/schema"
 import { MessageV2 } from "../session/message-v2"
 import { Agent } from "../agent/agent"
 import { deriveSubagentSessionPermission } from "../agent/subagent-permissions"
+import { RoutingHierarchy } from "../session/routing-hierarchy"
+import type { RoutingSessionStateStore } from "../session/routing-state"
 import type { SessionPrompt } from "../session/prompt"
 import { Config } from "@/config/config"
 import { Effect, Exit, Schema, Scope } from "effect"
@@ -22,6 +24,74 @@ export interface TaskPromptOps {
 }
 
 const id = "task"
+
+/**
+ * Feature 042 / Phase 2 — the SINGLE orchestration-only tool-gating ALLOWLIST.
+ *
+ * Under `hierarchy.orchestration_only`, a non-Worker child (architect/manager) is
+ * restricted to the INTERSECTION with this read-only / planning / delegation
+ * allowlist (FR-C1). The gate FAILS CLOSED: rather than enumerating a denylist of
+ * mutating builtins (which silently omits every MCP / plugin / custom / dynamic /
+ * future tool — those default to "ask", i.e. execute under an auto-approve or
+ * headless deployment), we deny the ENTIRE tool surface with a catch-all rule and
+ * re-allow ONLY these ids. Every other tool — builtin mutating (`edit`/`write`/
+ * `apply_patch`/`bash`/`execute`), MCP, plugin, custom, and any future tool — is
+ * denied BY CONSTRUCTION, never by enumeration. Only a Worker leaf carries
+ * execution authority. Canonical ids verified against the real tool registry
+ * (`tool/registry.ts`): `bash` (the shell tool), `webfetch`, `websearch`,
+ * `todowrite`; MCP resource reads resolve under the `read` permission.
+ */
+const ORCHESTRATION_ALLOWED_TOOLS: ReadonlyArray<string> = [
+  "read",
+  "grep",
+  "glob",
+  "lsp",
+  "webfetch",
+  "websearch",
+  "question",
+  "skill",
+  "task",
+  "todowrite",
+]
+
+/** True iff `toolId` is on the orchestration-only allowlist (read-only / planning /
+ * delegation) that a non-Worker child may retain. Everything else fails closed. */
+export function isOrchestrationAllowedTool(toolId: string): boolean {
+  return ORCHESTRATION_ALLOWED_TOOLS.includes(toolId)
+}
+
+/**
+ * The fail-closed permission rules for an orchestration-only non-Worker child: a
+ * catch-all deny over the WHOLE tool surface followed by an allow for each
+ * allowlisted id. `Permission.evaluate` is last-match-wins, so an allowlisted id
+ * resolves to its trailing allow while every other id (MCP / plugin / custom /
+ * future included) stops at the catch-all deny — covered by construction.
+ */
+export function orchestrationChildToolRules(): ReadonlyArray<{
+  readonly permission: string
+  readonly pattern: "*"
+  readonly action: "deny" | "allow"
+}> {
+  return [
+    { permission: "*", pattern: "*", action: "deny" },
+    ...ORCHESTRATION_ALLOWED_TOOLS.map((permission) => ({ permission, pattern: "*" as const, action: "allow" as const })),
+  ]
+}
+
+/** Feature 042 / Phase 2 (FR-E3, FR-B3) — when hierarchy routing is active the
+ * effective delegation ceiling is the MIN of the legacy `subagent_depth` backstop
+ * and the hierarchy `max_depth`, so a config can never widen delegation beyond the
+ * engine invariant; the legacy path is unchanged when hierarchy routing is off. */
+export function reconcileDepthCeiling(legacyCeiling: number, hierarchyMaxDepth?: number): number {
+  return hierarchyMaxDepth === undefined ? legacyCeiling : Math.min(legacyCeiling, hierarchyMaxDepth)
+}
+
+interface HierarchyDispatchExtra {
+  readonly store: RoutingSessionStateStore
+  readonly lineageStub: RoutingHierarchy.DispatchLineageStub
+  readonly denyExecutionTools: boolean
+  readonly maxDepth: number
+}
 const BACKGROUND_DESCRIPTION = [
   "Background mode: background=true launches the subagent asynchronously and returns immediately.",
   "Foreground is the default; use it when you need the result before continuing.",
@@ -101,17 +171,24 @@ export const TaskTool = Tool.define(
         )
       }
 
+      const hierarchyDispatch = ctx.extra?.hierarchyDispatch as HierarchyDispatchExtra | undefined
+
       const parent = yield* sessions.get(ctx.sessionID)
       let current = parent
       let depth = 0
-      while (current.parentID) {
+      // A visited set bounds the walk so a corrupted A→B→A parentID can never hang.
+      const visited = new Set<string>([current.id])
+      while (current.parentID && !visited.has(current.parentID)) {
         depth++
+        visited.add(current.parentID)
         current = yield* sessions.get(current.parentID)
       }
-      if (depth >= (cfg.subagent_depth ?? 1)) {
+      const legacyCeiling = cfg.subagent_depth ?? 1
+      const depthCeiling = reconcileDepthCeiling(legacyCeiling, hierarchyDispatch?.maxDepth)
+      if (depth >= depthCeiling) {
         return yield* Effect.fail(
           new Error(
-            `Subagent depth limit reached (${cfg.subagent_depth ?? 1}). Increase "subagent_depth" to allow nested subagents.`,
+            `Subagent depth limit reached (${depthCeiling}). Increase "subagent_depth" to allow nested subagents.`,
           ),
         )
       }
@@ -152,6 +229,13 @@ export const TaskTool = Tool.define(
           pattern: "*" as const,
           action: "deny" as const,
         })) ?? []),
+        // Feature 042 / Phase 2 (FR-C1) — under `orchestration_only` a non-Worker
+        // child is restricted to the read-only / planning / delegation allowlist:
+        // a catch-all deny over the WHOLE tool surface plus an allow for each
+        // allowlisted id, so every mutating / MCP / plugin / custom / future tool
+        // is denied BY CONSTRUCTION (fail-closed), not by a leaky enumeration. The
+        // `executionAllowed` flag is engine-derived (never recomputed here).
+        ...(hierarchyDispatch?.denyExecutionTools ? orchestrationChildToolRules() : []),
       ]
       const nextSession =
         session ??
@@ -170,6 +254,20 @@ export const TaskTool = Tool.define(
             ),
           ],
         }))
+
+      // Feature 042 / Phase 2 (FR-D1, Decision #4) — record the dispatch lineage
+      // now that the child session id is known. The record validates the PARENT
+      // edge against the child's ACTUAL parent (catching a resumed-session mismatch)
+      // and never throws into the spawn path; a mismatch is skipped and logged.
+      if (hierarchyDispatch) {
+        const recorded = RoutingHierarchy.recordHierarchyDispatch(
+          hierarchyDispatch.store,
+          nextSession.id,
+          hierarchyDispatch.lineageStub,
+          nextSession.parentID ?? ctx.sessionID,
+        )
+        if (!recorded.ok) yield* Effect.logWarning("hierarchy dispatch lineage not recorded", { reason: recorded.reason })
+      }
 
       const msg = yield* MessageV2.get({ sessionID: ctx.sessionID, messageID: ctx.messageID }).pipe(
         Effect.provideService(Database.Service, database),
@@ -217,6 +315,9 @@ export const TaskTool = Tool.define(
         state: "completed" | "error",
         text: string,
       ) {
+        // A background child has finished — release its routing state (see the
+        // foreground finalizer for the same bounded-retention rationale).
+        if (hierarchyDispatch) hierarchyDispatch.store.clear(nextSession.id)
         const currentParent = yield* sessions.get(ctx.sessionID)
         yield* ops
           .prompt({
@@ -341,6 +442,9 @@ export const TaskTool = Tool.define(
             Effect.ensuring(
               Effect.sync(() => {
                 ctx.abort.removeEventListener("abort", onAbort)
+                // The child session has finished — release its routing state so a
+                // long-lived `opencode serve` never accumulates one entry per spawn.
+                if (hierarchyDispatch) hierarchyDispatch.store.clear(nextSession.id)
               }),
             ),
           ),

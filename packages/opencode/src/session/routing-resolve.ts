@@ -153,7 +153,7 @@ function readOnlyPortError(): never {
   throw new Error("routing-resolve config port is read-only")
 }
 
-function sessionConfigReadPort(config: RoutingResolveConfigLike, run: <A>(effect: Effect.Effect<A>) => Promise<A>): ConfigPort {
+export function sessionConfigReadPort(config: RoutingResolveConfigLike, run: <A>(effect: Effect.Effect<A>) => Promise<A>): ConfigPort {
   return {
     async get(authority) {
       const root = isGlobalAuthority(authority) ? await run(config.getGlobal()) : await run(config.get())
@@ -227,7 +227,7 @@ function sessionAgents(agents: RoutingResolveAgentsLike, run: <A>(effect: Effect
 // (fall back to the static default), like every other failure path.
 // =============================================================================
 
-async function resolveProviderForModel(
+export async function resolveProviderForModel(
   provider: RoutingResolveProviderLike,
   run: <A>(effect: Effect.Effect<A>) => Promise<A>,
   modelId: string,
@@ -264,13 +264,13 @@ async function resolveProviderForModel(
  * bounding worst-case memory at a few KB of tiny model refs. */
 const DRIFT_CACHE_CAP = 1024
 
-interface BoundedLru<V> {
+export interface BoundedLru<V> {
   readonly has: (key: string) => boolean
   readonly get: (key: string) => V | undefined
   readonly set: (key: string, value: V) => void
 }
 
-function createBoundedLru<V>(capacity: number, onEvict: (key: string) => void): BoundedLru<V> {
+export function createBoundedLru<V>(capacity: number, onEvict: (key: string) => void): BoundedLru<V> {
   const map = new Map<string, V>()
   return {
     has: (key) => map.has(key),
@@ -310,7 +310,7 @@ function createBoundedLru<V>(capacity: number, onEvict: (key: string) => void): 
  * ONCE per session (the first implicit-default message; later ones hit the
  * drift cache). On timeout the attempt resolves to `undefined`, exactly like
  * every other failure. */
-const RESOLVE_TIMEOUT_MS = 1500
+export const RESOLVE_TIMEOUT_MS = 1500
 
 function hierarchyRoleOf(profile: Enums.RoutingProfile): Enums.HierarchyRole {
   return profile === "manager" ? "manager" : "worker"

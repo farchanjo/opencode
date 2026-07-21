@@ -11,6 +11,8 @@ import { Agent } from "../agent/agent"
 import { Provider } from "@/provider/provider"
 import { Auth } from "@/auth"
 import { RoutingResolve } from "./routing-resolve"
+import { RoutingHierarchy } from "./routing-hierarchy"
+import { RoutingState } from "./routing-state"
 
 import { type Tool as AITool, tool, jsonSchema } from "ai"
 import type { JSONSchema7 } from "@ai-sdk/provider"
@@ -166,6 +168,22 @@ const layer = Layer.effect(
       agents: { listSpecialists: () => agents.listSpecialists() },
       auth: { get: (providerID) => auth.get(providerID) },
     })
+
+    // Feature 042 / Phase 2 — session-local hierarchy dispatch resolver. Consulted
+    // ONLY in the implicit-default branch of the Task spawn seam below (an explicit
+    // `task.model` and an agent-pinned subagent model always win); returns
+    // `undefined` — leaving the parent-model inheritance path byte-identical —
+    // unless Smart Routing is enabled in `auto` mode with a populated hierarchy
+    // config. It can never crash or block the spawn path (see routing-hierarchy.ts).
+    // A `{ kind: "blocked" }` result is a deliberate legality outcome surfaced as an
+    // explicit blocked spawn. The `RoutingSessionState` store is shared with the
+    // spawn seam (parent-role reads) and `tool/task.ts` (dispatch lineage records).
+    const routingSessionState = RoutingState.createRoutingSessionStateStore()
+    const resolveHierarchyDispatch = RoutingHierarchy.createHierarchyDispatchResolver({
+      config: { get: () => config.get(), getGlobal: () => config.getGlobal() },
+      provider: { list: () => provider.list() },
+      auth: { get: (providerID) => auth.get(providerID) },
+    })
     const ops = Effect.fn("SessionPrompt.ops")(function* () {
       return {
         cancel: (sessionID: SessionID) => cancel(sessionID),
@@ -277,6 +295,25 @@ const layer = Layer.effect(
         .pipe(Effect.catchCause((cause) => Effect.logError("failed to generate title", { error: Cause.squash(cause) })))
     })
 
+    // Feature 042 / Phase 2 — count the delegation edges above `start` (Architect
+    // root = 0). Failure-tolerant + cycle-safe: a pruned/deleted ancestor
+    // (`Effect.option` → None) is treated as a depth boundary and a visited set
+    // bounds a corrupted `parentID` cycle, so the walk can never defect or hang the
+    // spawn path (mirrors the F037 hang/crash-safety contract).
+    const walkParentDepth = Effect.fn("SessionPrompt.walkParentDepth")(function* (start: Session.Info) {
+      let parentDepth = 0
+      let cursor = start
+      const visited = new Set<string>([cursor.id])
+      while (cursor.parentID && !visited.has(cursor.parentID)) {
+        const ancestor = yield* sessions.get(cursor.parentID).pipe(Effect.option)
+        if (Option.isNone(ancestor)) break
+        parentDepth++
+        visited.add(cursor.parentID)
+        cursor = ancestor.value
+      }
+      return parentDepth
+    })
+
     const handleSubtask = Effect.fn("SessionPrompt.handleSubtask")(function* (input: {
       task: SessionV1.SubtaskPart
       model: Provider.Model
@@ -289,9 +326,58 @@ const layer = Layer.effect(
       const ctx = yield* InstanceState.context
       const promptOps = yield* ops()
       const { task: taskTool } = yield* registry.named()
-      const taskModel = task.model ? yield* getModel(task.model.providerID, task.model.modelID, sessionID) : model
+
+      // Feature 042 / Phase 2 — a FRESH per-spawn hierarchy decision folded
+      // strictly between the pinned model and the parent-inheritance default:
+      // `task.model ?? agentPinned ?? hierarchyRouted ?? parentModel`. The
+      // resolver is consulted ONLY when neither an explicit `task.model` nor an
+      // agent-pinned model is set, so an explicit/agent choice is never
+      // overridden; a `undefined` result leaves the parent-inheritance path
+      // byte-identical. A `{ kind: "blocked" }` outcome (illegal edge / depth
+      // exceeded / non-orchestrator parent) is surfaced as an explicit blocked
+      // spawn — never a silent inheritance.
+      //
+      // ALL pre-gate work — the parent-role seeding and the parent-chain walk —
+      // lives INSIDE the consult branch: it is skipped when Smart Routing is off /
+      // explicit / pinned, and it can NEVER defect the spawn turn. The walk uses a
+      // failure-tolerant `Effect.option` (a pruned/deleted ancestor degrades to a
+      // depth boundary, never an `orDie` defect) and a visited-set cycle guard (a
+      // corrupted A→B→A `parentID` can never hang).
+      const spawnMessageID = MessageID.ascending()
+      // A single agent lookup on the spawn hot path — reused as `taskAgent` below.
+      const pinnedAgent = yield* agents.get(task.agent)
+      let hierarchyRouted: RoutingHierarchy.HierarchyDispatchDecision | undefined
+      if (RoutingHierarchy.shouldConsultHierarchy(!!task.model, !!pinnedAgent?.model)) {
+        const parentRole = RoutingHierarchy.parentRoleForSpawn(
+          routingSessionState.get(sessionID).hierarchyRole,
+          !session.parentID,
+        )
+        const parentDepth = yield* walkParentDepth(session)
+        hierarchyRouted = yield* resolveHierarchyDispatch({
+          parentSessionId: sessionID,
+          parentRole,
+          parentDepth,
+          taskText: task.prompt,
+          scope: "session",
+          spawnKey: spawnMessageID,
+        })
+      }
+      if (hierarchyRouted?.kind === "blocked") {
+        const { reason, detail } = hierarchyRouted.rejection
+        const error = new NamedError.Unknown({
+          message: `Subagent spawn blocked by hierarchy routing (${reason}): ${detail}`,
+        })
+        yield* events.publish(Session.Event.Error, { sessionID, error: error.toObject() })
+        throw error
+      }
+      const routed = hierarchyRouted?.kind === "route" ? hierarchyRouted : undefined
+      const taskModel = task.model
+        ? yield* getModel(task.model.providerID, task.model.modelID, sessionID)
+        : routed
+          ? yield* getModel(routed.model.providerID, routed.model.modelID, sessionID)
+          : model
       const assistantMessage: SessionV1.Assistant = yield* sessions.updateMessage({
-        id: MessageID.ascending(),
+        id: spawnMessageID,
         role: "assistant",
         parentID: lastUser.id,
         sessionID,
@@ -335,7 +421,7 @@ const layer = Layer.effect(
         { args: taskArgs },
       )
 
-      const taskAgent = yield* agents.get(task.agent)
+      const taskAgent = pinnedAgent
       if (!taskAgent) {
         const available = (yield* agents.list()).filter((a) => !a.hidden).map((a) => a.name)
         const hint = available.length ? ` Available agents: ${available.join(", ")}` : ""
@@ -353,7 +439,27 @@ const layer = Layer.effect(
           sessionID,
           abort: taskAbort.signal,
           callID: part.callID,
-          extra: { bypassAgentCheck: true, promptOps },
+          extra: {
+            bypassAgentCheck: true,
+            promptOps,
+            // Feature 042 / Phase 2 — hierarchy dispatch record + tool-gating.
+            // Present only when the spawn was hierarchy-routed (implicit branch).
+            // `tool/task.ts` records the dispatch lineage AFTER the child session
+            // is created (its id is only known there — Decision #4), gates a
+            // non-Worker child off the project-mutating / test-executing tool
+            // classes when `orchestration_only` is in force (FR-C1), and reconciles
+            // its `subagent_depth` guard to the MIN of the two (FR-E3).
+            ...(routed
+              ? {
+                  hierarchyDispatch: {
+                    store: routingSessionState,
+                    lineageStub: routed.lineageStub,
+                    denyExecutionTools: !routed.executionAllowed,
+                    maxDepth: routed.maxDepth,
+                  },
+                }
+              : {}),
+          },
           messages: msgs,
           metadata: (val: { title?: string; metadata?: Record<string, any> }) =>
             Effect.gen(function* () {
