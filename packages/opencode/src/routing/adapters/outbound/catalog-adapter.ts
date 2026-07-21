@@ -82,6 +82,42 @@ export interface CatalogPort {
   readonly catalogVersion: () => Promise<string>
 }
 
+/**
+ * Feature 038 — resolve one operator-configured pool id against the catalog,
+ * accepting BOTH the provider-internal bare id (today's behavior) AND the
+ * standard opencode `provider/model` provider-qualified form used everywhere
+ * else (`--model`, `cfg.model`, `tool/task.ts`).
+ *
+ * Precedence is BARE-FIRST for full back-compat: an id that already resolves as
+ * a within-provider catalog id keeps resolving identically — even when that
+ * within-provider id itself contains slashes (e.g. openrouter's
+ * `openai/gpt-oss-120b`). Only when the full id matches no catalog model do we
+ * try the provider-qualified form: strip the FIRST segment IFF it names a known
+ * provider (a provider present in the live catalog), and look the remainder up
+ * as that provider's model id. The remainder may itself contain slashes, so
+ * `openrouter/openai/gpt-oss-120b` resolves to provider `openrouter`, model
+ * `openai/gpt-oss-120b` — never to provider `openai`.
+ *
+ * A bare id served by multiple providers stays ambiguous (the bare Map keeps a
+ * single, deterministic entry, unchanged); a provider-qualified id removes that
+ * ambiguity by naming the provider explicitly.
+ */
+function resolveCatalogModel(
+  modelId: string,
+  byId: ReadonlyMap<string, CatalogModelSnapshot>,
+  byProviderModel: ReadonlyMap<string, CatalogModelSnapshot>,
+  providers: ReadonlySet<string>,
+): CatalogModelSnapshot | undefined {
+  const bare = byId.get(modelId)
+  if (bare) return bare
+  const slash = modelId.indexOf("/")
+  if (slash <= 0) return undefined
+  if (!providers.has(modelId.slice(0, slash))) return undefined
+  // `byProviderModel` is keyed `${providerId}/${modelId}`; when the head names a
+  // known provider that key IS the requested provider-qualified id.
+  return byProviderModel.get(modelId)
+}
+
 function classify(model: CatalogModelSnapshot | undefined): Omit<ResolvedCandidate, "modelId"> {
   if (!model) return { providerId: null, status: null, healthy: false, reason: "not_found_in_catalog", tools: false }
   if (!model.enabled) {
@@ -106,7 +142,16 @@ export function createCatalogAdapter(deps: { readonly catalog: CatalogCandidateS
     async resolveCandidates(modelIds) {
       const models = await deps.catalog.listModels()
       const byId = new Map(models.map((m) => [m.modelId, m]))
-      const candidates = modelIds.map((modelId) => ({ modelId, ...classify(byId.get(modelId)) }))
+      const byProviderModel = new Map(models.map((m) => [`${m.providerId}/${m.modelId}`, m]))
+      const providers = new Set(models.map((m) => m.providerId))
+      // A resolved candidate NORMALISES to the catalog's within-provider bare
+      // model id (`model.modelId`), so a provider-qualified pool id and the bare
+      // id resolve to the SAME candidate (same identity, same executor_model);
+      // an unresolved id keeps the requested id so callers can name the offender.
+      const candidates = modelIds.map((modelId) => {
+        const model = resolveCatalogModel(modelId, byId, byProviderModel, providers)
+        return { modelId: model?.modelId ?? modelId, ...classify(model) }
+      })
       return { catalogVersion: hashCatalog(models), candidates }
     },
     async listAll() {
@@ -289,9 +334,17 @@ export function createCandidateSource(deps: {
         }
       }
 
+      // Normalise the decision-model pool through the SAME catalog resolution so a
+      // provider-qualified pool id (Feature 038) maps to the bare model id the
+      // authorized candidates carry — otherwise `pickHealthyDecisionModel` (which
+      // matches against candidate model ids) would never select it. Bare ids
+      // resolve to themselves, so this is byte-identical for pre-038 configs.
+      const decisionPoolRaw = flattenModelPool(query.config.models.decision_model.pool, query.config.models.role_pools)
+      const decisionSnapshot = await deps.catalog.resolveCandidates(decisionPoolRaw)
+
       const resolution: CandidateResolution = {
         candidates,
-        decisionPoolModelIds: flattenModelPool(query.config.models.decision_model.pool, query.config.models.role_pools),
+        decisionPoolModelIds: decisionSnapshot.candidates.map((c) => c.modelId),
         catalogVersion: snapshot.catalogVersion,
       }
       return resolution
@@ -316,6 +369,49 @@ export function createCandidateSource(deps: {
           recommendedAction: "check ModelsDev/Catalog.Service connectivity",
         }
       }
+    },
+  }
+}
+
+// =============================================================================
+// Catalog model validator (Feature 038) — write-time role-pool id validation
+// =============================================================================
+
+/**
+ * Feature 038 — the narrow seam the operator `pools.set` write path uses to
+ * REJECT a role-pool model id that resolves to no known catalog model, so a
+ * mistyped or unresolvable id surfaces at configure time rather than silently
+ * degrading a live session to the static default. It reuses the exact
+ * `resolveCandidates` resolution above, so a provider-qualified id that DOES
+ * resolve (per `resolveCatalogModel`) passes, and a bare id keeps validating
+ * exactly as it resolves.
+ */
+export interface CatalogModelValidator {
+  /** The subset of `modelIds` that resolve to NO known catalog model (bare or provider-qualified). */
+  readonly unknownModelIds: (modelIds: ReadonlyArray<string>) => Promise<ReadonlyArray<string>>
+}
+
+export function createCatalogModelValidator(catalog: Pick<CatalogPort, "resolveCandidates" | "listAll">): CatalogModelValidator {
+  return {
+    async unknownModelIds(modelIds) {
+      if (modelIds.length === 0) return []
+      const snapshot = await catalog.resolveCandidates(modelIds)
+      // `not_found_in_catalog` is the only reason that means "no such model";
+      // `disabled`/`deprecated` are KNOWN models (unhealthy, but valid ids) and
+      // must not be rejected at write time.
+      const unknown = snapshot.candidates.filter((c) => c.reason === "not_found_in_catalog").map((c) => c.modelId)
+      if (unknown.length === 0) return []
+      // Distinguish an EMPTY catalog (transiently cold — a SUCCESSFUL but empty
+      // `Provider.list()` before providers are loaded/authed, or a reload race)
+      // from a POPULATED catalog that is genuinely missing the id. When the live
+      // catalog resolves to ZERO models EVERY id looks `not_found_in_catalog`, so
+      // flagging them would false-reject an otherwise-valid `pools.set`. Instead
+      // throw, so the write path degrades to `unavailable` (skip validation) — the
+      // SAME outcome a thrown catalog outage produces. A POPULATED catalog with a
+      // genuinely-absent id still returns it here → `invalid_argument`.
+      if ((await catalog.listAll()).candidates.length === 0)
+        throw new Error("catalog is empty (unavailable): skipping role-pool validation")
+      return unknown
     },
   }
 }

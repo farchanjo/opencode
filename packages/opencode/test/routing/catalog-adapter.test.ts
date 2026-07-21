@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test"
 import {
   CatalogAdapter,
   createCatalogAdapter,
+  createCatalogModelValidator,
   createCandidateSource,
   toCapabilityCatalogRecord,
   type CatalogCandidateService,
@@ -81,6 +82,126 @@ describe("CatalogAdapter.createCatalogAdapter", () => {
     const before = createCatalogAdapter({ catalog: fakeCatalog([GPT]) })
     const after = createCatalogAdapter({ catalog: fakeCatalog([GPT, CLAUDE]) })
     expect(await before.catalogVersion()).not.toBe(await after.catalogVersion())
+  })
+})
+
+// Feature 038 — a faithful two-provider catalog: openai serves the bare
+// `gpt-5.6-sol-fast`, openrouter re-exposes an openai model as the within-provider
+// id `openai/gpt-oss-120b` (its bare id contains a slash).
+const SOL: CatalogModelSnapshot = {
+  modelId: "gpt-5.6-sol-fast",
+  providerId: "openai",
+  status: "active",
+  enabled: true,
+  tools: true,
+}
+const OSS_ROUTED: CatalogModelSnapshot = {
+  modelId: "openai/gpt-oss-120b",
+  providerId: "openrouter",
+  status: "active",
+  enabled: true,
+  tools: true,
+}
+
+describe("CatalogAdapter — Feature 038 provider-qualified id resolution", () => {
+  test("a provider-qualified id resolves to the SAME candidate as its bare id", async () => {
+    const adapter = createCatalogAdapter({ catalog: fakeCatalog([SOL, CLAUDE]) })
+    const bare = await adapter.resolveCandidates(["gpt-5.6-sol-fast"])
+    const qualified = await adapter.resolveCandidates(["openai/gpt-5.6-sol-fast"])
+    // The qualified id NORMALISES to the same bare model id + provider, so the
+    // resolved candidate (identity + executor_model source) is identical.
+    expect(qualified.candidates[0]).toEqual(bare.candidates[0])
+    expect(qualified.candidates[0]).toEqual({
+      modelId: "gpt-5.6-sol-fast",
+      providerId: "openai",
+      status: "active",
+      healthy: true,
+      reason: null,
+      tools: true,
+    })
+  })
+
+  test("the nested case strips only the first known-provider segment", async () => {
+    const adapter = createCatalogAdapter({ catalog: fakeCatalog([SOL, OSS_ROUTED]) })
+    const snapshot = await adapter.resolveCandidates(["openrouter/openai/gpt-oss-120b"])
+    // provider `openrouter`, model `openai/gpt-oss-120b` — never provider `openai`.
+    expect(snapshot.candidates[0]).toMatchObject({
+      modelId: "openai/gpt-oss-120b",
+      providerId: "openrouter",
+      healthy: true,
+    })
+  })
+
+  test("a bare within-provider id that contains a slash keeps resolving as bare (back-compat precedence)", async () => {
+    const adapter = createCatalogAdapter({ catalog: fakeCatalog([OSS_ROUTED]) })
+    const snapshot = await adapter.resolveCandidates(["openai/gpt-oss-120b"])
+    // Bare-first: this matches openrouter's within-provider id, NOT openai — even
+    // though the head `openai` is a plausible provider name.
+    expect(snapshot.candidates[0]).toMatchObject({ modelId: "openai/gpt-oss-120b", providerId: "openrouter" })
+  })
+
+  test("a plain bare id still resolves identically (no regression)", async () => {
+    const adapter = createCatalogAdapter({ catalog: fakeCatalog([SOL]) })
+    const snapshot = await adapter.resolveCandidates(["gpt-5.6-sol-fast"])
+    expect(snapshot.candidates[0]).toMatchObject({ modelId: "gpt-5.6-sol-fast", providerId: "openai", healthy: true })
+  })
+
+  test("a provider-qualified id under an UNKNOWN provider stays unresolved", async () => {
+    const adapter = createCatalogAdapter({ catalog: fakeCatalog([SOL]) })
+    const snapshot = await adapter.resolveCandidates(["unknown-provider/nope"])
+    expect(snapshot.candidates[0]).toMatchObject({ providerId: null, reason: "not_found_in_catalog" })
+  })
+
+  test("createCandidateSource resolves a provider-qualified role pool to the same candidate as the bare pool", async () => {
+    const cfg = (models: ReadonlyArray<string>): RoutingConfig.Info => ({
+      ...CONFIG,
+      models: { ...CONFIG.models, decision_model: { pool: ["worker"] }, role_pools: { worker: [...models] } },
+    })
+    const build = () =>
+      createCandidateSource({
+        catalog: createCatalogAdapter({ catalog: fakeCatalog([SOL]) }),
+        agents: { resolveAgents: async () => [{ agentId: "w", skills: [], effort: "medium", reasoningEffort: "medium" }] },
+        now: () => "2026-01-01T00:00:00.000Z",
+      })
+    const bare = await build().resolve({ routingProfile: "direct_worker", taskClass: "medium", scope: "session", config: cfg(["gpt-5.6-sol-fast"]) })
+    const qualified = await build().resolve({ routingProfile: "direct_worker", taskClass: "medium", scope: "session", config: cfg(["openai/gpt-5.6-sol-fast"]) })
+    expect(qualified.candidates[0]?.identity).toEqual({ agent_id: "w", model_id: "gpt-5.6-sol-fast" })
+    expect(qualified.candidates[0]?.identity).toEqual(bare.candidates[0]?.identity)
+    // The normalised decision pool matches the bare candidate id too.
+    expect(qualified.decisionPoolModelIds).toEqual(["gpt-5.6-sol-fast"])
+  })
+})
+
+describe("CatalogAdapter.createCatalogModelValidator — Feature 038", () => {
+  test("flags ids that resolve to no catalog model, passes bare + provider-qualified ids that do", async () => {
+    const validator = createCatalogModelValidator(createCatalogAdapter({ catalog: fakeCatalog([SOL, OSS_ROUTED]) }))
+    const unknown = await validator.unknownModelIds([
+      "gpt-5.6-sol-fast",
+      "openai/gpt-5.6-sol-fast",
+      "openrouter/openai/gpt-oss-120b",
+      "unknown-provider/nope",
+      "totally-not-a-model",
+    ])
+    expect(unknown).toEqual(["unknown-provider/nope", "totally-not-a-model"])
+  })
+
+  test("a disabled or deprecated model is a KNOWN id and passes validation", async () => {
+    const validator = createCatalogModelValidator(createCatalogAdapter({ catalog: fakeCatalog([OLD, OFF]) }))
+    expect(await validator.unknownModelIds(["gpt-3", "beta-model"])).toEqual([])
+  })
+
+  test("an EMPTY catalog (successful but zero models) degrades: unknownModelIds THROWS, never flags every id", async () => {
+    // The bug: a cold/loading provider read returns `{}` (SUCCESS, empty), so every
+    // id resolves `not_found_in_catalog`. The validator must NOT report them as
+    // unknown (that false-rejects a valid write) — it throws so the caller degrades
+    // to `unavailable`, matching a real catalog outage.
+    const validator = createCatalogModelValidator(createCatalogAdapter({ catalog: fakeCatalog([]) }))
+    await expect(validator.unknownModelIds(["gpt-5", "claude-sonnet-5"])).rejects.toThrow(/empty|unavailable/i)
+  })
+
+  test("a POPULATED catalog missing the id STILL reports it as unknown (does not throw)", async () => {
+    const validator = createCatalogModelValidator(createCatalogAdapter({ catalog: fakeCatalog([GPT]) }))
+    expect(await validator.unknownModelIds(["gpt-5", "totally-not-a-model"])).toEqual(["totally-not-a-model"])
   })
 })
 
