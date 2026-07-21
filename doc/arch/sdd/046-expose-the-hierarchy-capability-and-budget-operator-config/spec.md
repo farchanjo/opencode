@@ -2,7 +2,7 @@
 id: 019f83db-cc66-7bc1-a691-16f3081dc08f
 number: 046
 slug: expose-the-hierarchy-capability-and-budget-operator-config
-status: analyzed
+status: implemented
 created_at: 2026-07-21T08:47:27.8465Z
 ---
 # Feature Specification: Expose The Hierarchy Capability And Budget Operator Config
