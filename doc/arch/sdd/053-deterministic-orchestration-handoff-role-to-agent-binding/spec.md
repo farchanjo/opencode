@@ -194,11 +194,16 @@ stage.
   `manager-composer`/Data(`explore`) bindings an operator configures
   OUTSIDE this feature's guard scope (profile `agent/*.md` files are config
   artifacts, not code).
-- Any TUI/desktop surface for configuring `manager_agent`/`data_agent`/
-  `composer_agent` — this feature ships the config schema and the runtime
-  binding/interception behavior only; an operator-facing editing surface
-  (mirroring `protocol/enforcement/leaves.ts`'s registry, if ever extended
-  to these three leaves) is out of scope here.
+- A bespoke or custom editing surface for `manager_agent`/`data_agent`/
+  `composer_agent` beyond the generic leaf round-trip. The minimal leaf
+  round-trip IS in scope and shipped: the three bindings are registered as
+  plain-text leaves in the SHARED `protocol/enforcement/leaves.ts` registry
+  (`ENFORCEMENT_LEAVES`), so the existing `op` CLI backend and the existing
+  generic TUI leaf-form (`tui/operator/form/field-list.ts`) view/set them
+  the SAME way they already view/set every other budget/hierarchy/capability
+  leaf — no new code path, no new UI. A dedicated/custom TUI form, a CRUD
+  management surface, or any UX beyond that generic leaf field remains the
+  non-goal.
 - Widening `max_delegation_depth`, `max_workers`, or any other
   `HierarchyDispatcher`/budget-engine invariant — Data and Composer are
   deliberately kept OUTSIDE the depth-2 legality graph (ADR-0053 "depth

@@ -32,7 +32,11 @@ package schemas
 	"hierarchy.admitted" | "hierarchy.denied_reason" |
 	"orchestration.worker_lifecycle" | "orchestration.delivery" |
 	"orchestration.validation" | "orchestration.fail_action" |
-	"orchestration.pending_workers"
+	"orchestration.pending_workers" |
+	"orchestration.handoff_synthetic" | "orchestration.handoff_eligible" |
+	"orchestration.handoff_data_result" | "orchestration.handoff_data_ms" |
+	"orchestration.handoff_composer_result" | "orchestration.handoff_composer_ms" |
+	"orchestration.handoff_repaired" | "orchestration.handoff_flagged"
 
 // #RoutingEmissionSignal is one emitted signal: a bounded name, its signal family
 // and instrument, and an attribute bag whose keys are drawn only from the

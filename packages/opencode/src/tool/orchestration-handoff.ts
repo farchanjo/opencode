@@ -35,6 +35,15 @@ import { validateBrief } from "@/session/brief-validator"
  * rather than blocking indefinitely; overridable via `InterceptionDeps.deadlineMs`. */
 export const INTERCEPTION_STAGE_DEADLINE_MS = 120_000
 
+/** FR3/FR4 defense-in-depth — the ranked-retrieval/`listSpecialists` catalog build between
+ * the Data and Composer stages runs under its OWN short bounded deadline, independent of
+ * whatever internal bound the caller's `retrieveRanked`/`listSpecialists` implementation may
+ * or may not already enforce, so a hung retrieval can never stall the interception past this
+ * window (rather than only degrading at the coarse Manager force-abort). Timeout degrades
+ * identically to a failure — fail-open to the full live registry, same as the existing
+ * `catchCause` path; overridable via `InterceptionDeps.catalogDeadlineMs`. */
+export const CATALOG_RETRIEVAL_DEADLINE_MS = 3_000
+
 /** A specialist as the Composer prompt / brief validator sees it — a name and its
  * optional description, sourced from the full non-hidden live registry. */
 export interface SpecialistLite {
@@ -75,6 +84,8 @@ export interface InterceptionDeps {
   /** The full non-hidden live registry — the fail-open catalog and brief-validation source (FR3, FR6). */
   readonly listSpecialists: () => Effect.Effect<readonly SpecialistLite[]>
   readonly deadlineMs?: number
+  /** Overrides `CATALOG_RETRIEVAL_DEADLINE_MS` for the catalog-build step (FR3/FR4). */
+  readonly catalogDeadlineMs?: number
   readonly now?: () => number
 }
 
@@ -188,6 +199,16 @@ const runStage = (effect: Effect.Effect<string>, deadlineMs: number, now: () => 
     return Option.isSome(settled) ? { ok: true, text: settled.value, durationMs } : { ok: false, text: "", durationMs }
   })
 
+/** Bound one catalog-build effect (`listSpecialists`/`retrieveRanked`) under `deadlineMs`,
+ * the SAME `timeoutOption` pattern `runStage` uses for Data/Composer; a failure OR a timeout
+ * both fail open to `fallback` (FR3/FR4 defense-in-depth). */
+const runCatalogStep = <A>(effect: Effect.Effect<A>, deadlineMs: number, fallback: A): Effect.Effect<A> =>
+  effect.pipe(
+    Effect.timeoutOption(Duration.millis(deadlineMs)),
+    Effect.catchCause(() => Effect.succeed(Option.none<A>())),
+    Effect.map((settled) => Option.getOrElse(settled, () => fallback)),
+  )
+
 // =============================================================================
 // Orchestrator (FR2, FR3, FR4, FR6, FR8)
 // =============================================================================
@@ -229,13 +250,12 @@ export const runInterception = (deps: InterceptionDeps, input: InterceptionInput
     stages.push({ stage: "data", result: data.ok ? "ran" : "degraded", durationMs: data.durationMs })
     if (!data.ok) return done(undefined)
 
-    // FR3 — fresh catalog over the SUBTASK text; fail-open to the full live registry.
-    const specialists = yield* deps
-      .listSpecialists()
-      .pipe(Effect.catchCause(() => Effect.succeed([] as readonly SpecialistLite[])))
-    const retrieved = yield* deps
-      .retrieveRanked(input.intent)
-      .pipe(Effect.catchCause(() => Effect.succeed([] as readonly string[])))
+    // FR3/FR4 — fresh catalog over the SUBTASK text, bounded by its OWN short deadline
+    // (defense-in-depth, independent of whatever bound the caller's implementation may
+    // already enforce); a failure OR a timeout both fail open to the full live registry.
+    const catalogDeadline = deps.catalogDeadlineMs ?? CATALOG_RETRIEVAL_DEADLINE_MS
+    const specialists = yield* runCatalogStep(deps.listSpecialists(), catalogDeadline, [] as readonly SpecialistLite[])
+    const retrieved = yield* runCatalogStep(deps.retrieveRanked(input.intent), catalogDeadline, [] as readonly string[])
     const rankedNames = retrieved.length > 0 ? retrieved : specialists.map((s) => s.name)
 
     const composer = yield* runStage(

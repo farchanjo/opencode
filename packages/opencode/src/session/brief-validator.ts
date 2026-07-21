@@ -122,13 +122,27 @@ function findRepairCandidate(name: string, deps: BriefValidatorDeps): string | u
   return findFuzzyCandidate(normalizedName, deps.listSpecialists())
 }
 
+/** Best-tier ranked match, requiring a SINGLE distinct resolvable candidate — mirrors
+ * `findFuzzyCandidate`'s ambiguity handling: two distinct ranked names fuzzy-matching at
+ * the same best tier are never silently resolved by ranked order, they're left undefined
+ * so the caller falls through to the full-registry search (and, if still ambiguous there,
+ * flags the subtask instead of picking a first-wins guess). */
 function findRankedCandidate(normalizedName: string, deps: BriefValidatorDeps): string | undefined {
   if (!deps.ranked) return undefined
+  let bestTier = Number.POSITIVE_INFINITY
+  let bestNames: string[] = []
   for (const candidate of deps.ranked) {
-    const matches = fuzzyTier(normalizedName, normalizeSpecialistName(candidate)) >= 0
-    if (matches && deps.resolveSpecialist(candidate)) return candidate
+    if (!deps.resolveSpecialist(candidate)) continue
+    const tier = fuzzyTier(normalizedName, normalizeSpecialistName(candidate))
+    if (tier < 0) continue
+    if (tier < bestTier) {
+      bestTier = tier
+      bestNames = [candidate]
+    } else if (tier === bestTier && !bestNames.includes(candidate)) {
+      bestNames.push(candidate)
+    }
   }
-  return undefined
+  return bestNames.length === 1 ? bestNames[0] : undefined
 }
 
 function findFuzzyCandidate(normalizedName: string, specialists: readonly SpecialistRef[]): string | undefined {

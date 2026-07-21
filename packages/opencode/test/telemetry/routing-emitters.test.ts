@@ -65,6 +65,14 @@ const ALLOW_LIST = new Set<string>([
   "orchestration.validation",
   "orchestration.fail_action",
   "orchestration.pending_workers",
+  "orchestration.handoff_synthetic",
+  "orchestration.handoff_eligible",
+  "orchestration.handoff_data_result",
+  "orchestration.handoff_data_ms",
+  "orchestration.handoff_composer_result",
+  "orchestration.handoff_composer_ms",
+  "orchestration.handoff_repaired",
+  "orchestration.handoff_flagged",
 ])
 
 const STUB_CONFIG = {} as ConfigPort
@@ -175,7 +183,8 @@ describe("pure attribute mappers (allow-list + content-free)", () => {
     expect(signal.kind).toBe("traces")
     expect(signal.name).toBe("orchestration.handoff")
     // Every attribute is a bounded enum, boolean, or count — never subtask/brief text.
-    for (const value of Object.values(signal.attributes)) {
+    for (const [key, value] of Object.entries(signal.attributes)) {
+      expect(ALLOW_LIST.has(key)).toBe(true)
       if (typeof value === "string") expect(["ran", "degraded", "skipped"]).toContain(value)
       else expect(["boolean", "number"]).toContain(typeof value)
     }

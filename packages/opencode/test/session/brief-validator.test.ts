@@ -49,6 +49,14 @@ describe("validateBrief", () => {
     expect(result.flagged).toEqual([])
   })
 
+  test("two distinct ranked candidates fuzzy-matching the same invalid name are never a silent first-wins repair — the subtask is flagged", () => {
+    const brief = "- [do the thing] → specialist: test-agent"
+    const result = validateBrief(brief, deps({ ranked: ["test-agent-a", "test-agent-b"] }))
+    expect(result.brief).toBe("- [do the thing] → specialist: test-agent [unassigned — route explicitly]")
+    expect(result.repairs).toEqual([])
+    expect(result.flagged).toEqual(["do the thing"])
+  })
+
   test("an ambiguous hallucinated name is flagged, and the subtask is preserved", () => {
     const brief = "- [do the thing] → specialist: test-agent"
     const result = validateBrief(brief, deps())

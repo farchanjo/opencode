@@ -170,6 +170,34 @@ describe("runInterception", () => {
     expect(composerPrompt).toContain("typescript-pro")
   })
 
+  test("catalog retrieval timeout (FR3/FR4 defense-in-depth): a hung retrieveRanked degrades to the full live registry within its own short deadline, never stalling the interception", async () => {
+    const { ops, order } = makeSessionOps({ explore: "recon", "manager-composer": "brief" })
+    const deps = makeDeps({
+      sessionOps: ops,
+      retrieveRanked: () => Effect.never,
+      catalogDeadlineMs: 20,
+    })
+    const result = await run(OrchestrationHandoff.runInterception(deps, { intent: "task" }))
+
+    const composerPrompt = order.find((c) => c.agentName === "manager-composer")?.text ?? ""
+    expect(composerPrompt).toContain("golang-pro")
+    expect(composerPrompt).toContain("typescript-pro")
+    expect(result.log.stages.map((s) => s.result)).toEqual(["ran", "ran"])
+  })
+
+  test("catalog retrieval timeout: a hung listSpecialists also degrades within its own short deadline", async () => {
+    const { ops } = makeSessionOps({ explore: "recon", "manager-composer": "brief" })
+    const deps = makeDeps({
+      sessionOps: ops,
+      listSpecialists: () => Effect.never,
+      catalogDeadlineMs: 20,
+    })
+    const start = Date.now()
+    const result = await run(OrchestrationHandoff.runInterception(deps, { intent: "task" }))
+    expect(Date.now() - start).toBeLessThan(1000)
+    expect(result.log.stages.map((s) => s.result)).toEqual(["ran", "ran"])
+  })
+
   test("a fresh ranked catalog orders the Composer catalog by the retrieval ranking", async () => {
     const { ops, order } = makeSessionOps({ explore: "recon", "manager-composer": "brief" })
     const deps = makeDeps({
