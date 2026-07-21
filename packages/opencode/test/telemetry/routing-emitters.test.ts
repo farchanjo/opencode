@@ -30,6 +30,8 @@ import {
   emitFanoutAdmission,
   emitOrchestrationWorker,
   emitCompletionGate,
+  orchestrationHandoffSignal,
+  emitOrchestrationHandoff,
 } from "@/routing/application/telemetry-emitters"
 
 // The CLOSED structural attribute allow-list (mirrors the CUE `#EmissionAttributeKey`).
@@ -158,6 +160,36 @@ describe("pure attribute mappers (allow-list + content-free)", () => {
     expect(signal.kind).toBe("traces")
     expect(signal.attributes.value).toBeUndefined()
     expect(signal.attributes["budget.turns_used"]).toBe(3)
+  })
+
+  test("Feature 053 — orchestrationHandoffSignal is content-free (enums/bools/counts only)", () => {
+    const signal = orchestrationHandoffSignal({
+      synthetic: false,
+      eligible: true,
+      stages: [
+        { stage: "data", result: "ran", durationMs: 12 },
+        { stage: "composer", result: "degraded", durationMs: 34 },
+      ],
+      tally: { repaired: 1, flagged: 2 },
+    })
+    expect(signal.kind).toBe("traces")
+    expect(signal.name).toBe("orchestration.handoff")
+    // Every attribute is a bounded enum, boolean, or count — never subtask/brief text.
+    for (const value of Object.values(signal.attributes)) {
+      if (typeof value === "string") expect(["ran", "degraded", "skipped"]).toContain(value)
+      else expect(["boolean", "number"]).toContain(typeof value)
+    }
+    expect(signal.attributes["orchestration.handoff_data_result"]).toBe("ran")
+    expect(signal.attributes["orchestration.handoff_composer_result"]).toBe("degraded")
+    expect(signal.attributes["orchestration.handoff_repaired"]).toBe(1)
+    expect(signal.attributes["orchestration.handoff_flagged"]).toBe(2)
+  })
+
+  test("Feature 053 — emitOrchestrationHandoff is a no-op before any pipeline is composed", () => {
+    expect(isTelemetryArmed()).toBe(false)
+    expect(() =>
+      emitOrchestrationHandoff({ synthetic: false, eligible: false, stages: [] }),
+    ).not.toThrow()
   })
 
   test("an unknown denied reason collapses to a sentinel, never free-form text", () => {
