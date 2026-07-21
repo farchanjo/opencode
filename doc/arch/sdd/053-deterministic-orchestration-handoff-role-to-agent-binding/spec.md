@@ -2,7 +2,7 @@
 id: 019f86df-31e0-7530-b1fd-120271e4dcac
 number: 053
 slug: deterministic-orchestration-handoff-role-to-agent-binding
-status: draft
+status: analyzed
 created_at: 2026-07-21T22:50:02.080742Z
 ---
 # Feature Specification: Deterministic Orchestration Handoff Role To Agent Binding
