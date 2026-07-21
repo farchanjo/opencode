@@ -83,12 +83,38 @@ export function orchestrationChildToolRules(): ReadonlyArray<{
   ]
 }
 
-/** Feature 042 / Phase 2 (FR-E3, FR-B3) — when hierarchy routing is active the
- * effective delegation ceiling is the MIN of the legacy `subagent_depth` backstop
- * and the hierarchy `max_depth`, so a config can never widen delegation beyond the
- * engine invariant; the legacy path is unchanged when hierarchy routing is off. */
-export function reconcileDepthCeiling(legacyCeiling: number, hierarchyMaxDepth?: number): number {
-  return hierarchyMaxDepth === undefined ? legacyCeiling : Math.min(legacyCeiling, hierarchyMaxDepth)
+/** The legacy default subagent-delegation ceiling when `subagent_depth` is unset
+ * and hierarchy routing is off (one nested subagent). */
+export const LEGACY_DEPTH_CEILING = 1
+
+/**
+ * Feature 042 / Phase 2 (FR-E3, FR-B3) + Feature 048 (FR5) — the effective
+ * delegation ceiling the `depth >= ceiling` guard enforces.
+ *
+ * `subagentDepth` is the OPERATOR-configured `subagent_depth` (or `undefined` when
+ * unset — the distinction matters). `hierarchyMaxDepth` is present only when this
+ * spawn was hierarchy-routed.
+ *
+ *   - Off the hierarchy path (`hierarchyMaxDepth === undefined`): the legacy
+ *     ceiling — the configured value or the default `1`. Unchanged, byte-identical.
+ *   - Heuristic hierarchy path (`forceManager === false`): the MIN of the legacy
+ *     ceiling and `hierarchyMaxDepth`, so a config can never widen delegation
+ *     beyond the engine invariant. With `subagent_depth` unset this is
+ *     `min(1, max_depth) = 1` — the heuristic Manager -> Worker hop stays blocked,
+ *     exactly as today.
+ *   - Force-manager path (`forceManager === true`): when `subagent_depth` is UNSET
+ *     the ceiling HONORS `hierarchyMaxDepth` (so Architect(0) -> Manager(1) ->
+ *     Worker(2) passes); an explicitly configured `subagent_depth` still reconciles
+ *     to the MIN of the two (explicit config keeps restricting).
+ */
+export function reconcileDepthCeiling(
+  subagentDepth: number | undefined,
+  hierarchyMaxDepth?: number,
+  forceManager = false,
+): number {
+  if (hierarchyMaxDepth === undefined) return subagentDepth ?? LEGACY_DEPTH_CEILING
+  if (forceManager && subagentDepth === undefined) return hierarchyMaxDepth
+  return Math.min(subagentDepth ?? LEGACY_DEPTH_CEILING, hierarchyMaxDepth)
 }
 
 interface HierarchyDispatchExtra {
@@ -96,6 +122,38 @@ interface HierarchyDispatchExtra {
   readonly lineageStub: RoutingHierarchy.DispatchLineageStub
   readonly denyExecutionTools: boolean
   readonly maxDepth: number
+  /** Feature 048 — true only under the opt-in `force_manager` mode: it lets the
+   * depth ceiling honor `hierarchy.max_depth` (so the Manager -> Worker hop passes)
+   * and gates the Manager persona injection. `false` in heuristic mode. */
+  readonly forceManager: boolean
+}
+
+/**
+ * Feature 048 (FR8) — the Manager persona prelude, prepended to a manager-role
+ * spawn's task prompt under `force_manager`. It instructs the Manager tier to
+ * decompose the Architect's task, delegate to Workers via `task`, critically
+ * aggregate their results, and return a consolidated analysis to the Architect.
+ * It is injected ONLY in force_manager mode; heuristic spawns are byte-identical.
+ */
+export const MANAGER_PERSONA_PRELUDE = [
+  "You are the MANAGER tier of a three-tier Architect -> Manager -> Worker orchestration.",
+  "Your job is to ORCHESTRATE, not to execute the work yourself:",
+  "1. Decompose the Architect's task below into independent, well-scoped Worker subtasks.",
+  "2. Dispatch each subtask by calling the `task` tool, delegating it to a Worker.",
+  "3. Collect every Worker's result and critically aggregate them — reconcile conflicts,",
+  "   drop unsupported claims, and note gaps; do not merely concatenate.",
+  "4. Return ONE consolidated analysis to the Architect.",
+  "Delegate execution to Workers; keep your own turn to planning, dispatch, and synthesis.",
+  "",
+  "--- Architect task ---",
+].join("\n")
+
+/** Prepend the Manager persona prelude to a manager-role spawn's prompt under
+ * force_manager; return the prompt unchanged for every other role/mode. Pure and
+ * unit-testable so the injection boundary is verifiable in isolation. */
+export function applyManagerPersona(prompt: string, childRole: string, forceManager: boolean): string {
+  if (!forceManager || childRole !== "manager") return prompt
+  return `${MANAGER_PERSONA_PRELUDE}\n${prompt}`
 }
 const BACKGROUND_DESCRIPTION = [
   "Background mode: background=true launches the subagent asynchronously and returns immediately.",
@@ -188,8 +246,11 @@ export const TaskTool = Tool.define(
         visited.add(current.parentID)
         current = yield* sessions.get(current.parentID)
       }
-      const legacyCeiling = cfg.subagent_depth ?? 1
-      const depthCeiling = reconcileDepthCeiling(legacyCeiling, hierarchyDispatch?.maxDepth)
+      const depthCeiling = reconcileDepthCeiling(
+        cfg.subagent_depth,
+        hierarchyDispatch?.maxDepth,
+        hierarchyDispatch?.forceManager ?? false,
+      )
       if (depth >= depthCeiling) {
         return yield* Effect.fail(
           new Error(
@@ -318,7 +379,15 @@ export const TaskTool = Tool.define(
       if (!ops) return yield* Effect.fail(new Error("TaskTool requires promptOps in ctx.extra"))
 
       const runTask = Effect.fn("TaskTool.runTask")(function* () {
-        const parts = yield* ops.resolvePromptParts(params.prompt)
+        // Feature 048 (FR8) — under force_manager, prepend the Manager persona to a
+        // manager-role spawn's prompt so it decomposes -> dispatches Workers ->
+        // aggregates. Inert (identity) for every other role/mode (byte-identical).
+        const promptText = applyManagerPersona(
+          params.prompt,
+          hierarchyDispatch?.lineageStub.child_role ?? "",
+          hierarchyDispatch?.forceManager ?? false,
+        )
+        const parts = yield* ops.resolvePromptParts(promptText)
         const result = yield* ops.prompt({
           messageID: MessageID.ascending(),
           sessionID: nextSession.id,

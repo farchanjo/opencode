@@ -400,6 +400,18 @@ const layer = Layer.effect(
         yield* events.publish(Session.Event.Error, { sessionID, error: error.toObject() })
         throw error
       }
+      // Feature 048 (FR7) — under force_manager an unresolved tier model is SURFACED
+      // (a visible warning; telemetry was already emitted at the resolver) rather
+      // than silently inherited. It is NON-blocking: the spawn proceeds on the
+      // parent (Architect) model so a missing pool model never stops the turn — the
+      // warning only makes its cause visible. The message names the tier role and
+      // the typed reason; it carries no model id, secret, or task text.
+      if (hierarchyRouted?.kind === "degraded") {
+        yield* Effect.logWarning("hierarchy tier degraded to parent model", {
+          childRole: hierarchyRouted.childRole,
+          reason: hierarchyRouted.reason,
+        })
+      }
       const routed = hierarchyRouted?.kind === "route" ? hierarchyRouted : undefined
       const taskModel = task.model
         ? yield* getModel(task.model.providerID, task.model.modelID, sessionID)
@@ -486,6 +498,9 @@ const layer = Layer.effect(
                     lineageStub: routed.lineageStub,
                     denyExecutionTools: !routed.executionAllowed,
                     maxDepth: routed.maxDepth,
+                    // Feature 048 — honors hierarchy.max_depth in the depth guard and
+                    // gates the Manager persona injection (force_manager only).
+                    forceManager: routed.forceManager,
                   },
                 }
               : {}),

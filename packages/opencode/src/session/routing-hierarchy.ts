@@ -39,7 +39,7 @@ import { ModelV2 } from "@opencode-ai/core/model"
 import type { Budget } from "@opencode-ai/schema/routing/budget"
 import type { Enums } from "@opencode-ai/schema/routing/enums"
 import type { Events } from "@opencode-ai/schema/routing/events"
-import type { RoutingConfig } from "@opencode-ai/schema/routing/config"
+import { RoutingConfig, orchestrationModeOf } from "@opencode-ai/schema/routing/config"
 import { createConfigAdapter } from "@/routing/adapters/outbound/config-adapter"
 import { createTaskAnalyzer } from "@/routing/application/task-analyzer"
 import { HierarchyDispatcher } from "@/routing/domain/hierarchy-dispatcher"
@@ -143,6 +143,12 @@ export interface HierarchyRouteDecision {
    * never recomputed at the seam (FR-C1, FR-C3). Drops below `max_workers` as the
    * parent session's recorded consumption spends the cost/token headroom. */
   readonly fanoutGranted: number
+  /** Feature 048 — true only under the opt-in `force_manager` orchestration mode.
+   * Threaded to `tool/task.ts` so (a) the depth ceiling honors `hierarchy.max_depth`
+   * when `subagent_depth` is unset (so the Manager -> Worker hop passes) and (b) the
+   * Manager persona prelude is injected on a manager-role spawn. Always `false` in
+   * heuristic mode, keeping that path byte-identical. */
+  readonly forceManager: boolean
   readonly lineageStub: DispatchLineageStub
 }
 
@@ -151,7 +157,18 @@ export interface HierarchyBlockedDecision {
   readonly rejection: HierarchyDispatcher.DispatchRejection
 }
 
-export type HierarchyDispatchDecision = HierarchyRouteDecision | HierarchyBlockedDecision
+/** Feature 048 (FR7) — the force_manager-only SURFACED degrade: an engine-admitted
+ * tier whose role-pool model failed to resolve. The seam surfaces a visible warning
+ * (and telemetry is already emitted) then falls back to parent inheritance — never a
+ * silent inheritance, never a hard block. Heuristic mode never produces this (it
+ * returns `undefined` and inherits silently, byte-identical). */
+export interface HierarchyDegradedDecision {
+  readonly kind: "degraded"
+  readonly reason: "model_unresolved"
+  readonly childRole: Enums.HierarchyRole
+}
+
+export type HierarchyDispatchDecision = HierarchyRouteDecision | HierarchyBlockedDecision | HierarchyDegradedDecision
 
 export type ResolveHierarchyDispatch = (
   input: ResolveHierarchyDispatchInput,
@@ -192,8 +209,19 @@ interface Classification {
 /** Deterministic, zero-LLM classification of a spawn's CHILD role from the
  * Feature 001 analyzer signals. A Manager parent forces a Worker child (engine
  * legality); the thresholds govern only the Architect edge. Exported as a small
- * pure function so the boundary is unit-testable and tunable in one place. */
-export function classifyChildRole(parentRole: Enums.HierarchyRole, taskText: string, scope: Budget.Scope): Classification {
+ * pure function so the boundary is unit-testable and tunable in one place.
+ *
+ * Feature 048 — under `force_manager` the Architect edge ALWAYS yields a Manager,
+ * regardless of the analyzer signals; the analyzer-derived `requestedFanout` is
+ * preserved for F043 budget admission (the mode changes the ROLE, never the budget
+ * math). Non-architect edges stay Worker leaves in both modes. `heuristic`
+ * (default) skips the force branch entirely, so it is byte-identical to today. */
+export function classifyChildRole(
+  parentRole: Enums.HierarchyRole,
+  taskText: string,
+  scope: Budget.Scope,
+  mode: RoutingConfig.OrchestrationMode = "heuristic",
+): Classification {
   const analysis = createTaskAnalyzer().analyze({ taskDescription: taskText, scope })
   const workUnits = analysis.inputs.structure.independent_units
   const domains = analysis.inputs.structure.domain_count
@@ -201,8 +229,11 @@ export function classifyChildRole(parentRole: Enums.HierarchyRole, taskText: str
   const requestedFanout = parallel ? Math.max(workUnits, WORK_UNIT_THRESHOLD) : 1
 
   // A Manager parent may only ever create a Worker (LEGAL_CHILDREN); only the
-  // Architect edge consults the fan-out heuristic.
+  // Architect edge consults the fan-out heuristic / force-manager rule.
   if (parentRole !== "architect") return { childRole: "worker", requestedFanout: 1 }
+
+  // Feature 048 — force_manager makes the Architect edge unconditionally a Manager.
+  if (mode === "force_manager") return { childRole: "manager", requestedFanout: Math.max(requestedFanout, 1) }
 
   const managerWarranted = (workUnits >= WORK_UNIT_THRESHOLD && domains >= DOMAIN_THRESHOLD) || requestedFanout > FANOUT_FLOOR
   return { childRole: managerWarranted ? "manager" : "worker", requestedFanout: managerWarranted ? requestedFanout : 1 }
@@ -377,9 +408,19 @@ export function createHierarchyDispatchResolver(deps: HierarchyResolveDeps): Res
 
     const hierarchy = cfg.enforcement.hierarchy
     const budget = cfg.enforcement.budget
+    // Feature 048 — the opt-in orchestration mode (absent → `heuristic`). Gated by
+    // the same activation check above, so `force_manager` engages ONLY when Smart
+    // Routing is enabled AND the operator selected it; otherwise `heuristic`.
+    const forceManager = orchestrationModeOf(hierarchy) === "force_manager"
 
-    // 2) Classify the child role (zero-LLM, deterministic analyzer signals).
-    const { childRole, requestedFanout } = classifyChildRole(input.parentRole, input.taskText, input.scope)
+    // 2) Classify the child role (zero-LLM, deterministic analyzer signals). Under
+    // `force_manager` the Architect edge is unconditionally a Manager.
+    const { childRole, requestedFanout } = classifyChildRole(
+      input.parentRole,
+      input.taskText,
+      input.scope,
+      forceManager ? "force_manager" : "heuristic",
+    )
 
     // 3) Legality + depth + fan-out admission via the pure engine (never
     // recomputed at the seam). The parent session's recorded consumption drives
@@ -436,8 +477,8 @@ export function createHierarchyDispatchResolver(deps: HierarchyResolveDeps): Res
     // `undefined` (parent inheritance) — never a block.
     const model = await resolveRoleModel(cfg, childRole, input.mainContextModel, deps, run)
     if (!model) {
-      // FIX 5 — an engine-ADMITTED dispatch that cannot resolve a role model
-      // degrades to parent inheritance; still emit a `hierarchy.fanout` observation
+      // An engine-ADMITTED dispatch that cannot resolve a role model degrades to
+      // parent inheritance; still emit a `hierarchy.fanout` observation
       // (admitted=false, `model_unresolved`) so every admission decision is visible.
       if (isTelemetryArmed()) {
         emitFanoutAdmission({
@@ -449,6 +490,10 @@ export function createHierarchyDispatchResolver(deps: HierarchyResolveDeps): Res
           deniedReason: "model_unresolved",
         })
       }
+      // Feature 048 (FR7) — under `force_manager` SURFACE the unresolved tier as a
+      // typed `degraded` decision the seam warns on before inheriting the parent
+      // model. Heuristic keeps the silent `undefined` fallback (byte-identical).
+      if (forceManager) return { kind: "degraded", reason: "model_unresolved", childRole }
       return undefined
     }
 
@@ -473,6 +518,7 @@ export function createHierarchyDispatchResolver(deps: HierarchyResolveDeps): Res
       executionAllowed: hierarchy.orchestration_only ? outcome.envelope.executionAllowed : true,
       maxDepth: effectiveMaxDepth,
       fanoutGranted: outcome.envelope.fanout.fanout_granted,
+      forceManager,
       lineageStub: {
         parent_session_id: outcome.envelope.lineage.parent_session_id,
         parent_role: outcome.envelope.lineage.parent_role,
