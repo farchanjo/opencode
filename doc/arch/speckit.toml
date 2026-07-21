@@ -544,6 +544,18 @@ specScopeGlobs = [
   #     engine + RoutingSessionState decision-reference store this feature composes/consumes.
   # Genuinely new implement path (session-layer regression test):
   "packages/opencode/test/session/**",                # session-layer Smart Routing resolver tests (FR)
+
+  # Feature 041 — Silence the MCP tool-schema unknown-format warning flood.
+  #   Inject a custom MCP JSON-schema validator that recognizes the schemars
+  #   unsigned-integer formats (uint/uint8/uint16/uint32/uint64) as no-op, so the
+  #   SDK default Ajv no longer logs `unknown format "uintN"` once per tool-schema
+  #   property on every MCP connect. The two touched source seams are ALREADY in
+  #   scope and are NOT re-added (traceability only):
+  #   packages/opencode/src/mcp/** (Feature 008 block) — the new schema-validator.ts
+  #     factory and the createClient() wiring in mcp/index.ts;
+  #   packages/opencode/test/mcp/** (Feature 008 block) — the validator unit test.
+  # Genuinely new implement path (the direct ajv/ajv-formats dep the custom Ajv needs):
+  "packages/opencode/package.json",                   # add ajv + ajv-formats as direct deps for the custom validator (FR)
 ]
 
 # Waivers for intentional near-empty files (warnings only; errors are never
