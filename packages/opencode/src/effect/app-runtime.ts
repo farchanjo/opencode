@@ -108,6 +108,14 @@ function composeSemanticRetrieval(info: ConfigV1.Info): SemanticRetrieval.Interf
  * Feature 051 (FR9) — the live `SemanticRetrieval.Service` node. It REPLACES the shipped degraded
  * `SemanticRetrieval.node` everywhere in the graph (via the `AppNodeBuilderV1.build` replacement
  * below, keyed by the shared service tag), mirroring the `InstanceStore` bootstrap replacement.
+ *
+ * The effective config is resolved PER CALL, never at layer-build time: `config.get()` is
+ * `InstanceState`-backed and requires an `InstanceRef` in the CALLER's context, which is absent
+ * when this layer is memoized in the shared `AppRuntime` scope. Reading it at build time died
+ * `InstanceRef not provided` and broke every InstanceStore bootstrap (and thus the operator CLI).
+ * Each surface therefore reads config in the request fiber (session/turn), where `InstanceRef` is
+ * provided, and composes the live facade for that instance — also correct for multiple instances
+ * (distinct directories) sharing the one runtime, since `config.get()` is per-instance.
  */
 const SemanticRetrievalLive = LayerNode.make({
   service: SemanticRetrieval.Service,
@@ -115,7 +123,14 @@ const SemanticRetrievalLive = LayerNode.make({
     SemanticRetrieval.Service,
     Effect.gen(function* () {
       const config = yield* Config.Service
-      return SemanticRetrieval.Service.of(composeSemanticRetrieval(yield* config.get()))
+      const withPort = <A, E>(use: (port: SemanticRetrieval.Interface) => Effect.Effect<A, E>) =>
+        Effect.flatMap(config.get(), (info) => use(composeSemanticRetrieval(info)))
+      return SemanticRetrieval.Service.of({
+        retrieveAgents: (input) => withPort((port) => port.retrieveAgents(input)),
+        retrieveSkills: (input) => withPort((port) => port.retrieveSkills(input)),
+        retrieveTools: (input) => withPort((port) => port.retrieveTools(input)),
+        retrieveSkillChunks: (input) => withPort((port) => port.retrieveSkillChunks(input)),
+      })
     }),
   ),
   deps: [Config.node],

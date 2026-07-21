@@ -37,6 +37,30 @@ import type { IndexPort } from "@opencode-ai/protocol/semantic/ports"
 import type { CollectionKind, IndexError } from "@opencode-ai/protocol/semantic/commands"
 
 /**
+ * Bounded, secret-free stringification of an unknown rejection cause for a `details.reason`.
+ * An `Error` (including an Effect `FiberFailure`) yields its `message`; a typed/tagged error
+ * object (`{ _tag | type | message | reason }`) yields those fields rather than the opaque
+ * `[object Object]` that `String(cause)` produced — the shape that hid the real skill-chunk
+ * spool/embed failure. Any other value falls back to `String`.
+ */
+function describeCause(cause: unknown): string {
+  if (cause instanceof Error) return cause.message
+  if (cause !== null && typeof cause === "object") {
+    const record = cause as Record<string, unknown>
+    const parts = ["_tag", "type", "reason", "message"]
+      .map((key) => (typeof record[key] === "string" ? `${key}=${record[key] as string}` : undefined))
+      .filter((part): part is string => part !== undefined)
+    if (parts.length > 0) return parts.join(" ")
+    try {
+      return JSON.stringify(cause)
+    } catch {
+      return String(cause)
+    }
+  }
+  return String(cause)
+}
+
+/**
  * The Milvus endpoint config (Feature 006/009 shape) the composition root resolves.
  * The credential is a `SecretRef` only — never a plaintext secret (FR18, Security).
  */
@@ -196,8 +220,7 @@ export function createMilvusIndexPort(deps: MilvusIndexBindingDeps): IndexPort {
         // Carry the actual (bounded, secret-free) cause so a collect failure — a missing embedding
         // provider, an unsupported collection, or a builder/embed error — is diagnosable (Feature 050).
         catch: (cause): IndexError => {
-          const message = cause instanceof Error ? cause.message : String(cause)
-          return milvusUnavailable(`live-doc source failed for ${collection}: ${message.slice(0, 160)}`)
+          return milvusUnavailable(`live-doc source failed for ${collection}: ${describeCause(cause).slice(0, 160)}`)
         },
       })
       const indexed = full
