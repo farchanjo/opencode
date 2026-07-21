@@ -36,6 +36,7 @@ import { createRoutingConfigureBackend } from "@/routing/adapters/outbound/confi
 import {
   createCandidateSource,
   createCatalogAdapter,
+  createCatalogModelValidator,
   type AgentResolver,
   type CatalogCandidateService,
 } from "@/routing/adapters/outbound/catalog-adapter"
@@ -352,10 +353,14 @@ export async function createLiveOperatorStack(input: CreateLiveOperatorStackInpu
       ),
   }
 
+  const catalogAdapter = createCatalogAdapter({ catalog: catalogCandidates })
   const candidateSource = createCandidateSource({
-    catalog: createCatalogAdapter({ catalog: catalogCandidates }),
+    catalog: catalogAdapter,
     agents: agentResolver,
   })
+  // Feature 038 — the same catalog resolution backs the pools.set write-time
+  // validator, so a role-pool id is accepted iff it would resolve to a candidate.
+  const poolsCatalogValidator = createCatalogModelValidator(catalogAdapter)
 
   const decisionsBaseDir = path.join(Global.Path.state, "routing-decisions")
   await mkdir(decisionsBaseDir, { recursive: true })
@@ -824,7 +829,7 @@ export async function createLiveOperatorStack(input: CreateLiveOperatorStackInpu
     backend: BudgetBackendLive.createLiveBudgetBackend({ config: store.config }),
   })
   const poolsWiring = PoolsStackWiring.createPoolsDomainWiring({
-    backend: PoolsBackendLive.createLivePoolsBackend({ config: store.config }),
+    backend: PoolsBackendLive.createLivePoolsBackend({ config: store.config, catalog: poolsCatalogValidator }),
   })
 
   const domainPorts = wireDomainPorts(

@@ -15,6 +15,7 @@ import { createMemoryConfigPort } from "@/operator/adapters"
 import { INITIAL_CONFIG_VERSION } from "@/operator/application/ports/config-port"
 import type { ConfigPort } from "@/operator/application/ports/config-port"
 import { createLivePoolsBackend } from "@/operator/pools/backend-live"
+import { createCatalogAdapter, createCatalogModelValidator } from "@/routing/adapters/outbound/catalog-adapter"
 import { PoolsCommandPort } from "@/operator/pools/pools-command-port"
 import type { PoolsAuditEvent } from "@/operator/pools/pools-port"
 import type { OperatorPrincipal } from "@opencode-ai/protocol/pools/commands"
@@ -28,6 +29,36 @@ const CLOCK = () => 1_721_260_800_000
 
 function backendOf(config: ConfigPort = createMemoryConfigPort()) {
   return createLivePoolsBackend({ config, clock: CLOCK })
+}
+
+// Feature 038 — the REAL catalog validator over a faithful two-provider catalog:
+// openai serves the bare `gpt-5` / `gpt-5.6-sol-fast`, openrouter re-exposes the
+// within-provider id `openai/gpt-oss-120b`.
+const CATALOG_VALIDATOR = createCatalogModelValidator(
+  createCatalogAdapter({
+    catalog: {
+      listModels: async () => [
+        { modelId: "gpt-5", providerId: "openai", status: "active", enabled: true, tools: true },
+        { modelId: "gpt-5.6-sol-fast", providerId: "openai", status: "active", enabled: true, tools: true },
+        { modelId: "openai/gpt-oss-120b", providerId: "openrouter", status: "active", enabled: true, tools: true },
+      ],
+    },
+  }),
+)
+
+function validatingBackendOf(config: ConfigPort = createMemoryConfigPort()) {
+  return createLivePoolsBackend({ config, clock: CLOCK, catalog: CATALOG_VALIDATOR })
+}
+
+// Feature 038 (defect fix) — the REAL validator over a transiently EMPTY catalog:
+// `listModels()` SUCCEEDS but returns zero models (providers not loaded/authed yet,
+// or a provider-reload race). Every id would resolve `not_found_in_catalog`.
+const EMPTY_CATALOG_VALIDATOR = createCatalogModelValidator(
+  createCatalogAdapter({ catalog: { listModels: async () => [] } }),
+)
+
+function emptyCatalogBackendOf(config: ConfigPort = createMemoryConfigPort()) {
+  return createLivePoolsBackend({ config, clock: CLOCK, catalog: EMPTY_CATALOG_VALIDATOR })
 }
 
 const rolePoolsOf = (payload: unknown) => (payload as RoutingConfig.Info).models.role_pools
@@ -82,6 +113,93 @@ describe("T008 — set/reset are validated mutation plans over the routing autho
     )
     expect(failure._tag).toBe("Failure")
     if (failure._tag === "Failure") expect(JSON.stringify(failure.cause.toJSON())).toContain("unauthorized")
+  })
+})
+
+describe("Feature 038 — pools.set validates role-pool ids against the catalog", () => {
+  test("rejects a bare id that matches no catalog model, naming the offender, without writing", async () => {
+    const config = createMemoryConfigPort()
+    const failure = await exit(
+      validatingBackendOf(config).planSet({
+        bindings: [{ role: "worker", models: ["totally-not-a-model"] }],
+        expectedVersion: INITIAL_CONFIG_VERSION,
+        principal: OPERATOR,
+      }),
+    )
+    expect(failure._tag).toBe("Failure")
+    if (failure._tag === "Failure") {
+      const dump = JSON.stringify(failure.cause.toJSON())
+      expect(dump).toContain("invalid_argument")
+      expect(dump).toContain("totally-not-a-model")
+    }
+    expect(await config.get("routing")).toBeNull()
+  })
+
+  test("rejects an unresolvable provider-qualified id (unknown provider)", async () => {
+    const failure = await exit(
+      validatingBackendOf().planSet({
+        bindings: [{ role: "worker", models: ["unknown-provider/nope"] }],
+        expectedVersion: INITIAL_CONFIG_VERSION,
+        principal: OPERATOR,
+      }),
+    )
+    expect(failure._tag).toBe("Failure")
+    if (failure._tag === "Failure") expect(JSON.stringify(failure.cause.toJSON())).toContain("unknown-provider/nope")
+  })
+
+  test("ACCEPTS a valid provider-qualified id (resolves per Feature 038)", async () => {
+    const plan = await run(
+      validatingBackendOf().planSet({
+        bindings: [{ role: "worker", models: ["openai/gpt-5.6-sol-fast"] }],
+        expectedVersion: INITIAL_CONFIG_VERSION,
+        principal: OPERATOR,
+      }),
+    )
+    expect(rolePoolsOf(plan.apply(null)).worker).toEqual(["openai/gpt-5.6-sol-fast"])
+  })
+
+  test("ACCEPTS the nested provider-qualified id", async () => {
+    const plan = await run(
+      validatingBackendOf().planSet({
+        bindings: [{ role: "worker", models: ["openrouter/openai/gpt-oss-120b"] }],
+        expectedVersion: INITIAL_CONFIG_VERSION,
+        principal: OPERATOR,
+      }),
+    )
+    expect(rolePoolsOf(plan.apply(null)).worker).toEqual(["openrouter/openai/gpt-oss-120b"])
+  })
+
+  test("an EMPTY (transiently cold) catalog degrades to unavailable, NEVER false-rejects a valid set", async () => {
+    // The BLOCKED defect: a successful-but-empty provider read made the validator
+    // flag EVERY id as unknown, so a fully-valid pools.set was rejected with
+    // invalid_argument while the catalog was cold. It must degrade to `unavailable`
+    // (the same outcome a real catalog outage produces), NOT reject the write.
+    const config = createMemoryConfigPort()
+    const failure = await exit(
+      emptyCatalogBackendOf(config).planSet({
+        bindings: [{ role: "worker", models: ["gpt-5"] }],
+        expectedVersion: INITIAL_CONFIG_VERSION,
+        principal: OPERATOR,
+      }),
+    )
+    expect(failure._tag).toBe("Failure")
+    if (failure._tag === "Failure") {
+      const dump = JSON.stringify(failure.cause.toJSON())
+      expect(dump).toContain("unavailable")
+      expect(dump).not.toContain("invalid_argument")
+    }
+    expect(await config.get("routing")).toBeNull()
+  })
+
+  test("without an injected catalog, pools.set does NOT validate (pre-038 behavior preserved)", async () => {
+    const plan = await run(
+      backendOf().planSet({
+        bindings: [{ role: "worker", models: ["totally-not-a-model"] }],
+        expectedVersion: INITIAL_CONFIG_VERSION,
+        principal: OPERATOR,
+      }),
+    )
+    expect(rolePoolsOf(plan.apply(null)).worker).toEqual(["totally-not-a-model"])
   })
 })
 

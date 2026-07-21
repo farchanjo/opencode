@@ -32,6 +32,7 @@ import {
   DEFAULT_ROUTING_CONFIG,
   type RoutingConfigScope,
 } from "@/routing/adapters/outbound/config-adapter"
+import type { CatalogModelValidator } from "@/routing/adapters/outbound/catalog-adapter"
 import { INITIAL_CONFIG_VERSION } from "@/operator/application/ports/config-port"
 import type { ConfigPort, ConfigVersion } from "@/operator/application/ports/config-port"
 import type { OperatorMutationPlan } from "@/operator/application/handler"
@@ -72,6 +73,13 @@ export interface LivePoolsBackendDeps {
   readonly config: ConfigPort
   /** Monotonic millisecond clock stamped onto each write/read (default `Date.now`). */
   readonly clock?: () => number
+  /**
+   * Feature 038 — the live catalog validator. When present, `pools.set` REJECTS
+   * any role-pool model id that resolves to no known catalog model (bare or the
+   * standard `provider/model` provider-qualified form). OPTIONAL and omitted by
+   * default so a catalog-less construction keeps the pre-038 write behavior.
+   */
+  readonly catalog?: CatalogModelValidator
 }
 
 type RolePoolRecord = RoutingConfig.Info["models"]["role_pools"]
@@ -128,6 +136,13 @@ function firstBindingDefect(bindings: RolePoolBindingList): PoolsError | undefin
       return { type: "invalid_argument", field: "models", reason: `role-pool ${binding.role} has an empty model id` }
   }
   return undefined
+}
+
+/** Deduped model ids across every binding — the set validated against the catalog (FR, Feature 038). */
+function distinctModelIds(bindings: RolePoolBindingList): string[] {
+  const seen = new Set<string>()
+  for (const binding of bindings) for (const model of binding.models) seen.add(model)
+  return [...seen]
 }
 
 export function createLivePoolsBackend(deps: LivePoolsBackendDeps): PoolsBackend {
@@ -208,11 +223,40 @@ export function createLivePoolsBackend(deps: LivePoolsBackendDeps): PoolsBackend
       return { authority: AUTHORITY[scope], apply }
     })
 
-  const planSet = (input: PoolsSetInput, requestScopeKind?: string): Effect.Effect<OperatorMutationPlan, PoolsError> => {
-    const defect = firstBindingDefect(input.bindings)
-    if (defect !== undefined) return Effect.fail(defect)
-    return planWrite(input, toRolePoolRecord(input.bindings), scopeForRequest(requestScopeKind))
-  }
+  /**
+   * Feature 038 — reject any role-pool model id that resolves to no known catalog
+   * model (a mistyped or unresolvable id), naming the offender, so an
+   * unresolvable pool never persists to silently degrade a live session. A
+   * provider-qualified id that DOES resolve passes. A no-op when no catalog
+   * validator is injected (pre-038 behavior).
+   *
+   * A catalog outage OR a transiently-empty catalog (a SUCCESSFUL but empty
+   * provider read — `unknownModelIds` throws for the empty case) degrades to
+   * `unavailable`, NEVER `invalid_argument`: we cannot validate, so we do not
+   * false-reject a valid write while the catalog is cold.
+   */
+  const validateAgainstCatalog = (bindings: RolePoolBindingList): Effect.Effect<void, PoolsError> =>
+    Effect.gen(function* () {
+      if (deps.catalog === undefined) return
+      const unknown = yield* Effect.tryPromise({
+        try: () => deps.catalog!.unknownModelIds(distinctModelIds(bindings)),
+        catch: (cause): PoolsError => unavailable(`catalog validation unavailable: ${String(cause)}`),
+      })
+      if (unknown.length > 0)
+        return yield* Effect.fail<PoolsError>({
+          type: "invalid_argument",
+          field: "models",
+          reason: `role-pool model(s) ${unknown.join(", ")} resolve to no known catalog model`,
+        })
+    })
+
+  const planSet = (input: PoolsSetInput, requestScopeKind?: string): Effect.Effect<OperatorMutationPlan, PoolsError> =>
+    Effect.gen(function* () {
+      const defect = firstBindingDefect(input.bindings)
+      if (defect !== undefined) return yield* Effect.fail(defect)
+      yield* validateAgainstCatalog(input.bindings)
+      return yield* planWrite(input, toRolePoolRecord(input.bindings), scopeForRequest(requestScopeKind))
+    })
 
   const planReset = (input: PoolsResetInput, requestScopeKind?: string): Effect.Effect<OperatorMutationPlan, PoolsError> =>
     planWrite(input, DEFAULT_ROUTING_CONFIG.models.role_pools, scopeForRequest(requestScopeKind))
