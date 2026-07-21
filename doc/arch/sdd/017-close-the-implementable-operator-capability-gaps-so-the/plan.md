@@ -234,7 +234,11 @@ classes are typed by the ValueObjects in
 `#LiveServerReadResult`, `#McpMutation`, `#McpAuthDisposition`, `#MutationEnvelope`,
 `#SpoolWriterBinding`, `#SpoolReadResult`, `#SpoolAdminEdge`, `#OccurrenceProjection`,
 `#WatchSubscription`, `#MilvusBinding`, `#EditField`, `#EditFieldList`,
-`#EditModalDescriptor`, `#DetailTree`, and the bounded enums).
+`#EditModalDescriptor`, `#DetailTree`, and the bounded enums). The editing-surface
+enums — the per-property input kinds the multi-field edit modal renders, the
+per-verb availability class the grouped menu derives, and the two effective-payload
+renderers (the compact bounded-height status strip vs the detail expand tree) — are
+bound by `enums-tui.cue`.
 
 ## OutputSpool writer state machine
 

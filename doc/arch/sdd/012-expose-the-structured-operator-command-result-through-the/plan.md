@@ -184,7 +184,10 @@ transform over the typed `CommandResult.effective`, typed by the ValueObjects in
 `doc/arch/schemas/operator-result-signal/` (`#StructuredHandledResult`,
 `#PanelProjection`, `#ProjectionList`, `#PickerOption`, `#PickerProjection`) and the
 bounded enums (`#ResultOutcome`, `#ProjectionDomain`, `#ProjectionOutcome`,
-`#PickerSource`, `#PickerState`).
+`#PickerSource`, `#PickerState`). The structured half of the TUI handled result —
+`#StructuredHandledResult`, carrying the typed outcome, the optional effective
+payload (whose absence is representable and not an error) and the version alongside
+the human display on the same `tryHandle` return — is bound by `handled-result.cue`.
 
 ## Projection state machine
 

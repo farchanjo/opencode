@@ -57,7 +57,10 @@ only and never holds management authority of its own.
   `ToolActivityDetail`, `SteerDetail`, `ReconcileDetail`), one `Schema.Struct` per
   vocabulary member, and the closed `LifecycleEvent` `Schema.TaggedUnion("type", ...)`
   over all 26 members, keeping `extend`, `promote`, `steer`, and `handoff` distinct,
-  mirroring `events.cue`/`events-durable.cue`/`events-live.cue` (FR20, FR21).
+  mirroring `events.cue`/`events-durable.cue`/`events-live.cue` — with the live
+  steer, cancel-intent and tool-boundary members (the distinct `extend`/`promote`/
+  `steer`/`handoff` events and the priority tool boundaries that survive coalescing)
+  split into `events-live-control.cue` (FR20, FR21, FR57).
 - [x] T008 [S3] Author `packages/schema/src/lifecycle/process-row.ts` and
   `process-row-parts.ts` composing `RowIdentity`, `RowLineage` (relations/ownership/
   graph), `RowStatus`, `RowProfile` (classification/model), `RowAccounting` (usage/

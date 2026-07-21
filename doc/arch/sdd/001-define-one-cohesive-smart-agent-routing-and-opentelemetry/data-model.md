@@ -539,3 +539,12 @@ authoritative for the routing and telemetry domain code.
   the prompt component binds a single reactive accessor to the honest inactive
   baseline (fallback label only); when the push lands, only that accessor's body
   changes.
+- **CUE data-model mirrors**: the persisted routing aggregates above carry
+  calisthenics-compliant CUE mirrors under `doc/arch/schemas/routing/`. The
+  observed spend measured against a `BudgetPolicy` — `BudgetConsumption` and its
+  throughput/window sub-objects — is bound by `budget-consumption.cue`; the
+  structured decision-model inputs and outputs (`DecisionInputs`, carrying no raw
+  prompts or model text) are bound by `decision-inputs.cue`; the cohesive
+  sub-objects the `RoutingDecision` aggregate root composes are bound by
+  `decision-parts.cue`; and the routing and dispatch members of the
+  `RoutingEvent` union are bound by `events-routing.cue`.

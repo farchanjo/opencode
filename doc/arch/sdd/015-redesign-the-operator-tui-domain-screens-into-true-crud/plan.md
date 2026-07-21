@@ -219,7 +219,11 @@ entity-list projection are typed by the ValueObjects in
 `#ViewModal`, `#ViewNode`, `#EntityListScreen`, `#EntityRow`, `#EntityAction`, and
 the bounded enums `#OperatorDomain`, `#ScreenNode`, `#SectionKind`,
 `#StatusRenderer`, `#ControlKind`, `#ToggleState`, `#TriState`, `#FieldInput`,
-`#ModalStatus`, `#EntityVerb`, `#EntityKind`).
+`#ModalStatus`, `#EntityVerb`, `#EntityKind`). The entity-CRUD projection for the
+collection domains (jobs, semantic providers/models, MCP servers) — the
+`#EntityListScreen`, its `#EntityRow` rows and the per-entity `#EntityAction` verbs
+that drill in (create, edit, delete, enable/disable, reschedule, rotate-secret,
+connect/disconnect) — is bound by `entity-crud.cue`.
 
 ## Screen lifecycle state machine
 

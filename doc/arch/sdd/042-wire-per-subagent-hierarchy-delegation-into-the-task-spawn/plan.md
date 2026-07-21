@@ -123,7 +123,9 @@ mirroring Feature 037).
   - **Escalation reuse (FR-D2).** Expose a thin `escalateWorkerToManager(...)` wrapper
     over `HierarchyDispatcher.planEscalation` so the export gains a production call
     site; carry the lineage/evidence/OutputRefs forward unchanged. The escalation
-    TRIGGER is Phase 3.
+    TRIGGER is Phase 3. The escalation, capability and todo members of the
+    `RoutingEvent` union the dispatch envelope carries are bound by
+    `doc/arch/schemas/routing/events-hierarchy.cue`.
   - **Safety (FR-F1).** Wrap the whole attempt exactly as Phase 1: `.catch(() =>
     undefined)` + `Effect.timeoutOrElse({ duration: RESOLVE_TIMEOUT_MS, orElse:
     undefined })` + a final `Effect.catchCause(() => undefined)`; per-spawn results are

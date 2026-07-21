@@ -200,7 +200,10 @@ operator-surface projections and readiness classes are typed by the ValueObjects
 `doc/arch/schemas/executor-composition/` (`#ExecutorComposition`, `#DueDispatch`,
 `#ConcurrencyBound`, `#AdmissionOutcome`, `#ScheduledProcess`, `#CoordinatorStep`,
 `#RunNowPlan`, `#RunNowResult`, `#OccurrenceRead`, `#DefinitionKeyedAggregate`,
-`#InterruptEntry`, `#ForcedAbortOutcome`, and the bounded enums).
+`#InterruptEntry`, `#ForcedAbortOutcome`, and the bounded enums). The
+`jobs.run-now` conversion itself — `#RunNowPlan`, `#RunNowResult` and the honest
+enqueued/overlap-rejected/executor-unavailable outcomes with idempotent replay
+(FR7) — is bound by `runnow.cue`.
 
 ## Executor composition state machine
 
