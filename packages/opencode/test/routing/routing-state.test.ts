@@ -39,6 +39,7 @@ describe("RoutingSessionStateStore", () => {
       parentSessionId: null,
       consumption: null,
       aggregate: null,
+      narrowedSets: null,
     })
   })
 

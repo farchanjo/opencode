@@ -33,6 +33,30 @@ export interface RoutingDecisionRef {
   readonly policyVersion: string
 }
 
+/**
+ * Feature 051 (FR1, FR3) — the per-turn narrowed ranked-id sets. Every field is an
+ * OPTIONAL ranked id list: absent means passthrough for that surface (the full
+ * permission-visible catalog, unchanged); present-and-non-empty means "narrow to
+ * exactly this ranked subset." A present-but-empty list is never a valid state —
+ * `live-narrowing.ts` normalizes every degenerate/empty retrieval outcome to absent
+ * before this memo is written (FR3).
+ */
+export interface NarrowedSets {
+  readonly agents?: readonly string[]
+  readonly skills?: readonly string[]
+  readonly tools?: readonly string[]
+}
+
+/**
+ * Feature 051 (FR1) — the session-scoped narrowing memo, keyed by the turn's
+ * `lastUser.id`. Every runLoop round trip of the same turn reads this SAME memo so the
+ * narrowed tool/skill/agent set never mutates mid-turn (tool-call continuity).
+ */
+export interface NarrowedSetsMemo {
+  readonly key: string
+  readonly sets: NarrowedSets
+}
+
 export interface RoutingSessionState {
   readonly sessionId: SessionID
   readonly decision: RoutingDecisionRef | null
@@ -46,10 +70,22 @@ export interface RoutingSessionState {
    * hierarchy routing; `null` for a plain/disabled session (byte-identical to
    * pre-F044). Released with the session (see `clear`). */
   readonly aggregate: OrchestrationAggregate.ManagerWorkerAggregate | null
+  /** Feature 051 (FR1) — the memoized per-turn narrowing decision, keyed by
+   * `lastUser.id`; `null` until the turn's `narrowForTurn` completes a non-degenerate
+   * pass. Released with the session (see `clear`). */
+  readonly narrowedSets: NarrowedSetsMemo | null
 }
 
 function empty(sessionId: SessionID): RoutingSessionState {
-  return { sessionId, decision: null, hierarchyRole: null, parentSessionId: null, consumption: null, aggregate: null }
+  return {
+    sessionId,
+    decision: null,
+    hierarchyRole: null,
+    parentSessionId: null,
+    consumption: null,
+    aggregate: null,
+    narrowedSets: null,
+  }
 }
 
 // =============================================================================
@@ -115,6 +151,10 @@ export interface RoutingSessionStateStore {
     managerSessionId: SessionID,
     outcome: OrchestrationAggregate.WorkerOutcome,
   ) => RoutingSessionState
+  /** Feature 051 (FR1) — memoize the turn's narrowed ranked-id sets keyed by
+   * `lastUser.id`. Read back via `get(sessionId).narrowedSets`; cleared with the rest
+   * of the state at `clear`. */
+  readonly recordNarrowedSets: (sessionId: SessionID, key: string, sets: NarrowedSets) => RoutingSessionState
   readonly clear: (sessionId: SessionID) => void
 }
 
@@ -162,6 +202,10 @@ export function createRoutingSessionStateStore(): RoutingSessionStateStore {
       const state = current(managerSessionId)
       if (!state.aggregate) return state
       return put({ ...state, aggregate: OrchestrationAggregate.applyWorkerTransition(state.aggregate, outcome) })
+    },
+
+    recordNarrowedSets(sessionId, key, sets) {
+      return put({ ...current(sessionId), narrowedSets: { key, sets } })
     },
 
     clear(sessionId) {
