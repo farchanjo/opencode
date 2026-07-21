@@ -115,11 +115,37 @@ consulted to make that call.
   conservative stance is "never consult a model to route a spawn unless explicitly
   enabled."
 
+### The Architect model source (open question 3)
+
+- **Option C1 — the Architect model is the main-context selection; the pool is a
+  configurable fallback (chosen).** The ARCHITECT is the primary/root session, and its
+  model is the MAIN-CONTEXT SELECTED model — the model the primary session is running
+  as (`input.model ?? agent.model ?? the session-selected model`). The routing engine
+  NEVER overrides the Architect: any architect-tier resolution PREFERS the main-context
+  model, and `role_pools.architect` (resolved via `decision_model.pool`) is a
+  CONFIGURABLE FALLBACK consulted only when NO main-context model resolves, then
+  `role_pools[fallback.floor_role]`, then the static default. `role_pools.architect` is
+  a first-class, generic, configurable role pool (settable exactly like `manager` /
+  `worker` via the same `pools.set` mechanism, never special-cased). Manager/Worker keep
+  resolving from their own pools; explicit `--model` and agent-pinned models always win.
+  This matches the operator intent — the Architect leads with the model the user picked
+  in the main context — and reconciles Feature 037 Phase 1 (top-level implicit routing)
+  so the top-level Architect keeps the main-context/default model with the pool as
+  fallback.
+- **Option C2 — the Architect draws straight from `role_pools[decision_model.pool[0]]`
+  (the earlier choice; SUPERSEDED).** Originally the resolver mapped the Architect tier
+  straight to the pool named by `decision_model.pool`. Rejected/superseded: it lets the
+  routing engine OVERRIDE the model the user selected in the main context, contradicting
+  the requirement that the Architect always respects the main-context selection. The
+  pool is retained, but demoted to a fallback below the main-context model.
+
 ## Decision Outcome
 
 Chosen option: **Option A** (session-local resolver mirroring Phase 1), combined with
-**Option A1** (direct-Worker-default classifier) and **Option B1** (decision-model
-bypass by default). Composing the pure `HierarchyDispatcher` and the Feature 001 service over the
+**Option A1** (direct-Worker-default classifier), **Option B1** (decision-model
+bypass by default), and **Option C1** (the Architect model is the main-context
+selection; `role_pools.architect` is a configurable fallback only). Composing the pure
+`HierarchyDispatcher` and the Feature 001 service over the
 session-layer interfaces on the captured, `InstanceRef`-bound context lets a spawn get
 a fresh role + model — bound by construction, reusing the one engine and config SSOT,
 side-stepping the operator `InstanceRef` defect, honoring an explicit/agent model
@@ -163,7 +189,22 @@ Key decisions recorded:
 8. **Deterministic model resolution; unauthenticated providers are refused.** The
    child-role pool model maps to the lexicographically-smallest non-deprecated
    `providerID` (`Provider.list()`), then `Auth.get(providerID)` must be present, else
-   `undefined` (parent inheritance) — reusing the Phase 1 machinery.
+   `undefined` (parent inheritance) — reusing the Phase 1 machinery. The ARCHITECT tier
+   is the exception (decision #12): it prefers the main-context model directly (the live
+   running model, not re-verified) and consults `role_pools.architect` only as a
+   fallback.
+
+12. **The Architect model is the main-context selection; the pool is a configurable
+    fallback (Option C1).** Any architect-tier model resolution
+    (`session/routing-hierarchy.ts#resolveRoleModel` for the architect role, and the
+    top-level implicit-default seam in `session/prompt.ts` `createUserMessage` /
+    `shellImpl`) PREFERS the main-context selected model; the routing engine never
+    overrides it. `role_pools.architect` (via `decision_model.pool`) then
+    `role_pools[floor_role]` then the static default are the fallback tiers. This
+    SUPERSEDES the earlier "Architect straight from `role_pools[decision_model.pool[0]]`"
+    mapping (Option C2) and reconciles Feature 037 Phase 1: the top-level Architect keeps
+    the main-context/default model. `role_pools.architect` is a generic, first-class,
+    configurable role pool (no special-casing in `pools.set` / schema / resolution).
 9. **Lineage correlation and escalation reuse gain call sites.** Every admitted spawn
    calls `RoutingSessionState.recordDispatch(child, lineage)` (no-op on mismatch, never
    throws); a Worker → Manager escalation reuses `planEscalation` (lineage / evidence /

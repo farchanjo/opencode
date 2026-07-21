@@ -148,6 +148,24 @@ Priority uses P1 (must have), P2 (should have), and P3 (could have).
    analyzer's ambiguity signal crosses a threshold (deferred to Phase 3 — see
    Clarifications C2). Phase 2 keeps the whole spawn-routing path zero-LLM.
 
+6-bis. **FR-A7 — the Architect model is the main-context selection; the pool is a
+   configurable fallback (see Clarifications C4).** The ARCHITECT is the primary/root
+   session, and its model MUST be the MAIN-CONTEXT SELECTED model — the model the
+   primary session is running as (`input.model ?? agent.model ?? the session-selected
+   model`). The routing engine MUST NOT override the Architect's model. Any
+   architect-tier model resolution MUST prefer the main-context model FIRST; only when
+   NO main-context model resolves does it fall back to `role_pools.architect` (resolved
+   via `decision_model.pool`, per FR-A4), then `role_pools[fallback.floor_role]`, then
+   the static provider default. The precedence is therefore:
+   `explicit --model / agent-pinned ▶ main-context selected model ▶ role_pools.architect ▶ role_pools[floor_role] ▶ static default`.
+   `role_pools.architect` is a FIRST-CLASS, generic, configurable role pool — settable
+   exactly like `manager` / `worker` via the same `pools.set` mechanism, never
+   special-cased. Manager and Worker tiers keep resolving from `role_pools.manager` /
+   `role_pools.worker` unchanged. Explicit `--model` and agent-pinned models always
+   win. This reconciles Feature 037 Phase 1 (top-level implicit routing): the top-level
+   Architect session keeps the main-context/default model and the pool is only the
+   fallback. Acceptance hook AC "Architect keeps the main-context model".
+
 ### Group B — role and depth legality (FR-B)
 
 7. **FR-B1 — legal edges only, via `planDispatch`.** Every spawn's parent → child
@@ -335,6 +353,15 @@ routing service, and a `handleSubtask` spawn where `task.model` is unset
   When `handleSubtask` selects the model,
   Then the routed branch short-circuits and the explicit/agent model is used verbatim.
 
+- **Architect keeps the main-context model (FR-A7, C4).**
+  Given the primary/root session (the Architect) has a main-context selected model
+  and Smart Routing is enabled in `auto` mode,
+  When the Architect's implicit-default model is resolved,
+  Then the main-context selected model is used — NOT `role_pools.architect` — and the
+  routing engine does not override it; with NO main-context model resolvable the
+  resolution falls back to `role_pools.architect`, then `role_pools[floor_role]`, then
+  the static default. Manager/Worker tiers resolve from their own pools unchanged.
+
 - **Manager may not spawn Manager (FR-B1, FR-F3-d).**
   Given the parent session's role is Manager,
   When a spawn would classify the child as Manager,
@@ -462,6 +489,23 @@ the decisions ADR-0042 formalizes; it does not author the ADR.
   guard remains a hard backstop and the effective ceiling is the MINIMUM of the two
   (FR-B3, FR-E3). The legacy error path is preserved unchanged for the
   disabled-hierarchy case.
+
+- **C4 — the Architect model is the main-context selection; the pool is a
+  configurable fallback only (FR-A7).** The resolved DECISION: the Architect (the
+  primary/root session) ALWAYS uses the MAIN-CONTEXT SELECTED model — the model the
+  main context is running as — and the routing engine NEVER overrides it. This
+  supersedes the earlier "Architect straight from `role_pools[decision_model.pool[0]]`"
+  mapping. `role_pools.architect` (resolved via `decision_model.pool`) is now a
+  CONFIGURABLE FALLBACK only, consulted when NO main-context model resolves, then
+  `role_pools[fallback.floor_role]`, then the static default. The precedence is
+  `explicit --model / agent-pinned ▶ main-context selected ▶ role_pools.architect ▶
+  role_pools[floor_role] ▶ static default`. `role_pools.architect` is a first-class,
+  generic, configurable role pool (settable exactly like `manager` / `worker` via the
+  same `pools.set` mechanism, never special-cased). Manager and Worker resolve from
+  their own pools unchanged; explicit and agent-pinned models always win. This also
+  reconciles Feature 037 Phase 1: the top-level Architect session keeps the
+  main-context/default model, with the pool as the fallback. Acceptance hook AC
+  "Architect keeps the main-context model".
 
 ## Related Features and Decisions
 
