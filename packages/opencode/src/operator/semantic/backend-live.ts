@@ -28,6 +28,7 @@ import type { MilvusPort } from "@/semantic/milvus-adapter"
 import type { MetricKind } from "@opencode-ai/protocol/semantic/commands"
 import type { SemanticBackend } from "./semantic-port"
 import type { RerankValidationProbe, SemanticRegistryBackend } from "./registry-backend"
+import type { ProbeFailed, ProbedVectorSpace } from "@/semantic/dimension-probe"
 
 export interface LiveSemanticBackendDeps {
   /** Real per-port implementations the composition root injects as the stack is bound; unset falls back to the honest gap. */
@@ -60,7 +61,19 @@ export interface LiveSemanticBackendDeps {
    * wave), never a fabricated `validated`.
    */
   readonly rerankProbe?: RerankValidationProbe
-  /** The vector dimension/metric a generation build declares (defaults 1024 / cosine). */
+  /**
+   * Feature 050 (FR6) — the model-driven embedding dimension probe threaded into the
+   * config-backed registry so `generationVectorSpace` DISCOVERS the real vector space
+   * from the staged model, failing closed on a probe failure. Absent → the registry
+   * falls back to the `generationDimension` test seam (or fails closed when neither is
+   * set); production (`stack-live`) always supplies it.
+   */
+  readonly embeddingProbe?: (input: {
+    readonly baseUrl: string
+    readonly modelRef: string
+    readonly secretRef: string
+  }) => Promise<ProbedVectorSpace | ProbeFailed>
+  /** The vector dimension/metric a generation build declares — a TEST SEAM only (production wires `embeddingProbe`). */
   readonly generationDimension?: number
   readonly generationMetric?: MetricKind
   /** Optional pre-built registry (tests inject a double); defaults to the config-backed registry when `config` is set. */
@@ -132,6 +145,7 @@ export const createLiveSemanticBackend = (deps: LiveSemanticBackendDeps = {}): S
           config: deps.config,
           milvus: deps.milvusPort ?? deps.milvus?.port,
           rerankProbe: deps.rerankProbe,
+          embeddingProbe: deps.embeddingProbe,
           defaultDimension: deps.generationDimension,
           defaultMetric: deps.generationMetric,
         })

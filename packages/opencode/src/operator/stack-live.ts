@@ -75,6 +75,7 @@ import { ReconcileLock } from "@/semantic/reconcile-lock"
 import { EmbeddingsHttpClient } from "@/semantic/embeddings-http-client"
 import { EmbeddingClient } from "@/semantic/embedding-client"
 import { BindingRuntime } from "@/semantic/binding-runtime"
+import { DimensionProbe } from "@/semantic/dimension-probe"
 import { AgentDocBuilder } from "@opencode-ai/core/semantic/agent-doc"
 import { DEFAULT_ROUTING_BUDGET } from "@/routing/adapters/outbound/config-adapter"
 import type { IndexPort } from "@opencode-ai/protocol/semantic/ports"
@@ -754,11 +755,27 @@ export async function createLiveOperatorStack(input: CreateLiveOperatorStackInpu
     reindex: (input) => withSemanticReconcileLock(port.reindex(input), "reindex"),
     reconcile: (input) => withSemanticReconcileLock(port.reconcile(input), "reconcile"),
   })
+  // Feature 050 / T021 (FR6) — the model-driven dimension probe the config-backed registry's
+  // `generationVectorSpace` calls instead of a hardcoded default. It resolves over the SAME embeddings
+  // transport + provider-auth resolver as the data-plane embed closure, using the {baseUrl, modelRef,
+  // secretRef} `generationVectorSpace` already joins from the staged embedding model's provider. A probe
+  // failure fails the reindex plan CLOSED with a typed capability gap — never a silent default dimension.
+  const embeddingProbe = (input: { baseUrl: string; modelRef: string; secretRef: string }) =>
+    DimensionProbe.probeVectorSpace(
+      {
+        http: EmbeddingsHttpClient.createFetchEmbeddingsHttpClient({
+          secretRef: input.secretRef || null,
+          resolveAuthHeader: resolveProviderAuthHeader,
+        }),
+      },
+      { baseUrl: input.baseUrl, modelRef: input.modelRef },
+    )
   const semanticBackend = SemanticBackendLive.createLiveSemanticBackend({
     config: store.config,
     milvus,
     milvusPort,
     rerankProbe,
+    embeddingProbe,
     override: milvus ? { index: withLockedMaintenance(MilvusBinding.createMilvusIndexPort(milvus)) } : undefined,
   })
   const semanticWiring = SemanticStackWiring.createSemanticDomainWiring({ backend: semanticBackend })

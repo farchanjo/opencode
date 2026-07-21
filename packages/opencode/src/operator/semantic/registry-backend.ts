@@ -28,6 +28,8 @@ import { CutoverExecutor } from "@/semantic/cutover-executor"
 import { RerankClient } from "@/semantic/rerank-client"
 import { UrlGuard } from "@/semantic/url-guard"
 import type { ProbeFailed, ProbedVectorSpace } from "@/semantic/dimension-probe"
+import { isTransientDataPlaneError, withDataPlaneRetry } from "@/util/effect-http-client"
+import { DataPlaneRetryStats } from "@/semantic/data-plane-retry-stats"
 import { type ConfigPort } from "@/operator/application/ports/config-port"
 import type { MilvusPort } from "@/semantic/milvus-adapter"
 import type { OperatorMutationEffectResult, OperatorMutationPlan } from "@/operator/application/handler"
@@ -812,7 +814,14 @@ export function createConfigBackedRegistry(deps: ConfigBackedRegistryDeps): Sema
         effect: () =>
           milvusEffect(
             port,
-            (p) => p.buildGeneration({ collections: GENERATION_COLLECTIONS, generationId, dimension: space.dimension, metric: space.metric }),
+            // Feature 050 (FR12) — bounded transient-only retry on the maintenance build; a
+            // `milvus_unavailable`/transport gap retries (≤3), a domain gap never does.
+            (p) =>
+              withDataPlaneRetry(
+                p.buildGeneration({ collections: GENERATION_COLLECTIONS, generationId, dimension: space.dimension, metric: space.metric }),
+                isTransientDataPlaneError,
+                { onRetry: DataPlaneRetryStats.record },
+              ),
             () => ({ ok: true }),
           ),
         apply: (current) => {

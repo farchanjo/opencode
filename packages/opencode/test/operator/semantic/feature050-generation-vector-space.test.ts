@@ -10,6 +10,7 @@
 import { describe, expect, test } from "bun:test"
 import { Effect } from "effect"
 import { createConfigBackedRegistry } from "@/operator/semantic/registry-backend"
+import { SemanticBackendLive } from "@/operator/semantic/backend-live"
 import { MilvusAdapter } from "@/semantic/milvus-adapter"
 import type { ProbeFailed, ProbedVectorSpace } from "@/semantic/dimension-probe"
 import type { ConfigPort } from "@/operator/application/ports/config-port"
@@ -84,5 +85,29 @@ describe("generationVectorSpace (Feature 050)", () => {
   test("preserves the defaultDimension test seam when no probe is configured", async () => {
     const generation = await reindexGeneration(registry({ defaultDimension: 4 }).planReindexEmbedding({ principal: PRINCIPAL }))
     expect(generation.dimension).toBe(4)
+  })
+})
+
+describe("createLiveSemanticBackend threads the embedding probe (C1 regression)", () => {
+  const config = { get: async () => ({ version: "cas_v1", payload: SEED, updatedAtMs: 0 }) } as unknown as ConfigPort
+
+  test("a threaded probe drives the built generation's dimension end-to-end", async () => {
+    const backend = SemanticBackendLive.createLiveSemanticBackend({
+      config,
+      milvusPort: MilvusAdapter.createFakeMilvusAdapter(),
+      embeddingProbe: async () => ({ dimension: 2560, metric: "cosine", normalized: true, probedAt: "t", source: "live-probe" }),
+    })
+    const built = await Effect.runPromise(backend.registry!.planReindexEmbedding({ principal: PRINCIPAL }))
+    const applied = built.apply(SEED, undefined) as { embeddingGenerations: Array<{ dimension: number }> }
+    expect(applied.embeddingGenerations[0].dimension).toBe(2560)
+  })
+
+  test("with no probe and no default dimension wired, the build fails closed", async () => {
+    const backend = SemanticBackendLive.createLiveSemanticBackend({
+      config,
+      milvusPort: MilvusAdapter.createFakeMilvusAdapter(),
+    })
+    const error = await Effect.runPromise(backend.registry!.planReindexEmbedding({ principal: PRINCIPAL }).pipe(Effect.flip))
+    expect(error.type).toBe("not_validated")
   })
 })
