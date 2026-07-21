@@ -2,7 +2,7 @@
 id: 019f826f-2fc4-7e33-ab23-844f32f439ba
 number: 040
 slug: bring-the-operator-tui-to-full-parity-with-the-op-cli-and
-status: analyzed
+status: implemented
 created_at: 2026-07-21T02:09:12.644297Z
 ---
 # Feature Specification: Bring The Operator TUI To Full Parity With The op CLI
