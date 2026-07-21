@@ -110,6 +110,64 @@ describe("session.system", () => {
     }),
   )
 
+  // Feature 051 (T015/T016) — the skills seam. `SystemPrompt.skills` gains an
+  // optional `ranked?: readonly string[]` param, narrowed via
+  // `ToolRetrieval.narrow` (Feature 009's shared gate primitive) before
+  // `Skill.fmt` renders it. An absent `ranked` stays byte-identical.
+  it.effect("an absent ranked param is byte-identical to the unranked rendering", () =>
+    Effect.gen(function* () {
+      const prompt = yield* SystemPrompt.Service
+      const unranked = yield* prompt.skills(build)
+      const explicitlyUndefined = yield* prompt.skills(build, undefined)
+
+      expect(explicitlyUndefined).toBe(unranked)
+    }),
+  )
+
+  it.effect("a ranked subset narrows the skill list to only the ranked, still-visible names", () =>
+    Effect.gen(function* () {
+      const prompt = yield* SystemPrompt.Service
+      const output = yield* prompt.skills(build, ["alpha-skill"])
+
+      expect(output).toContain("<name>alpha-skill</name>")
+      expect(output).not.toContain("<name>zeta-skill</name>")
+      expect(output).not.toContain("<name>middle-skill</name>")
+    }),
+  )
+
+  it.effect("a ranked subset never widens the permission-visible set (undescribed skills stay excluded)", () =>
+    Effect.gen(function* () {
+      const prompt = yield* SystemPrompt.Service
+      const output = yield* prompt.skills(build, ["manual-skill", "alpha-skill"])
+
+      expect(output).toContain("<name>alpha-skill</name>")
+      expect(output).not.toContain("manual-skill")
+    }),
+  )
+
+  it.effect("an empty ranked list narrows to no skills, never widening to the full set", () =>
+    Effect.gen(function* () {
+      const prompt = yield* SystemPrompt.Service
+      const output = yield* prompt.skills(build, [])
+
+      expect(output).toContain("No skills are currently available.")
+    }),
+  )
+
+  it.effect("ranking never changes Skill.fmt's own rendering logic, only membership/order", () =>
+    Effect.gen(function* () {
+      const prompt = yield* SystemPrompt.Service
+      const ranked = yield* prompt.skills(build, ["zeta-skill", "alpha-skill"])
+      const unranked = yield* prompt.skills(build)
+
+      // Same tag/attribute shape as the unranked rendering, just narrowed to
+      // the ranked names — proves the seam never bypasses `Skill.fmt`.
+      expect(ranked).toContain("<available_skills>")
+      expect(ranked).toContain("<location>/tmp/alpha-skill/SKILL.md</location>")
+      expect(unranked).toContain("<location>/tmp/alpha-skill/SKILL.md</location>")
+    }),
+  )
+
   it.effect("MCP output includes connected server instructions", () =>
     Effect.gen(function* () {
       const prompt = yield* SystemPrompt.Service

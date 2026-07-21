@@ -21,9 +21,24 @@ import { ProviderV2 } from "@opencode-ai/core/provider"
 import { ModelV2 } from "@opencode-ai/core/model"
 import { MCP } from "@/mcp"
 import type { Tool as MCPToolDef } from "@modelcontextprotocol/sdk/types.js"
+import { Permission } from "@/permission"
 
 const configLayer = TestConfig.layer({
   directories: () => InstanceState.directory.pipe(Effect.map((dir) => [path.join(dir, ".opencode")])),
+})
+
+// Feature 051 (T014) — a fixture with two ordinary custom subagents plus one
+// `hidden: true` subagent, exercising the `describeTask` pin/narrow seam.
+const rankedAgentConfigLayer = TestConfig.layer({
+  directories: () => InstanceState.directory.pipe(Effect.map((dir) => [path.join(dir, ".opencode")])),
+  get: () =>
+    Effect.succeed({
+      agent: {
+        "alpha-helper": { mode: "subagent", description: "Alpha helper agent." },
+        "beta-helper": { mode: "subagent", description: "Beta helper agent." },
+        "hidden-helper": { mode: "subagent", hidden: true, description: "Hidden helper agent." },
+      },
+    }),
 })
 
 // Fake Plugin.Service that returns a single plugin whose `tool` map contains
@@ -57,6 +72,12 @@ const replacements = [
 ] as const
 
 const it = testEffect(LayerNode.compile(root, replacements))
+const itRankedAgents = testEffect(
+  LayerNode.compile(root, [
+    [Config.node, rankedAgentConfigLayer],
+    [RuntimeFlags.node, RuntimeFlags.layer()],
+  ]),
+)
 const withCodeMode = testEffect(
   LayerNode.compile(root, [
     [Config.node, configLayer],
@@ -567,6 +588,139 @@ describe("tool.registry", () => {
       const registry = yield* ToolRegistry.Service
       const ids = yield* registry.ids()
       expect(ids).toContain("cowsay")
+    }),
+  )
+})
+
+// Feature 051 (T013/T014) — the agents seam. `describeTask` gains an optional
+// `rankedAgentIds` input (threaded through `ToolRegistry.tools`); a hidden
+// agent is always pinned ahead of the ranked/narrowed non-hidden list, and an
+// absent `rankedAgentIds` renders the full non-primary list unchanged.
+describe("tool.registry — agents seam (Feature 051)", () => {
+  itRankedAgents.instance(
+    "an absent rankedAgentIds renders every non-primary agent, hidden pinned ahead of the rest",
+    () =>
+      Effect.gen(function* () {
+        const registry = yield* ToolRegistry.Service
+        const agents = yield* Agent.Service
+        const agentInfo = yield* agents.defaultInfo()
+
+        const tools = yield* registry.tools({
+          providerID: ProviderV2.ID.opencode,
+          modelID: ModelV2.ID.make("test"),
+          agent: agentInfo,
+        })
+        const task = tools.find((tool) => tool.id === "task")
+        expect(task?.description).toContain("alpha-helper")
+        expect(task?.description).toContain("beta-helper")
+        expect(task?.description).toContain("hidden-helper")
+        // Pinned (hidden) entries render before the narrowed/narrowable list.
+        expect(task?.description?.indexOf("hidden-helper")).toBeLessThan(task?.description?.indexOf("alpha-helper")!)
+      }),
+  )
+
+  it.instance(
+    "an absent rankedAgentIds is byte-identical to the pre-Feature-051 rendering when no hidden agent exists",
+    () =>
+      Effect.gen(function* () {
+        const registry = yield* ToolRegistry.Service
+        const agents = yield* Agent.Service
+        const agentInfo = yield* agents.defaultInfo()
+
+        const tools = yield* registry.tools({
+          providerID: ProviderV2.ID.opencode,
+          modelID: ModelV2.ID.make("test"),
+          agent: agentInfo,
+        })
+        const task = tools.find((tool) => tool.id === "task")
+
+        // Reproduces the EXACT pre-Feature-051 join: a straight alphabetical
+        // sort over the full permission-visible, non-primary list — no hidden
+        // agent exists in this fixture, so `pinned` is empty and the output is
+        // untouched by the seam's new partition/narrow steps.
+        const list = (yield* agents.list()).filter((item) => item.mode !== "primary")
+        const filtered = list.filter(
+          (item) => Permission.evaluate("task", item.name, agentInfo.permission).action !== "deny",
+        )
+        const sorted = filtered.toSorted((a, b) => a.name.localeCompare(b.name))
+        const expectedDescription = [
+          "Available agent types and the tools they have access to:",
+          sorted
+            .map(
+              (item) =>
+                `- ${item.name}: ${item.description ?? "This subagent should only be called manually by the user."}`,
+            )
+            .join("\n"),
+        ].join("\n")
+        expect(task?.description).toContain(expectedDescription)
+      }),
+  )
+
+  itRankedAgents.instance("a ranked subset narrows/reorders only the non-hidden list", () =>
+    Effect.gen(function* () {
+      const registry = yield* ToolRegistry.Service
+      const agents = yield* Agent.Service
+      const tools = yield* registry.tools({
+        providerID: ProviderV2.ID.opencode,
+        modelID: ModelV2.ID.make("test"),
+        agent: yield* agents.defaultInfo(),
+        rankedAgentIds: ["beta-helper"],
+      })
+      const task = tools.find((tool) => tool.id === "task")
+      expect(task?.description).toContain("beta-helper")
+      expect(task?.description).not.toContain("alpha-helper")
+    }),
+  )
+
+  itRankedAgents.instance("a hidden agent is always pinned even when excluded from rankedAgentIds", () =>
+    Effect.gen(function* () {
+      const registry = yield* ToolRegistry.Service
+      const agents = yield* Agent.Service
+      const tools = yield* registry.tools({
+        providerID: ProviderV2.ID.opencode,
+        modelID: ModelV2.ID.make("test"),
+        agent: yield* agents.defaultInfo(),
+        rankedAgentIds: ["alpha-helper", "beta-helper"],
+      })
+      const task = tools.find((tool) => tool.id === "task")
+      expect(task?.description).toContain("hidden-helper")
+    }),
+  )
+
+  itRankedAgents.instance("an empty rankedAgentIds narrows the non-hidden list to nothing but still pins hidden", () =>
+    Effect.gen(function* () {
+      const registry = yield* ToolRegistry.Service
+      const agents = yield* Agent.Service
+      const tools = yield* registry.tools({
+        providerID: ProviderV2.ID.opencode,
+        modelID: ModelV2.ID.make("test"),
+        agent: yield* agents.defaultInfo(),
+        rankedAgentIds: [],
+      })
+      const task = tools.find((tool) => tool.id === "task")
+      expect(task?.description).toContain("hidden-helper")
+      expect(task?.description).not.toContain("alpha-helper")
+      expect(task?.description).not.toContain("beta-helper")
+    }),
+  )
+
+  it.instance("permission-denied agents are still excluded under a ranked gate", () =>
+    Effect.gen(function* () {
+      const registry = yield* ToolRegistry.Service
+      const agents = yield* Agent.Service
+      const build = yield* agents.get("build")
+      if (!build) throw new Error("build agent not found")
+      const tools = yield* registry.tools({
+        providerID: ProviderV2.ID.opencode,
+        modelID: ModelV2.ID.make("test"),
+        agent: build,
+        rankedAgentIds: ["explore", "build"],
+      })
+      const task = tools.find((tool) => tool.id === "task")
+      // "build" is mode "primary" and excluded upstream of the gate regardless
+      // of ranking; a ranked id for an agent that never reaches the gate must
+      // never surface it.
+      expect(task?.description).not.toMatch(/^- build:/m)
     }),
   )
 })

@@ -47,6 +47,7 @@ import { EventV2Bridge } from "@/event-v2-bridge"
 import { Agent } from "../agent/agent"
 import { Skill } from "../skill"
 import { Permission } from "@/permission"
+import { ToolRetrieval } from "@/semantic/tool-retrieval"
 import { BackgroundJob } from "@/background/job"
 import { RuntimeFlags } from "@/effect/runtime-flags"
 import { ProviderV2 } from "@opencode-ai/core/provider"
@@ -79,6 +80,10 @@ export interface Interface {
     modelID: ModelV2.ID
     agent: Agent.Info
     permission?: PermissionV1.Ruleset
+    /** Feature 051 — the turn's ranked, revalidated agent-id subset (FR4, agents seam).
+     * Absent → `describeTask` renders the full non-primary agent list unchanged (the
+     * full-set passthrough floor); a hidden agent is always rendered regardless. */
+    rankedAgentIds?: readonly string[]
   }) => Effect.Effect<Tool.Def[]>
 }
 
@@ -263,12 +268,24 @@ const layer = Layer.effect(
       return (yield* all()).map((tool) => tool.id)
     })
 
-    const describeTask = Effect.fn("ToolRegistry.describeTask")(function* (agent: Agent.Info) {
+    const describeTask = Effect.fn("ToolRegistry.describeTask")(function* (
+      agent: Agent.Info,
+      rankedAgentIds?: readonly string[],
+    ) {
       const items = (yield* agents.list()).filter((item) => item.mode !== "primary")
       const filtered = items.filter(
         (item) => Permission.evaluate("task", item.name, agent.permission).action !== "deny",
       )
-      const list = filtered.toSorted((a, b) => a.name.localeCompare(b.name))
+      const sorted = filtered.toSorted((a, b) => a.name.localeCompare(b.name))
+      // Feature 051 (FR4, agents seam) — a hidden agent (e.g. a future
+      // `manager-router`/`manager-composer`) is partitioned out as `pinned` BEFORE
+      // narrowing runs on the rest; it is never ranked away. Narrowing here edits
+      // the `task` tool description PROSE only, never `task` spawn permission.
+      const pinned = sorted.filter((item) => item.hidden === true)
+      const narrowable = sorted.filter((item) => item.hidden !== true)
+      const gate: ToolRetrieval.RankedGate = { enabled: rankedAgentIds !== undefined, ranked: rankedAgentIds }
+      const narrowed = ToolRetrieval.narrow(narrowable, (item) => item.name, gate)
+      const list = [...pinned, ...narrowed]
       const description = list
         .map(
           (item) =>
@@ -335,7 +352,7 @@ const layer = Layer.effect(
             id: tool.id,
             description: [
               output.description,
-              tool.id === TaskTool.id ? yield* describeTask(input.agent) : undefined,
+              tool.id === TaskTool.id ? yield* describeTask(input.agent, input.rankedAgentIds) : undefined,
               tool.id === "execute" ? codeModeDescription : undefined,
             ]
               .filter(Boolean)

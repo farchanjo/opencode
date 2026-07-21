@@ -26,6 +26,25 @@ import { ModelV2 } from "@opencode-ai/core/model"
 import { isRecord } from "@/util/record"
 import { RuntimeFlags } from "@/effect/runtime-flags"
 
+// Feature 051 (FR4, tools seam) — the always-keep union unioned into the ranked
+// id list before either `ToolRetrieval.narrow`/`narrowRecord` call runs. The
+// reranker may reorder these tools relative to the rest of the ranked set; it
+// may never cause one to be dropped. `StructuredOutput` (appended after
+// `resolve()` returns, `prompt.ts:1517`) needs no special-casing here — it
+// never enters the gate.
+const ESSENTIAL_TOOL_IDS: readonly string[] = [
+  "task",
+  "skill",
+  "todowrite",
+  "question",
+  "read",
+  "edit",
+  "write",
+  "bash",
+  "grep",
+  "glob",
+]
+
 const MCP_RESOURCE_TOOLS = {
   list: "list_mcp_resources",
   listTemplates: "list_mcp_resource_templates",
@@ -52,6 +71,14 @@ export const resolve = Effect.fn("SessionTools.resolve")(function* (input: {
    * each tool call's `ctx.extra` so `TaskTool.execute` can route an LLM `task`
    * spawn per its own prompt. Absent → the default parent-inheritance path. */
   hierarchyResolve?: RoutingHierarchy.LiveHierarchyResolve
+  /** Feature 051 — the turn's ranked, revalidated tool-id subset (FR4, tools
+   * seam), shared by both the native and MCP surfaces. Absent → both surfaces
+   * stay `ToolRetrieval.PASSTHROUGH` (the full-set floor, byte-identical). */
+  rankedTools?: readonly string[]
+  /** Feature 051 (FR5) — forces `ToolRetrieval.PASSTHROUGH` on both surfaces
+   * even when `rankedTools` is present; the orchestrator wave sets this for an
+   * orchestration-child session so its tiny allowlist is never narrowed. */
+  skipToolNarrowing?: boolean
 }) {
   const tools: Record<string, AITool> = {}
   const run = yield* EffectBridge.make()
@@ -100,6 +127,19 @@ export const resolve = Effect.fn("SessionTools.resolve")(function* (input: {
         .pipe(Effect.orDie),
   })
 
+  // Feature 051 (FR4/FR5, tools seam) — the essential-tool floor is unioned into
+  // the turn's ranked ids before either gate call so the floor may be reordered
+  // by the rank but never dropped. `undefined` (gates off, or `skipToolNarrowing`
+  // for an orchestration child) yields the exact `ToolRetrieval.PASSTHROUGH`
+  // identity gate below — the byte-identical disabled-path floor (FR6).
+  const rankedToolIds =
+    !input.skipToolNarrowing && input.rankedTools !== undefined
+      ? Array.from(new Set([...input.rankedTools, ...ESSENTIAL_TOOL_IDS]))
+      : undefined
+  const toolsGate: ToolRetrieval.RankedGate | undefined = rankedToolIds
+    ? { enabled: true, ranked: rankedToolIds }
+    : undefined
+
   // FEATURE_009_TOOL_SELECTION_SEAM (native surface, C9/C15). `registry.tools(...)`
   // is already permission-visible; the ranked subset gate is applied AFTER it and
   // never widens it. The V1 default is `PASSTHROUGH` (surface flag off) = the full
@@ -111,7 +151,7 @@ export const resolve = Effect.fn("SessionTools.resolve")(function* (input: {
     agent: input.agent,
     permission: input.session.permission,
   })
-  for (const item of ToolRetrieval.narrow(nativeVisible, (t) => t.id, ToolRetrieval.PASSTHROUGH)) {
+  for (const item of ToolRetrieval.narrow(nativeVisible, (t) => t.id, toolsGate ?? ToolRetrieval.PASSTHROUGH)) {
     const schema = ProviderTransform.schema(input.model, ToolJsonSchema.fromTool(item))
     tools[item.id] = tool({
       description: item.description,
@@ -408,7 +448,9 @@ export const resolve = Effect.fn("SessionTools.resolve")(function* (input: {
   // permission-visible MCP catalog; the ranked subset gate is applied AFTER it and
   // never widens it. V1 default `PASSTHROUGH` (surface flag off) = the full catalog
   // unchanged; a flag-on route replaces the gate with the tool-pass ranking (C15).
-  for (const [key, entry] of Object.entries(ToolRetrieval.narrowRecord(yield* mcp.tools(), ToolRetrieval.PASSTHROUGH))) {
+  for (const [key, entry] of Object.entries(
+    ToolRetrieval.narrowRecord(yield* mcp.tools(), toolsGate ?? ToolRetrieval.PASSTHROUGH),
+  )) {
     const item = McpCatalog.convertTool(entry.def, entry.client, entry.timeout)
     const execute = item.execute
     if (!execute) continue

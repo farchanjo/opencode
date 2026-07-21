@@ -23,6 +23,7 @@ import { LocationServiceMap, locationServiceMapLayer } from "@opencode-ai/core/l
 import { Reference } from "@opencode-ai/core/reference"
 import { MCP } from "@/mcp"
 import { PermissionV1 } from "@opencode-ai/core/v1/permission"
+import { ToolRetrieval } from "@/semantic/tool-retrieval"
 
 export function provider(model: Provider.Model) {
   if (model.api.id.includes("muse-spark")) return [PROMPT_META]
@@ -43,7 +44,14 @@ export function provider(model: Provider.Model) {
 
 export interface Interface {
   readonly environment: (model: Provider.Model) => Effect.Effect<string[]>
-  readonly skills: (agent: Agent.Info) => Effect.Effect<string | undefined>
+  readonly skills: (
+    agent: Agent.Info,
+    /** Feature 051 — the turn's ranked, revalidated skill-id subset (FR4, skills
+     * seam). Absent → the full permission-visible skill list renders unchanged
+     * (the full-set passthrough floor). Tier-1 listing only — never spends
+     * `max_skill_chunks`/`max_skill_tokens`. */
+    ranked?: readonly string[],
+  ) => Effect.Effect<string | undefined>
   readonly mcp: (agent: Agent.Info, permission?: PermissionV1.Ruleset) => Effect.Effect<string | undefined>
 }
 
@@ -95,10 +103,12 @@ const layer = Layer.effect(
         ].filter((part): part is string => part !== undefined)
       }),
 
-      skills: Effect.fn("SystemPrompt.skills")(function* (agent: Agent.Info) {
+      skills: Effect.fn("SystemPrompt.skills")(function* (agent: Agent.Info, ranked?: readonly string[]) {
         if (Permission.disabled(["skill"], agent.permission).has("skill")) return
 
-        const list = yield* skill.available(agent)
+        const available = yield* skill.available(agent)
+        const gate: ToolRetrieval.RankedGate = { enabled: ranked !== undefined, ranked }
+        const list = [...ToolRetrieval.narrow(available, (item) => item.name, gate)]
 
         return [
           "Skills provide specialized instructions and workflows for specific tasks.",
