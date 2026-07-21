@@ -9,9 +9,13 @@ import { MessageV2 } from "../session/message-v2"
 import { Agent } from "../agent/agent"
 import { deriveSubagentSessionPermission } from "../agent/subagent-permissions"
 import { RoutingHierarchy } from "../session/routing-hierarchy"
+import { OrchestrationHandoff } from "./orchestration-handoff"
 import { OrchestrationAggregate } from "../session/orchestration-aggregate"
-import { emitOrchestrationWorker } from "@/routing/application/telemetry-emitters"
+import { emitOrchestrationWorker, emitOrchestrationHandoff } from "@/routing/application/telemetry-emitters"
 import { isTelemetryArmed } from "@/routing/telemetry-export"
+import { SemanticRetrieval } from "@/semantic/retrieval-service"
+import { DEFAULT_DATA_AGENT } from "@opencode-ai/schema/routing/config"
+import { ConfigExperimental } from "@opencode-ai/core/config/experimental"
 import { TodoAuthority } from "@/routing/domain/todo-authority"
 import { Todo } from "@/session/todo"
 import type { SessionPrompt } from "../session/prompt"
@@ -143,6 +147,35 @@ export function applyManagerPersona(prompt: string, childRole: string, forceMana
   if (!forceManager || childRole !== "manager") return prompt
   return `${MANAGER_PERSONA_PRELUDE}\n${prompt}`
 }
+
+/**
+ * Feature 053 (FR1, FR7) — resolve the operator-configured `hierarchy.manager_agent`
+ * binding for a manager-role spawn. Returns the bound agent ONLY when the spawn
+ * classifies as `manager` under `force_manager`, the binding is set, it resolves via
+ * `Agent.Service.get` (NOT `resolveSpecialist` — the realistic targets are hidden
+ * internal agents), and it carries no `Agent.Info.model` pin (a pin would silently
+ * override the hierarchy-routed Manager-tier model). Any miss degrades to `undefined`
+ * (the LLM-chosen `subagent_type` spawns unchanged) plus exactly one content-free warn —
+ * never a blocked spawn.
+ */
+export const resolveManagerAgentBinding = Effect.fn("TaskTool.resolveManagerAgentBinding")(function* (
+  childRole: string,
+  forceManager: boolean,
+  managerAgent: string | undefined,
+  agentGet: (name: string) => Effect.Effect<Agent.Info | undefined>,
+) {
+  if (childRole !== "manager" || !forceManager || !managerAgent) return undefined
+  const bound = yield* agentGet(managerAgent)
+  if (!bound) {
+    yield* Effect.logWarning("manager_agent binding did not resolve; degrading to the requested subagent_type")
+    return undefined
+  }
+  if (bound.model) {
+    yield* Effect.logWarning("manager_agent binding is model-pinned; degrading to the requested subagent_type")
+    return undefined
+  }
+  return bound
+})
 const BACKGROUND_DESCRIPTION = [
   "Background mode: background=true launches the subagent asynchronously and returns immediately.",
   "Foreground is the default; use it when you need the result before continuing.",
@@ -301,10 +334,23 @@ export const TaskTool = Tool.define(
         })
       }
 
-      const next = resolvedAgent ?? (yield* agent.get(params.subagent_type))
-      if (!next) {
+      const requestedAgent = resolvedAgent ?? (yield* agent.get(params.subagent_type))
+      if (!requestedAgent) {
         return yield* Effect.fail(new Error(`Unknown agent type: ${params.subagent_type} is not a valid agent type`))
       }
+
+      // Feature 053 (FR1, FR7) — when force_manager classifies this child as a Manager and
+      // `hierarchy.manager_agent` binds+resolves (unpinned), OVERRIDE the spawn's agent to
+      // the bound name; any miss degrades to the requested `subagent_type` (byte-identical).
+      const childRoleForBinding = hierarchyDispatch?.lineageStub.child_role ?? ""
+      const forceManagerForBinding = hierarchyDispatch?.forceManager ?? false
+      const boundManager = yield* resolveManagerAgentBinding(
+        childRoleForBinding,
+        forceManagerForBinding,
+        hierarchyDispatch?.bindings?.manager,
+        (name) => agent.get(name),
+      )
+      const next = boundManager ?? requestedAgent
 
       const session = params.task_id
         ? yield* sessions.get(SessionID.make(params.task_id)).pipe(Effect.catchCause(() => Effect.succeed(undefined)))
@@ -413,12 +459,97 @@ export const TaskTool = Tool.define(
       const ops = ctx.extra?.promptOps as TaskPromptOps
       if (!ops) return yield* Effect.fail(new Error("TaskTool requires promptOps in ctx.extra"))
 
+      // Feature 053 — the always-on Data -> Composer interception. Every synthetic
+      // sub-session it creates is tracked here so its routing state is released on the
+      // SAME terminal path the Manager's own `nextSession` already uses (no leak).
+      const syntheticSessions: SessionID[] = []
+      const handoffStore = hierarchyDispatch?.store
+      const sessionOps: OrchestrationHandoff.SyntheticSessionOps = {
+        createSession: (agentName) =>
+          Effect.gen(function* () {
+            const sub = yield* agent.get(agentName)
+            const created = yield* sessions.create({
+              parentID: nextSession.id,
+              title: `${params.description} (@${agentName} handoff)`,
+              agent: agentName,
+              permission: deriveSubagentSessionPermission({
+                parentSessionPermission: nextSession.permission ?? [],
+                subagent: sub ?? next,
+              }),
+            })
+            return created.id
+          }),
+        markSynthetic: (sessionId) => {
+          syntheticSessions.push(sessionId)
+          handoffStore?.markSynthetic(sessionId)
+        },
+        resolvePromptParts: (template) => ops.resolvePromptParts(template),
+        prompt: ({ sessionID, agentName, parts }) =>
+          Effect.gen(function* () {
+            const sub = yield* agent.get(agentName)
+            const result = yield* ops.prompt({
+              messageID: MessageID.ascending(),
+              sessionID,
+              model: sub?.model ?? { modelID: model.modelID, providerID: model.providerID },
+              variant: sub?.model ? undefined : variant,
+              agent: agentName,
+              parts,
+            })
+            return result.parts.findLast((item) => item.type === "text")?.text ?? ""
+          }),
+      }
+      const retrieveRanked = (subtaskText: string): Effect.Effect<readonly string[]> =>
+        Effect.gen(function* () {
+          const retrieval = yield* Effect.serviceOption(SemanticRetrieval.Service)
+          if (Option.isNone(retrieval)) return []
+          const result = yield* retrieval.value
+            .retrieveAgents({
+              profile: { taskId: nextSession.id, queryText: subtaskText, projectId: "" },
+              retrievalTopK: ConfigExperimental.TOOL_SEARCH_DEFAULTS.retrievalTopK,
+              rerankTopK: ConfigExperimental.TOOL_SEARCH_DEFAULTS.rerankTopK,
+              filters: { projectId: "" },
+            })
+            .pipe(Effect.catchCause(() => Effect.succeed(undefined)))
+          return result ? result.candidates.filter((c) => c.revalidated).map((c) => c.canonicalId) : []
+        })
+      const interceptForManager = Effect.fn("TaskTool.interceptForManager")(function* () {
+        const childRole = hierarchyDispatch?.lineageStub.child_role ?? ""
+        const forceManager = hierarchyDispatch?.forceManager ?? false
+        const composerAgentName = hierarchyDispatch?.bindings?.composer
+        const synthetic = handoffStore ? handoffStore.get(ctx.sessionID).synthetic : false
+        if (
+          !handoffStore ||
+          !composerAgentName ||
+          !OrchestrationHandoff.interceptionEligible(childRole, forceManager, synthetic)
+        )
+          return undefined
+        const outcome = yield* OrchestrationHandoff.runInterception(
+          {
+            dataAgentName: hierarchyDispatch?.bindings?.data ?? DEFAULT_DATA_AGENT,
+            composerAgentName,
+            resolveAgent: (name) => agent.get(name),
+            sessionOps,
+            retrieveRanked,
+            listSpecialists: () =>
+              agent
+                .listSpecialists()
+                .pipe(Effect.map((list) => list.map((a) => ({ name: a.name, description: a.description })))),
+          },
+          { intent: params.prompt },
+        )
+        emitOrchestrationHandoff(outcome.log)
+        return outcome.promptOverride
+      })
+
       const runTask = Effect.fn("TaskTool.runTask")(function* () {
-        // Feature 048 (FR8) — under force_manager, prepend the Manager persona to a
-        // manager-role spawn's prompt so it decomposes -> dispatches Workers ->
-        // aggregates. Inert (identity) for every other role/mode (byte-identical).
+        // Feature 053 — run the Data -> Composer interception (when eligible) so the
+        // Manager receives a validated, specialist-addressed brief; a degrade returns
+        // undefined and the raw Architect prompt is used. Feature 048 (FR8) — the persona
+        // prelude is then prepended UNCHANGED to whichever prompt survived (byte-identical
+        // for every other role/mode).
+        const promptOverride = yield* interceptForManager()
         const promptText = applyManagerPersona(
-          params.prompt,
+          promptOverride ?? params.prompt,
           hierarchyDispatch?.lineageStub.child_role ?? "",
           hierarchyDispatch?.forceManager ?? false,
         )
@@ -521,6 +652,9 @@ export const TaskTool = Tool.define(
         // A background child has finished — release its routing state (see the
         // foreground finalizer for the same bounded-retention rationale).
         if (hierarchyDispatch) hierarchyDispatch.store.clear(nextSession.id)
+        // Feature 053 — release every synthetic Data/Composer sub-session's routing state
+        // on the SAME terminal path, so a long-lived process never accumulates them.
+        if (handoffStore) for (const synthetic of syntheticSessions) handoffStore.clear(synthetic)
         const currentParent = yield* sessions.get(ctx.sessionID)
         yield* ops
           .prompt({
@@ -720,6 +854,8 @@ export const TaskTool = Tool.define(
                 // The child session has finished — release its routing state so a
                 // long-lived `opencode serve` never accumulates one entry per spawn.
                 if (hierarchyDispatch) hierarchyDispatch.store.clear(nextSession.id)
+                // Feature 053 — release every synthetic Data/Composer sub-session too.
+                if (handoffStore) for (const synthetic of syntheticSessions) handoffStore.clear(synthetic)
               }),
             ),
           ),
