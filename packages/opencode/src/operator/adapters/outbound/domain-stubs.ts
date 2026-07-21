@@ -112,6 +112,8 @@ export function createDomainStubs(options: DomainStubOptions = {}): DomainPorts 
     output: { invoke: stubInvoke("output") },
     semantic: { invoke: createSemanticInvoke(options) },
     mcp: { invoke: createSemanticInvoke(options) },
+    hierarchy: { invoke: stubInvoke("hierarchy") },
+    capability: { invoke: stubInvoke("capability") },
   }
 }
 

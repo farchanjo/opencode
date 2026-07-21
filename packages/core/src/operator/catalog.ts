@@ -7,7 +7,7 @@ import type { ScopeKind } from "./scope"
 import type { DescriptorDraft } from "./descriptor"
 
 /** Catalog document version (semver). Additive bumps only. */
-export const RESERVED_CATALOG_VERSION = "1.3.0" as const
+export const RESERVED_CATALOG_VERSION = "1.4.0" as const
 
 export const OPERATOR_DOMAINS = [
   "telemetry",
@@ -22,6 +22,8 @@ export const OPERATOR_DOMAINS = [
   "output",
   "semantic",
   "mcp",
+  "hierarchy",
+  "capability",
 ] as const
 
 export type OperatorDomain = (typeof OPERATOR_DOMAINS)[number]
@@ -91,6 +93,9 @@ const ENTRIES: readonly EntrySpec[] = [
   { id: "budget.set", mutates: true, scopesAllowed: GP, offlineCapable: true },
   { id: "budget.reset", mutates: true, scopesAllowed: GP, offlineCapable: true },
   { id: "budget.validate", mutates: false, scopesAllowed: GP, offlineCapable: true },
+  // Feature 046 — partial write of ANY budget enforcement leaf (persists only the
+  // leaves the operator set), complementing the legacy 5-leaf `budget.set` view.
+  { id: "budget.configure", mutates: true, scopesAllowed: GP, offlineCapable: true },
 
   // pools
   { id: "pools.status", mutates: false, scopesAllowed: GP, offlineCapable: true },
@@ -98,6 +103,18 @@ const ENTRIES: readonly EntrySpec[] = [
   { id: "pools.set", mutates: true, scopesAllowed: GP, offlineCapable: true },
   { id: "pools.reset", mutates: true, scopesAllowed: GP, offlineCapable: true },
   { id: "pools.validate", mutates: false, scopesAllowed: GP, offlineCapable: true },
+
+  // hierarchy (Feature 046) — the routing enforcement hierarchy leaves (max_depth,
+  // orchestration_only) over the SAME per-scope routing document budget/smart bind.
+  { id: "hierarchy.status", mutates: false, scopesAllowed: GP, offlineCapable: true },
+  { id: "hierarchy.show", mutates: false, scopesAllowed: GP, offlineCapable: true },
+  { id: "hierarchy.set", mutates: true, scopesAllowed: GP, offlineCapable: true },
+
+  // capability (Feature 046) — the routing enforcement capability leaves
+  // (metadata_source, unknown_policy, probing_enabled) over the SAME routing document.
+  { id: "capability.status", mutates: false, scopesAllowed: GP, offlineCapable: true },
+  { id: "capability.show", mutates: false, scopesAllowed: GP, offlineCapable: true },
+  { id: "capability.set", mutates: true, scopesAllowed: GP, offlineCapable: true },
 
   // process (Feature 002 canonical vocabulary, session scope; C19)
   { id: "process.status", mutates: false, scopesAllowed: SP, offlineCapable: true },

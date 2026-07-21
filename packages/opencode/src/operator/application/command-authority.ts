@@ -140,6 +140,12 @@ export function createOperatorAuthorityResolver(deps: AuthorityResolverDeps = {}
         return SMART_AUTHORITY[s]
       case "budget":
         return BUDGET_AUTHORITY[s]
+      // hierarchy/capability (Feature 046) commit to the SAME per-scope routing
+      // document as smart/budget — the enforcement leaves live on one document.
+      case "hierarchy":
+        return SMART_AUTHORITY[s]
+      case "capability":
+        return SMART_AUTHORITY[s]
       // routing shares the same per-scope routing document authority as smart/budget.
       case "routing":
         return SMART_AUTHORITY[s]

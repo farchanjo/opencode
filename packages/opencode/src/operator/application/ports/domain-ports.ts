@@ -17,6 +17,8 @@ export type LangLockPort = { readonly invoke: DomainInvoke }
 export type OutputPort = { readonly invoke: DomainInvoke }
 export type SemanticPort = { readonly invoke: DomainInvoke }
 export type McpAdminPort = { readonly invoke: DomainInvoke }
+export type HierarchyPort = { readonly invoke: DomainInvoke }
+export type CapabilityPort = { readonly invoke: DomainInvoke }
 
 export type DomainPorts = {
   readonly telemetry: TelemetryPort
@@ -31,6 +33,8 @@ export type DomainPorts = {
   readonly output: OutputPort
   readonly semantic: SemanticPort
   readonly mcp: McpAdminPort
+  readonly hierarchy: HierarchyPort
+  readonly capability: CapabilityPort
 }
 
 export const DOMAIN_PORT_NAMES = [
@@ -46,6 +50,8 @@ export const DOMAIN_PORT_NAMES = [
   "output",
   "semantic",
   "mcp",
+  "hierarchy",
+  "capability",
 ] as const
 
 export type DomainPortName = (typeof DOMAIN_PORT_NAMES)[number]

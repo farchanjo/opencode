@@ -28,6 +28,7 @@ import type {
 } from "@opencode-ai/protocol/budget/commands"
 import type { HandlerContext, HandlerResult, FailureHandlerResult, OperatorMutationPlan } from "@/operator/application/handler"
 import type { DomainInvoke } from "@/operator/application/ports/domain-ports"
+import type { EnforcementError, EnforcementLeafBackendApi } from "@/operator/enforcement/leaf-backend"
 import type { BudgetAuditEvent, BudgetAuditSink, BudgetBackend } from "./budget-port"
 
 export interface BudgetDomainPorts {
@@ -37,6 +38,13 @@ export interface BudgetDomainPorts {
 export interface BudgetCommandDeps {
   readonly backend: BudgetBackend
   readonly audit: BudgetAuditSink
+  /**
+   * Feature 046 — the shared enforcement-leaf backend. When present, `budget.show`
+   * / `budget.status` are ENRICHED with the full `leaves` map (best-effort, never a
+   * regression) and `budget.configure` performs a partial write of ANY budget leaf.
+   * Optional so pre-046 constructions keep the legacy 5-leaf behavior.
+   */
+  readonly enforcement?: EnforcementLeafBackendApi
 }
 
 // =============================================================================
@@ -138,6 +146,34 @@ function budgetErrorToFailure(error: BudgetError): FailureHandlerResult {
   }
 }
 
+/** Map the enforcement error union onto an operator failure envelope (Feature 046, budget.configure). */
+function enforcementErrorToFailure(error: EnforcementError): FailureHandlerResult {
+  switch (error.type) {
+    case "unauthorized":
+      return fail("unauthorized", error.reason)
+    case "invalid_argument":
+      return fail("invalid_argument", error.reason, { field: error.field })
+    case "version_conflict":
+      return fail("invalid_argument", `version conflict: expected ${error.expectedVersion}, actual ${error.actualVersion}`, {
+        field: "expectedVersion",
+        expectedVersion: error.expectedVersion,
+        actualVersion: error.actualVersion,
+      })
+    case "unavailable":
+      return fail("unavailable", error.reason)
+  }
+}
+
+/** The `{ leafKey: value }` map an operator set — from `payload.values`, else the payload minus reserved keys. */
+function parseConfigureValues(payload: Record<string, unknown>): Record<string, unknown> {
+  const nested = payload["values"]
+  if (nested && typeof nested === "object" && !Array.isArray(nested)) return nested as Record<string, unknown>
+  const RESERVED = new Set(["expectedVersion", "expected_version", "version", "idempotencyKey", "idempotency_key", "scopeId", "scope_id", "limits"])
+  const out: Record<string, unknown> = {}
+  for (const key of Object.keys(payload)) if (!RESERVED.has(key)) out[key] = payload[key]
+  return out
+}
+
 // =============================================================================
 // budget.* domain invoke
 // =============================================================================
@@ -187,6 +223,38 @@ function budgetInvoke(deps: BudgetCommandDeps): DomainInvoke {
 
   const query = (value: unknown): HandlerResult => ({ kind: "query", effective: value })
 
+  /** Run an enforcement mutation plan, emitting one audit event on failure (Feature 046). */
+  const runEnforcementPlan = (
+    commandId: string,
+    principalId: string,
+    target: string,
+    effect: Effect.Effect<OperatorMutationPlan, EnforcementError>,
+  ): Promise<HandlerResult> =>
+    Effect.runPromise(
+      effect.pipe(
+        Effect.matchEffect({
+          onSuccess: (plan): Effect.Effect<HandlerResult> => Effect.succeed({ kind: "mutation_plan", ...plan }),
+          onFailure: (error): Effect.Effect<HandlerResult> =>
+            deps.audit
+              .record({ commandId, principalId, target, outcome: error.type === "unauthorized" ? "unauthorized" : error.type === "version_conflict" ? "conflict" : error.type === "invalid_argument" ? "invalid" : "rejected" })
+              .pipe(Effect.as(enforcementErrorToFailure(error))),
+        }),
+      ),
+    )
+
+  /** Resolve the budget summary, best-effort ENRICHED with the full leaves map (Feature 046, FR5). */
+  const resolveWithLeaves = (scope: BudgetScope, requestScopeKind: string): Effect.Effect<unknown, BudgetError> =>
+    backend.resolve({ scope }).pipe(
+      Effect.flatMap((summary) => {
+        const enforcement = deps.enforcement
+        if (!enforcement) return Effect.succeed(summary as unknown)
+        return enforcement.showLeaves("budget", requestScopeKind).pipe(
+          Effect.map((view) => ({ ...summary, leaves: view.leaves }) as unknown),
+          Effect.orElseSucceed(() => summary as unknown),
+        )
+      }),
+    )
+
   return (ctx: HandlerContext): Promise<HandlerResult> => {
     const id = String(ctx.descriptor.id)
     const payload = asRecord(ctx.request.payload)
@@ -204,10 +272,10 @@ function budgetInvoke(deps: BudgetCommandDeps): DomainInvoke {
 
     switch (id) {
       case "budget.status":
-        return run(id, principalId, target, backend.resolve({ scope }), (summary) => query(summary))
+        return run(id, principalId, target, resolveWithLeaves(scope, ctx.request.scope.kind), (summary) => query(summary))
 
       case "budget.show":
-        return run(id, principalId, target, backend.resolve({ scope }), (summary) => query(summary))
+        return run(id, principalId, target, resolveWithLeaves(scope, ctx.request.scope.kind), (summary) => query(summary))
 
       case "budget.validate":
         return run(id, principalId, target, backend.validate({ scope }), (out) => query(out))
@@ -224,6 +292,20 @@ function budgetInvoke(deps: BudgetCommandDeps): DomainInvoke {
       case "budget.reset": {
         const expectedVersion = resolveExpectedVersion(payload, ctx.request)
         return runPlan(id, principalId, target, backend.planReset({ scope, expectedVersion, principal }))
+      }
+
+      case "budget.configure": {
+        if (!deps.enforcement) return Promise.resolve(fail("not_implemented", "budget.configure requires the enforcement backend"))
+        const expectedVersion = resolveExpectedVersion(payload, ctx.request)
+        return runEnforcementPlan(
+          id,
+          principalId,
+          target,
+          deps.enforcement.planConfigure(
+            { domain: "budget", values: parseConfigureValues(payload), expectedVersion, principal: { kind: principal.kind, id: principal.id } },
+            ctx.request.scope.kind,
+          ),
+        )
       }
 
       default:

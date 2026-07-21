@@ -132,6 +132,9 @@ export const OPERATOR_PERSISTING_DOMAINS = [
   "smart",
   "budget",
   "pools",
+  // Feature 046 — hierarchy/capability persist to the routing config document.
+  "hierarchy",
+  "capability",
 ] as const
 
 const PERSISTING_DOMAIN_SET: ReadonlySet<string> = new Set(OPERATOR_PERSISTING_DOMAINS)
@@ -447,7 +450,7 @@ export function listOperatorPaletteEntries(options: ListPaletteOptions = {}): re
   })
 }
 
-/** All 12 reserved catalog domains project into the group menu (T004, FR2). */
+/** All reserved catalog domains project into the group menu (T004, FR2; Feature 046 adds hierarchy/capability). */
 export const OPERATOR_SETTINGS_DOMAINS: readonly OperatorDomain[] = [
   "telemetry",
   "smart",
@@ -461,6 +464,8 @@ export const OPERATOR_SETTINGS_DOMAINS: readonly OperatorDomain[] = [
   "output",
   "semantic",
   "mcp",
+  "hierarchy",
+  "capability",
 ] as const
 
 export function listOperatorSettingsEntries(domain: string): readonly OperatorPaletteEntry[] {

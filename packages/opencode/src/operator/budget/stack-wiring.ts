@@ -17,6 +17,7 @@ export * as BudgetStackWiring from "./stack-wiring"
 
 import { Effect } from "effect"
 import { BudgetCommandPort } from "./budget-command-port"
+import type { EnforcementLeafBackendApi } from "../enforcement/leaf-backend"
 import type { BudgetAuditSink, BudgetBackend } from "./budget-port"
 
 export interface BudgetDomainWiringDeps {
@@ -24,6 +25,8 @@ export interface BudgetDomainWiringDeps {
   readonly backend: BudgetBackend
   /** Optional operator access-audit sink; defaults to a bounded debug log. */
   readonly audit?: BudgetAuditSink
+  /** Feature 046 — shared enforcement backend enabling budget.configure + leaf-enriched budget.show. */
+  readonly enforcement?: EnforcementLeafBackendApi
 }
 
 export interface BudgetDomainWiring {
@@ -45,7 +48,7 @@ const defaultAuditSink: BudgetAuditSink = {
  */
 export function createBudgetDomainWiring(deps: BudgetDomainWiringDeps): BudgetDomainWiring {
   const audit = deps.audit ?? defaultAuditSink
-  const ports = BudgetCommandPort.createBudgetDomainPorts({ backend: deps.backend, audit })
+  const ports = BudgetCommandPort.createBudgetDomainPorts({ backend: deps.backend, audit, enforcement: deps.enforcement })
   return {
     ports,
     port: deps.backend,

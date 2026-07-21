@@ -17,6 +17,7 @@
  * and is only placed on the payload when the operator re-enters it (FR19, FR21).
  */
 import { isRecord } from "../projection"
+import { EnforcementLeaves, type EnforcementDomain, type EnforcementLeaf } from "@opencode-ai/protocol/enforcement/leaves"
 
 /** The input kinds the multi-field modal renders per property (mirrors `#FieldInputKind`). */
 export type EditFieldKind = "text" | "numeric" | "toggle" | "picker" | "bindings_list" | "advanced_json"
@@ -292,9 +293,62 @@ const MISFIRE_POLICIES: readonly EditFieldOption[] = [
   { title: "Coalesce", value: "coalesce" },
 ]
 
+// ── Feature 046 — enforcement-leaf fields generated from the SHARED registry ──
+
+/**
+ * Build one TUI edit field for a budget/hierarchy/capability enforcement leaf,
+ * driven ENTIRELY by the shared `@opencode-ai/protocol/enforcement/leaves`
+ * registry the `op` CLI backend also validates against — so the two surfaces
+ * cannot drift out of parity (FR4, FR10). Numeric/text fields parse+validate
+ * through the SAME `parseLeafValue` the backend uses (bounds, enum membership);
+ * a boolean leaf renders a toggle, an enum leaf a bounded picker. Every field is
+ * OPTIONAL so an operator submits only the leaves they touched (partial write,
+ * FR7); each prefills from the effective read's `leaves` map (FR10).
+ */
+function enforcementLeafField(leaf: EnforcementLeaf): EditField {
+  const prefill = prefillNestedScalar("leaves", leaf.key)
+  const parse = (raw: string): FieldParse => {
+    const parsed = EnforcementLeaves.parseLeafValue(leaf, raw.trim())
+    return parsed.ok ? { ok: true, value: parsed.value } : { ok: false, message: parsed.reason }
+  }
+  switch (leaf.type.kind) {
+    case "int":
+    case "float":
+      return { key: leaf.key, label: leaf.label, kind: "numeric", required: false, prefill, parse }
+    case "text":
+      return { key: leaf.key, label: leaf.label, kind: "text", required: false, prefill, parse }
+    case "bool":
+      return { key: leaf.key, label: leaf.label, kind: "toggle", required: false, prefill }
+    case "enum":
+      return {
+        key: leaf.key,
+        label: leaf.label,
+        kind: "picker",
+        required: false,
+        prefill,
+        options: leaf.type.members.map((member) => ({ title: member, value: member })),
+      }
+  }
+}
+
+/** Compose the `{ values: { … } }` enforcement payload — only the leaves the operator set (FR7). */
+function enforcementDescriptor(commandId: string, readId: string, domain: EnforcementDomain): EditFieldListDescriptor {
+  return {
+    commandId,
+    readId,
+    fields: EnforcementLeaves.leavesForDomain(domain).map(enforcementLeafField),
+    compose: (v) => ({ values: { ...v } }),
+  }
+}
+
 // ── the per-verb multi-field registry ───────────────────────────────────────
 
 const DESCRIPTORS: readonly EditFieldListDescriptor[] = [
+  // Feature 046 — hierarchy/capability leaves + the full-leaf budget.configure,
+  // all generated from the shared enforcement-leaf registry (FR1-FR4).
+  enforcementDescriptor("hierarchy.set", "hierarchy.show", "hierarchy"),
+  enforcementDescriptor("capability.set", "capability.show", "capability"),
+  enforcementDescriptor("budget.configure", "budget.show", "budget"),
   {
     commandId: "telemetry.configure",
     readId: "telemetry.show",
@@ -500,6 +554,15 @@ export function composePayload(
     if (field.kind === "bindings_list") continue // supplied via `extras`
     const rawValue = raw[field.key] ?? ""
     if (field.kind === "toggle") {
+      // A toggle is emitted ONLY when it carries a seeded/toggled state (`"true"`/
+      // `"false"`); an unseeded toggle (blank raw — a prefill miss or a field the
+      // operator never touched) is DROPPED, never force-emitted as `false`. This
+      // keeps a boolean leaf partial-writable (persist-only-set, FR7), matching the
+      // op CLI's partial payload. A required toggle with no state is still an error.
+      if (rawValue.trim().length === 0) {
+        if (field.required) return { ok: false, message: `${field.label} is required` }
+        continue
+      }
       values[field.key] = rawValue === "true"
       continue
     }

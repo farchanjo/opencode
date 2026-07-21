@@ -78,6 +78,8 @@ import { BudgetStackWiring } from "./budget/stack-wiring"
 import { BudgetBackendLive } from "./budget/backend-live"
 import { PoolsStackWiring } from "./pools/stack-wiring"
 import { PoolsBackendLive } from "./pools/backend-live"
+import { EnforcementStackWiring } from "./enforcement/stack-wiring"
+import { EnforcementLeafBackend } from "./enforcement/leaf-backend"
 import { createDispatcher, type Dispatcher } from "./application/dispatcher"
 import type { MutationPorts } from "./application/mutation"
 import { createFlockLockPort } from "./application/ports/lock-port"
@@ -830,11 +832,19 @@ export async function createLiveOperatorStack(input: CreateLiveOperatorStackInpu
   const smartWiring = SmartStackWiring.createSmartDomainWiring({
     backend: SmartBackendLive.createLiveSmartBackend({ config: store.config }),
   })
+  // Feature 046 — one shared enforcement-leaf backend over the SAME routing document
+  // budget/smart/pools project; it powers hierarchy.*/capability.* AND budget.configure
+  // + the leaf-enriched budget.show. No parallel store.
+  const enforcementBackend = EnforcementLeafBackend.createLiveEnforcementBackend({ config: store.config })
   const budgetWiring = BudgetStackWiring.createBudgetDomainWiring({
     backend: BudgetBackendLive.createLiveBudgetBackend({ config: store.config }),
+    enforcement: enforcementBackend,
   })
   const poolsWiring = PoolsStackWiring.createPoolsDomainWiring({
     backend: PoolsBackendLive.createLivePoolsBackend({ config: store.config, catalog: poolsCatalogValidator }),
+  })
+  const enforcementWiring = EnforcementStackWiring.createEnforcementDomainWiring({
+    backend: enforcementBackend,
   })
 
   const domainPorts = wireDomainPorts(
@@ -849,6 +859,7 @@ export async function createLiveOperatorStack(input: CreateLiveOperatorStackInpu
       ...smartWiring.ports,
       ...budgetWiring.ports,
       ...poolsWiring.ports,
+      ...enforcementWiring.ports,
       // Feature 024 — a write-capable configure backend over the SAME committed
       // store.config seam smart/budget/pools project. routing.configure now persists
       // via a CAS mutation_plan (partial-merged to preserve role_pools + activation),
@@ -923,6 +934,7 @@ export async function createLiveOperatorStack(input: CreateLiveOperatorStackInpu
       smartWiring.dispose()
       budgetWiring.dispose()
       poolsWiring.dispose()
+      enforcementWiring.dispose()
       maintenance.dispose()
     },
   }
