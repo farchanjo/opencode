@@ -27,6 +27,7 @@ import type { BindingState } from "@opencode-ai/core/semantic/binding-lifecycle"
 import { CutoverExecutor } from "@/semantic/cutover-executor"
 import { RerankClient } from "@/semantic/rerank-client"
 import { UrlGuard } from "@/semantic/url-guard"
+import type { ProbeFailed, ProbedVectorSpace } from "@/semantic/dimension-probe"
 import { type ConfigPort } from "@/operator/application/ports/config-port"
 import type { MilvusPort } from "@/semantic/milvus-adapter"
 import type { OperatorMutationEffectResult, OperatorMutationPlan } from "@/operator/application/handler"
@@ -271,6 +272,19 @@ export interface BindingValidatePlanInput {
  * composed from the runtime) the config-backed `planValidateReranker` returns the honest
  * typed gap, never a fabricated `validated` (cardinal honesty for the reranker slot).
  */
+/**
+ * Feature 050 (FR6) — the reranker capability envelope captured alongside the
+ * pass/fail boolean where cheaply available (the modes tried, the observed score
+ * range). A mode absent from `modes` is never eligible for that reranker slot.
+ */
+export interface RerankCapabilities {
+  readonly modes: ReadonlyArray<RerankProfile>
+  readonly maxDocuments?: number
+  readonly contextWindow?: number
+  readonly scoreRange?: { readonly min: number; readonly max: number }
+  readonly probedAt: string
+}
+
 export interface RerankValidationProbe {
   readonly run: (input: {
     readonly baseUrl: string
@@ -288,7 +302,7 @@ export interface RerankValidationProbe {
      * is never logged, echoed, or returned. Empty when the provider carries no secret.
      */
     readonly secretRef: string
-  }) => Promise<{ readonly passed: boolean }>
+  }) => Promise<{ readonly passed: boolean; readonly capabilities?: RerankCapabilities }>
 }
 
 /**
@@ -366,9 +380,25 @@ export interface ConfigBackedRegistryDeps {
    * this probe is its only backend-readiness input.
    */
   readonly rerankProbe?: RerankValidationProbe
-  /** The vector dimension a generation build declares when the staged model omits one (default 1024). */
+  /**
+   * Feature 050 (FR6) — the model-driven embedding dimension/capability probe. When
+   * present, `generationVectorSpace` DISCOVERS the real vector space from the staged
+   * model (never a default); a probe failure fails the reindex plan closed with a
+   * typed capability gap, never a silent `1024`. Production (`stack-live`) always
+   * supplies this; a `probe_failed` never reaches `buildGeneration`.
+   */
+  readonly embeddingProbe?: (input: {
+    readonly baseUrl: string
+    readonly modelRef: string
+    readonly secretRef: string
+  }) => Promise<ProbedVectorSpace | ProbeFailed>
+  /**
+   * Test seam ONLY — a fixed dimension/metric used when it is explicitly provided AND
+   * no `embeddingProbe` is configured (preserves the pre-050 unit tests). Production
+   * always wires the probe, so this default is never taken there (FR6).
+   */
   readonly defaultDimension?: number
-  /** The vector metric a generation build declares when the staged model omits one (default `cosine`). */
+  /** Test-seam metric paired with `defaultDimension`; never consulted when a probe is wired. */
   readonly defaultMetric?: MetricKind
 }
 
@@ -693,12 +723,39 @@ export function createConfigBackedRegistry(deps: ConfigBackedRegistryDeps): Sema
     planRollbackEmbedding: (input) => planRollbackEmbedding(input),
   }
 
-  /** The vector space a generation build declares from the staged model, else the configured defaults. */
-  function generationVectorSpace(model: RegistryModel | undefined): { dimension: number; metric: MetricKind } {
-    const dimension = deps.defaultDimension ?? 1024
-    const metric = deps.defaultMetric ?? ("cosine" as MetricKind)
-    void model
-    return { dimension, metric }
+  /**
+   * Feature 050 (FR6) — DISCOVER the vector space from the staged model via the
+   * injected embedding probe, never a hardcoded default. On a probe failure with no
+   * discovered dimension the reindex plan FAILS CLOSED with a typed capability gap
+   * (`not_validated`), never reaching `buildGeneration` with a guessed dimension. The
+   * `defaultDimension`/`defaultMetric` deps remain ONLY as a test seam, taken solely
+   * when no probe is configured (production always wires the probe).
+   */
+  function generationVectorSpace(
+    doc: RegistryDocument,
+    model: RegistryModel | undefined,
+  ): Effect.Effect<{ dimension: number; metric: MetricKind }, BindingError> {
+    return Effect.gen(function* () {
+      const probe = deps.embeddingProbe
+      if (probe !== undefined && model !== undefined) {
+        const provider = doc.providers.find((p) => p.id === model.providerProfileId)
+        const result = yield* Effect.promise(() =>
+          probe({
+            baseUrl: provider?.baseUrl ?? "",
+            modelRef: model.modelRef ?? model.id,
+            secretRef: provider?.secretRef ?? "",
+          }),
+        )
+        if ("type" in result) return yield* Effect.fail<BindingError>({ type: "not_validated", id: model.id })
+        // Assert the probed metric against the shipped enum BEFORE it is written to the document (research risk).
+        const metric: MetricKind = result.metric === "inner-product" ? "inner-product" : "cosine"
+        return { dimension: result.dimension, metric }
+      }
+      if (deps.defaultDimension !== undefined) {
+        return { dimension: deps.defaultDimension, metric: deps.defaultMetric ?? ("cosine" as MetricKind) }
+      }
+      return yield* Effect.fail<BindingError>({ type: "not_validated", id: model?.id ?? "" })
+    })
   }
 
   /** Run one Milvus port effect to a deferred `OperatorMutationEffectResult` (bounded, secret-free reason). */
@@ -741,7 +798,7 @@ export function createConfigBackedRegistry(deps: ConfigBackedRegistryDeps): Sema
       }
       const generationId = `gen_${idGen()}`
       const model = doc.models.find((m) => m.id === staged.modelDescriptorId)
-      const space = generationVectorSpace(model)
+      const space = yield* generationVectorSpace(doc, model)
       const record: RegistryGeneration = {
         generationId,
         state: "validated",

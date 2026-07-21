@@ -23,7 +23,8 @@ export * as RerankProbe from "./rerank-probe"
 
 import { RerankClient } from "@/semantic/rerank-client"
 import type { NativeRerankHttpPort, RerankRequest, StructuredChatHttpPort } from "@/semantic/rerank-client"
-import type { RerankValidationProbe } from "./registry-backend"
+import type { RerankProfile } from "@opencode-ai/protocol/semantic/commands"
+import type { RerankCapabilities, RerankValidationProbe } from "./registry-backend"
 
 /** The bounded probe query + document; content-free, deterministic, and never persisted. */
 const PROBE_QUERY = "reranker capability validation probe"
@@ -140,8 +141,25 @@ export function createRerankValidationProbe(deps: RerankProbeDeps): RerankValida
           ? await RerankClient.rerankStructured({ http: structuredPort(deps.http, authHeader) }, { ...request, tokenBudget: PROBE_TOKEN_BUDGET })
           : await RerankClient.rerankNative({ http: nativePort(deps.http, authHeader) }, request)
 
-      return { passed: outcome.ok && outcome.results.length > 0 }
+      const passed = outcome.ok && outcome.results.length > 0
+      if (!passed) return { passed: false }
+      // Feature 050 (FR6) — capture the reranker capability envelope cheaply available from the
+      // passing probe: the mode tried plus the observed score range. No extra network call.
+      return { passed: true, capabilities: capabilitiesOf(input.profile, outcome.results) }
     },
+  }
+}
+
+/** Project a `RerankCapabilities` from a passing probe's scored rows — the mode tried + score range (FR6). */
+function capabilitiesOf(
+  profile: RerankProfile,
+  results: ReadonlyArray<{ readonly score: number }>,
+): RerankCapabilities {
+  const scores = results.map((r) => r.score)
+  return {
+    modes: [profile],
+    ...(scores.length > 0 ? { scoreRange: { min: Math.min(...scores), max: Math.max(...scores) } } : {}),
+    probedAt: new Date().toISOString(),
   }
 }
 
