@@ -7,6 +7,7 @@ import type { ConfigPort } from "../../application/ports/config-port"
 import { createHandlerMap, type HandlerMap } from "../../application/handler"
 import { staticAuthorityForCommandId } from "../../application/command-authority"
 import { AUTHORITY as SMART_AUTHORITY } from "../../smart/backend-live"
+import { createConfigAdapter } from "@/routing/adapters/outbound/config-adapter"
 
 /**
  * Map a command id → the Config authority it commits to, for a preflight path that
@@ -52,17 +53,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 /**
- * The routing config authority a `routing.status` read must resolve for a request scope.
- * Reuses the single `SMART_AUTHORITY` SSOT (`smart`/`budget`/`pools`/`routing.configure`
- * all commit through it — Features 024/025/033): global scope → `global:routing`, every
- * other kind → the project `routing` document. A no-scope / project / session request stays
- * `routing`, so a bare `routing.status` reads exactly the authority it did pre-036.
- */
-function routingStatusAuthority(scopeKind: string): string {
-  return SMART_AUTHORITY[scopeKind === "global" ? "global" : "project"]
-}
-
-/**
  * Project the REDACTED activation (`enabled` + `mode`) from a routing config payload, or
  * `null` when the scoped authority holds no document. Activation flags are non-secret (the
  * `smart.status` summary already exposes `enabled`/`auto` publicly); no other payload field
@@ -77,38 +67,75 @@ function readActivation(payload: unknown): { readonly enabled: boolean; readonly
   }
 }
 
+/** The shape a `routing.status` read projects for one resolved scope (redacted activation only). */
+interface RoutingStatusProjection {
+  readonly authority: string
+  readonly version: string | undefined
+  readonly configured: boolean
+  readonly activation: { readonly enabled: boolean; readonly mode: string } | null
+}
+
+/** Build the `routing.status` query result for a resolved-scope projection (shared shape). */
+function routingStatusResult(ctx: HandlerContext, projection: RoutingStatusProjection): HandlerResult {
+  return {
+    kind: "query",
+    version: projection.version,
+    effective: {
+      id: ctx.descriptor.id,
+      authority: projection.authority,
+      configured: projection.configured,
+      available: true,
+      status: projection.configured ? "configured" : "unconfigured",
+      // Redacted activation projection (enabled + mode) — never the raw payload.
+      activation: projection.activation,
+      hasPayload: projection.configured,
+      offlineCapable: ctx.descriptor.offlineCapable,
+      source: ctx.request.source,
+    },
+  }
+}
+
 /**
- * Feature 036 — the `routing.status` READ honors the request scope. The generic
- * `createConfigStatusHandler` keyed a SCOPE-BLIND authority (`authorityKeyForCommandId`
- * always resolved the project `routing` document), so `routing.status --scope global`
- * reported `configured:false` even when a `global:routing` document was set and
- * `smart.status --scope global` correctly reported `configured:true` from that same
- * document. This handler resolves the authority from `ctx.request.scope.kind` via the shared
- * `SMART_AUTHORITY` mapping — exactly as `smart.status`/`routing.configure`/`routing.test`
- * thread the request scope — and projects the redacted activation so a scoped status agrees
- * with `smart.status` on `enabled`/`mode`. It is read-only: no write, schema, or catalog
- * change, and a bare (no-scope) request still reads the project `routing` authority.
+ * Feature 040 — the `routing.status` READ prefills the operator Configure modal, so it must
+ * report the EFFECTIVE (document-shadowed) activation the `op` CLI status surfaces report —
+ * reaching parity with `smart.status`. Feature 036 made this handler scope-aware but kept a
+ * SINGLE `config.get`, so a project/bare read reported `configured:false` under a global-only
+ * config (its accepted residual). Option A (ADR-0040) resolves the layered effective config
+ * (`resolveEffective`: project > global > default — the SAME read `smart.status` consumes)
+ * for a project/bare scope, so a persisted `global:routing` activation shadows in; an EXPLICIT
+ * `global` scope still reads `global:routing` directly (Feature 036, unchanged). The write-
+ * target authority (`routing` at project scope) and the redacted activation projection agree
+ * with `smart.status`. Read-only: no write, schema, or catalog change. This deliberately
+ * SUPERSEDES the Feature 036 project/bare `configured:false` residual (recorded in ADR-0040
+ * and the ADR-0036 residual note).
  */
 export function createRoutingStatusHandler(config: ConfigPort): OperatorCommandHandler {
+  const routing = createConfigAdapter({ config })
   return async (ctx: HandlerContext): Promise<HandlerResult> => {
-    const authority = routingStatusAuthority(ctx.request.scope.kind)
-    const entry = await config.get(authority)
-    return {
-      kind: "query",
-      version: entry?.version,
-      effective: {
-        id: ctx.descriptor.id,
-        authority,
+    // Explicit global scope reads the `global:routing` document directly (Feature 036).
+    if (ctx.request.scope.kind === "global") {
+      const entry = await config.get(SMART_AUTHORITY.global)
+      return routingStatusResult(ctx, {
+        authority: SMART_AUTHORITY.global,
+        version: entry?.version,
         configured: entry !== null,
-        available: true,
-        status: entry ? "configured" : "unconfigured",
-        // Redacted activation projection (enabled + mode) — never the raw payload.
         activation: readActivation(entry?.payload),
-        hasPayload: entry !== null,
-        offlineCapable: ctx.descriptor.offlineCapable,
-        source: ctx.request.source,
-      },
+      })
     }
+    // Project / bare / session / root-tree: the shadowed effective read (project > global >
+    // default). The reported `authority` is the project write target — agreeing with
+    // `smart.status`; the CAS-relevant version follows that write-target authority.
+    const effective = await routing.resolveEffective()
+    const project = await routing.get("project")
+    const shadowed = effective.origin !== "default"
+    return routingStatusResult(ctx, {
+      authority: SMART_AUTHORITY.project,
+      version: project.version ?? undefined,
+      configured: shadowed,
+      activation: shadowed
+        ? { enabled: effective.config.activation.enabled, mode: effective.config.activation.mode }
+        : null,
+    })
   }
 }
 
