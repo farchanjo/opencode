@@ -50,15 +50,33 @@ export const isTransientDataPlaneError = (error: unknown): boolean => {
  * total attempts (1 + 2 retries), 500ms base, jittered, and ONLY while the error
  * is transient (`isTransient`); a domain error stops immediately (FR12).
  */
+/** Optional observation hooks for a data-plane retry — `onRetry` fires once per retry actually taken (FR12). */
+export interface DataPlaneRetryOptions {
+  /** Called when a transient error triggers a retry; wired to the resilience `retry_count` recorder (FR12). */
+  readonly onRetry?: () => void
+}
+
+const MAX_DATA_PLANE_RETRIES = 2
+
 export const withDataPlaneRetry = <A, E>(
   effect: Effect.Effect<A, E>,
   isTransient: (error: E) => boolean,
-): Effect.Effect<A, E> =>
-  Effect.retry(effect, {
+  options: DataPlaneRetryOptions = {},
+): Effect.Effect<A, E> => {
+  // Per-operation counter so `onRetry` fires ONCE per retry actually taken — never on the
+  // terminal failure that exhausts the budget (that is not a retry). Bounded to ≤3 attempts.
+  let retriesTaken = 0
+  return Effect.retry(effect, {
     schedule: Schedule.exponential(500).pipe(Schedule.jittered),
-    times: 2,
-    while: isTransient,
+    times: MAX_DATA_PLANE_RETRIES,
+    while: (error: E) => {
+      if (!isTransient(error) || retriesTaken >= MAX_DATA_PLANE_RETRIES) return false
+      retriesTaken += 1
+      options.onRetry?.()
+      return true
+    },
   })
+}
 
 /**
  * Promise-facing convenience over {@link withDataPlaneRetry}: retries a
@@ -69,5 +87,6 @@ export const withDataPlaneRetry = <A, E>(
 export const retryDataPlanePromise = <A>(
   run: () => Promise<A>,
   isTransient: (error: unknown) => boolean,
+  options: DataPlaneRetryOptions = {},
 ): Promise<A> =>
-  Effect.runPromise(withDataPlaneRetry(Effect.tryPromise({ try: run, catch: (error) => error }), isTransient))
+  Effect.runPromise(withDataPlaneRetry(Effect.tryPromise({ try: run, catch: (error) => error }), isTransient, options))

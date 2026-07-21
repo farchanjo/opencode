@@ -9,6 +9,8 @@
 import { describe, expect, test } from "bun:test"
 import { Effect } from "effect"
 import { isTransientDataPlaneError, withDataPlaneRetry } from "@/util/effect-http-client"
+import { DataPlaneRetryStats } from "@/semantic/data-plane-retry-stats"
+import { accumulateConsumption, retryDelta, ZERO_CONSUMPTION } from "@/session/budget-consume"
 
 async function runAttempts(makeError: (attempt: number) => unknown, isTransient: (e: unknown) => boolean): Promise<number> {
   let attempts = 0
@@ -60,6 +62,51 @@ describe("withDataPlaneRetry", () => {
     )
     expect(result).toBe("ok")
     expect(attempts).toBe(1)
+  })
+})
+
+describe("retry_count activation (FR12 / AC7)", () => {
+  test("onRetry fires once per retry actually taken", async () => {
+    let retries = 0
+    let attempts = 0
+    await Effect.runPromise(
+      withDataPlaneRetry(
+        Effect.suspend(() => {
+          attempts += 1
+          return attempts < 2 ? Effect.fail({ type: "milvus_unavailable" }) : Effect.succeed("ok")
+        }),
+        isTransientDataPlaneError,
+        { onRetry: () => (retries += 1) },
+      ),
+    )
+    expect(attempts).toBe(2) // 1 initial + 1 retry
+    expect(retries).toBe(1)
+  })
+
+  test("DataPlaneRetryStats folds taken retries into resilience.retry_count", () => {
+    DataPlaneRetryStats.reset()
+    expect(DataPlaneRetryStats.snapshot().retry_count).toBe(0)
+    DataPlaneRetryStats.record()
+    DataPlaneRetryStats.record()
+    expect(DataPlaneRetryStats.snapshot().retry_count).toBe(2)
+    DataPlaneRetryStats.reset()
+    expect(DataPlaneRetryStats.snapshot().retry_count).toBe(0)
+  })
+
+  test("a transient maintenance fault visibly increments retry_count via the recorder", async () => {
+    DataPlaneRetryStats.reset()
+    await Effect.runPromise(
+      withDataPlaneRetry(Effect.fail({ type: "milvus_unavailable" }), isTransientDataPlaneError, {
+        onRetry: DataPlaneRetryStats.record,
+      }).pipe(Effect.flip),
+    )
+    expect(DataPlaneRetryStats.snapshot().retry_count).toBe(2) // bounded ≤3 attempts → 2 retries counted
+    DataPlaneRetryStats.reset()
+  })
+
+  test("retryDelta projects the count into ConsumptionResilience via accumulateConsumption", () => {
+    const consumption = accumulateConsumption(ZERO_CONSUMPTION, retryDelta(3))
+    expect(consumption.resilience.retry_count).toBe(3)
   })
 })
 
