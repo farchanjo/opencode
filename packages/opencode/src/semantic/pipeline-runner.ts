@@ -74,17 +74,34 @@ const EMBED_BATCH_SIZE = 1
 type AgentRecallRow = Pipeline.RecallRow
 type ToolRecallRow = ToolPass.ToolRecallRow
 
-/** Reject at the deadline so the facade relabels the rejection `{type:"timeout"}` — never a hang (FR3). */
-function withDeadline<A>(run: () => Promise<A>, budgetMs: number): Promise<A> {
+/**
+ * Reject at the deadline so the facade relabels the rejection `{type:"timeout"}` —
+ * never a hang (FR3). A `settled` guard makes the deadline and the surface's
+ * completion race exactly once: a post-deadline completion is a no-op, and the
+ * surface receives an `AbortSignal` it checks before any late shared-state write
+ * (e.g. the embed cache), so a losing promise can never mutate runner state.
+ */
+function withDeadline<A>(run: (signal: AbortSignal) => Promise<A>, budgetMs: number): Promise<A> {
+  const controller = new AbortController()
   return new Promise<A>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error("pipeline_deadline_exceeded")), budgetMs)
-    run().then(
+    let settled = false
+    const timer = setTimeout(() => {
+      if (settled) return
+      settled = true
+      controller.abort()
+      reject(new Error("pipeline_deadline_exceeded"))
+    }, budgetMs)
+    run(controller.signal).then(
       (value) => {
         clearTimeout(timer)
+        if (settled) return
+        settled = true
         resolve(value)
       },
       (error) => {
         clearTimeout(timer)
+        if (settled) return
+        settled = true
         reject(error)
       },
     )
@@ -100,7 +117,7 @@ function withDeadline<A>(run: () => Promise<A>, budgetMs: number): Promise<A> {
 export function createPipelineRunner(deps: PipelineRunnerDeps): PipelineRunnerPort {
   const embedCache = new Map<string, readonly number[]>()
 
-  const embedQueryVector = async (taskId: string, queryText: string): Promise<readonly number[]> => {
+  const embedQueryVector = async (taskId: string, queryText: string, signal: AbortSignal): Promise<readonly number[]> => {
     const cached = embedCache.get(taskId)
     if (cached !== undefined) return cached
     const vectors = await EmbeddingClient.embed(
@@ -108,7 +125,8 @@ export function createPipelineRunner(deps: PipelineRunnerDeps): PipelineRunnerPo
       { baseUrl: deps.bindings.embedding.baseUrl, model: deps.bindings.embedding.modelRef, texts: [queryText], maxBatchSize: EMBED_BATCH_SIZE },
     )
     const vector = vectors[0] ?? []
-    embedCache.set(taskId, vector)
+    // Never mutate shared runner state after the deadline aborted this surface (m5).
+    if (!signal.aborted) embedCache.set(taskId, vector)
     return vector
   }
 
@@ -189,8 +207,9 @@ export function createPipelineRunner(deps: PipelineRunnerDeps): PipelineRunnerPo
     request: RetrievalRequest,
     collection: "agents" | "skills",
     revalidator: EntityRevalidator | undefined,
+    signal: AbortSignal,
   ): Promise<PipelineOutcome> => {
-    const dense = await embedQueryVector(request.profile.taskId, request.profile.queryText)
+    const dense = await embedQueryVector(request.profile.taskId, request.profile.queryText, signal)
     const versionById = new Map<string, string>()
     const ports: Pipeline.PipelinePorts = {
       embedQuery: async () => {},
@@ -227,8 +246,8 @@ export function createPipelineRunner(deps: PipelineRunnerDeps): PipelineRunnerPo
     }
   }
 
-  const runToolSurface = async (request: ToolRetrievalRequest): Promise<ToolPipelineOutcome> => {
-    const dense = await embedQueryVector(request.profile.taskId, request.profile.queryText)
+  const runToolSurface = async (request: ToolRetrievalRequest, signal: AbortSignal): Promise<ToolPipelineOutcome> => {
+    const dense = await embedQueryVector(request.profile.taskId, request.profile.queryText, signal)
     const versionById = new Map<string, string>()
     const ports: ToolPass.ToolPassPorts = {
       embedQuery: async () => {},
@@ -275,8 +294,8 @@ export function createPipelineRunner(deps: PipelineRunnerDeps): PipelineRunnerPo
   }
 
   return {
-    runAgents: (request: RetrievalRequest) => withDeadline(() => runEntitySurface(request, "agents", deps.agents), deps.latencyBudgetMs),
-    runSkills: (request: SkillRetrievalRequest) => withDeadline(() => runEntitySurface(request, "skills", deps.skills), deps.latencyBudgetMs),
-    runTools: (request: ToolRetrievalRequest) => withDeadline(() => runToolSurface(request), deps.latencyBudgetMs),
+    runAgents: (request: RetrievalRequest) => withDeadline((signal) => runEntitySurface(request, "agents", deps.agents, signal), deps.latencyBudgetMs),
+    runSkills: (request: SkillRetrievalRequest) => withDeadline((signal) => runEntitySurface(request, "skills", deps.skills, signal), deps.latencyBudgetMs),
+    runTools: (request: ToolRetrievalRequest) => withDeadline((signal) => runToolSurface(request, signal), deps.latencyBudgetMs),
   }
 }
