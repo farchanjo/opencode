@@ -2,7 +2,7 @@
 id: 019f8666-649e-7993-b033-83a078636491
 number: 051
 slug: wire-live-per-turn-semantic-narrowing-of-agents-skills-and
-status: analyzed
+status: implemented
 created_at: 2026-07-21T20:38:05.214598Z
 ---
 # Feature Specification: Wire Live Per Turn Semantic Narrowing Of Agents Skills And
