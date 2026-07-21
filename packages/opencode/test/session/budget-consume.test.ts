@@ -18,10 +18,13 @@ import {
   ZERO_CONSUMPTION,
   accumulateConsumption,
   deltaFromUsage,
+  recordTurn,
   recordTurnAndEvaluate,
+  evaluateLiveBudget,
+  exceedsTurnLimit,
   headroomFor,
   perWorkerReserve,
-  PER_WORKER_COST_USD,
+  PER_WORKER_TOKEN_RATE_USD_PER_1K,
   type ConsumptionDelta,
 } from "@/session/budget-consume"
 import { createRoutingSessionStateStore } from "@/session/routing-state"
@@ -178,43 +181,135 @@ describe("hard-maximum breach → explicit block, never truncation (FR-B2, FR-B3
 })
 
 // =============================================================================
+// MUST-FIX 2 — per-response ceilings vs cumulative dimensions. A normal multi-step
+// routed session must NOT spuriously breach the per-RESPONSE token ceilings just
+// because the cumulative sum crossed them (each step re-sends the full context).
+// =============================================================================
+
+describe("per-response ceilings vs cumulative dimensions (Feature 043 MUST-FIX 2)", () => {
+  test("a normal multi-step session does NOT spuriously breach max_context_tokens/max_output_tokens", () => {
+    const store = createRoutingSessionStateStore()
+    // 5 steps, each response ~50k context / 4k output — well within the 200k/8k
+    // per-response ceilings, but the CUMULATIVE sum (250k/20k) crosses BOTH.
+    const p = policy({ maxContextTokens: 200_000, maxOutputTokens: 8_000, tokenBudget: 800_000, maxTurns: 100 })
+    let last = recordTurnAndEvaluate(store, SESSION, p, delta({ contextTokens: 50_000, outputTokens: 4_000 }))
+    for (let i = 0; i < 4; i++) {
+      last = recordTurnAndEvaluate(store, SESSION, p, delta({ contextTokens: 50_000, outputTokens: 4_000 }))
+    }
+    // No spurious per-response breach…
+    expect(last.breached).toBe(false)
+    expect(last.decision.outcome).toBe("ok")
+    // …yet the running total is still recorded cumulatively (FR-A2 / FR-D1 accounting).
+    expect(store.get(SESSION).consumption?.throughput.context_tokens_used).toBe(250_000)
+    expect(store.get(SESSION).consumption?.throughput.output_tokens_used).toBe(20_000)
+    expect(store.get(SESSION).consumption?.throughput.turns_used).toBe(5)
+  })
+
+  test("the cumulative token_budget still breaches on the summed context+output total", () => {
+    const store = createRoutingSessionStateStore()
+    // Per-response 50k context is under the 200k ceiling, but the cumulative sum
+    // crosses the 120k token_budget on the third step (150k) → blocked on token_budget.
+    const p = policy({ maxContextTokens: 200_000, maxOutputTokens: 8_000, tokenBudget: 120_000, maxTurns: 100 })
+    recordTurnAndEvaluate(store, SESSION, p, delta({ contextTokens: 50_000, outputTokens: 0 }))
+    recordTurnAndEvaluate(store, SESSION, p, delta({ contextTokens: 50_000, outputTokens: 0 }))
+    const breach = recordTurnAndEvaluate(store, SESSION, p, delta({ contextTokens: 50_000, outputTokens: 0 }))
+    expect(breach.decision.outcome).toBe("blocked")
+    expect(breach.decision.violations.some((v) => v.dimension === "token_budget")).toBe(true)
+    // No spurious per-response context ceiling breach (each step was 50k < 200k).
+    expect(breach.decision.violations.some((v) => v.dimension === "max_context_tokens")).toBe(false)
+  })
+
+  test("evaluateLiveBudget compares max_context_tokens against the per-response delta, not the running total", () => {
+    // A cumulative total already well past the per-response ceiling, but THIS
+    // response is small → no per-response breach; a large response → breach.
+    const p = policy({ maxContextTokens: 100_000, tokenBudget: 10_000_000 })
+    const cumulative: Budget.Consumption = {
+      ...ZERO_CONSUMPTION,
+      throughput: { turns_used: 3, context_tokens_used: 500_000, output_tokens_used: 0 },
+    }
+    const small = evaluateLiveBudget(p, cumulative, delta({ contextTokens: 40_000, outputTokens: 0 }))
+    expect(small.outcome).toBe("ok")
+    const large = evaluateLiveBudget(p, cumulative, delta({ contextTokens: 120_000, outputTokens: 0 }))
+    expect(large.outcome).toBe("blocked")
+    expect(large.violations.some((v) => v.dimension === "max_context_tokens")).toBe(true)
+  })
+})
+
+// =============================================================================
+// SHIP-NOTE — pre-turn max_turns gate honors the limit EXACTLY (blocked before the
+// over-limit turn starts), plus recording decoupled from budget resolution.
+// =============================================================================
+
+describe("pre-turn max_turns gate + decoupled recording (Feature 043 ship-notes)", () => {
+  test("exceedsTurnLimit blocks the turn that WOULD push turns_used over max_turns, not one turn late", () => {
+    const store = createRoutingSessionStateStore()
+    const p = policy({ maxTurns: 2 })
+    // Before turn 1: 0 + 1 = 1 <= 2 → allowed.
+    expect(exceedsTurnLimit(p, store.get(SESSION).consumption)).toBe(false)
+    recordTurn(store, SESSION, delta())
+    // Before turn 2: 1 + 1 = 2 <= 2 → allowed.
+    expect(exceedsTurnLimit(p, store.get(SESSION).consumption)).toBe(false)
+    recordTurn(store, SESSION, delta())
+    // Before turn 3: 2 + 1 = 3 > 2 → the next turn is blocked BEFORE it runs.
+    expect(exceedsTurnLimit(p, store.get(SESSION).consumption)).toBe(true)
+  })
+
+  test("recordTurn accumulates independently of any budget resolution (never under-counted)", () => {
+    const store = createRoutingSessionStateStore()
+    const first = recordTurn(store, SESSION, delta({ contextTokens: 100, outputTokens: 20 }))
+    const second = recordTurn(store, SESSION, delta({ contextTokens: 200, outputTokens: 30 }))
+    expect(first.throughput.turns_used).toBe(1)
+    expect(second.throughput.turns_used).toBe(2)
+    expect(second.throughput.context_tokens_used).toBe(300)
+    expect(store.get(SESSION).consumption?.throughput.output_tokens_used).toBe(50)
+  })
+})
+
+// =============================================================================
 // FR-F3-d — fan-out admission grants fewer workers as cost/token headroom shrinks.
 // =============================================================================
 
 describe("fan-out admission honors real headroom (FR-C1, FR-C3, FR-F3-d)", () => {
-  const p = policy({ maxWorkers: 3, costBudgetUsd: 10, tokenBudget: 800_000, maxOutputTokens: 8_000 })
+  // A worker is priced at its worst-case single-response footprint: context + output.
+  const p = policy({ maxWorkers: 3, costBudgetUsd: 10, tokenBudget: 800_000, maxContextTokens: 200_000, maxOutputTokens: 8_000 })
+  // perWorker.tokens = 200000 + 8000 = 208000; perWorker.costUsd = 208 * 0.003 = 0.624.
 
-  test("perWorkerReserve is non-zero: tokens default to max_output_tokens, cost to the documented constant", () => {
-    expect(perWorkerReserve(p)).toEqual({ costUsd: PER_WORKER_COST_USD, tokens: 8_000 })
-    expect(PER_WORKER_COST_USD).toBeGreaterThan(0)
+  test("perWorkerReserve prices a worker at max_context_tokens + max_output_tokens (not output alone), cost derived from the rate", () => {
+    const reserve = perWorkerReserve(p)
+    expect(reserve.tokens).toBe(208_000)
+    expect(reserve.costUsd).toBeCloseTo(0.624, 6)
+    expect(reserve.costUsd).toBeGreaterThan(0)
+    expect(PER_WORKER_TOKEN_RATE_USD_PER_1K).toBeGreaterThan(0)
   })
 
-  test("ample headroom (fresh session) → max_workers binds (byte-identical to Feature 042)", () => {
+  test("ample headroom (fresh session) → max_workers binds — conservative pricing is NOT inert", () => {
     const headroom = headroomFor(p, ZERO_CONSUMPTION)
     expect(headroom).toEqual({ costUsd: 10, tokens: 800_000 })
     const admission = admitDispatchFanout(p, 5, headroom, perWorkerReserve(p))
-    expect(admission.granted).toBe(3) // min(5, max_workers=3, byCost=20, byToken=100)
+    // min(5, max_workers=3, byCost=floor(10/0.624)=16, byToken=floor(800000/208000)=3).
+    expect(admission.granted).toBe(3)
     expect(admission.outcome).toBe("ok")
   })
 
   test("shrinking token headroom grants FEWER workers than max_workers", () => {
-    // Consume all but 2 workers' worth of token headroom (16000 tokens left).
-    const consumed = accumulateConsumption(ZERO_CONSUMPTION, delta({ contextTokens: 784_000, outputTokens: 0, turns: 1 }))
+    // Spend 300000 tokens → 500000 headroom left = floor(500000/208000)=2 workers.
+    const consumed = accumulateConsumption(ZERO_CONSUMPTION, delta({ contextTokens: 300_000, outputTokens: 0, turns: 1 }))
     const admission = admitDispatchFanout(p, 5, headroomFor(p, consumed), perWorkerReserve(p))
     expect(admission.factors.byTokenBudget).toBe(2)
     expect(admission.granted).toBe(2) // token headroom now binds below max_workers
   })
 
   test("shrinking cost headroom grants FEWER workers than max_workers", () => {
-    // Leave 0.5 USD of cost headroom = exactly one worker.
-    const consumed = accumulateConsumption(ZERO_CONSUMPTION, delta({ costUsd: 9.5, contextTokens: 0, outputTokens: 0 }))
+    // Leave 0.7 USD of cost headroom = floor(0.7/0.624)=1 worker.
+    const consumed = accumulateConsumption(ZERO_CONSUMPTION, delta({ costUsd: 9.3, contextTokens: 0, outputTokens: 0 }))
     const admission = admitDispatchFanout(p, 5, headroomFor(p, consumed), perWorkerReserve(p))
     expect(admission.factors.byCostBudget).toBe(1)
     expect(admission.granted).toBe(1)
   })
 
   test("a nearly-spent budget denies the spawn outright (granted 0, blocked)", () => {
-    const consumed = accumulateConsumption(ZERO_CONSUMPTION, delta({ contextTokens: 799_000, outputTokens: 0 }))
+    // 150000 tokens left < one worker's 208000 reserve → 0 workers.
+    const consumed = accumulateConsumption(ZERO_CONSUMPTION, delta({ contextTokens: 650_000, outputTokens: 0 }))
     const admission = admitDispatchFanout(p, 3, headroomFor(p, consumed), perWorkerReserve(p))
     expect(admission.granted).toBe(0)
     expect(admission.outcome).toBe("blocked")

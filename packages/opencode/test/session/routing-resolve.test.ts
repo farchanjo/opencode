@@ -11,7 +11,8 @@
 import { describe, expect, test } from "bun:test"
 import { Effect } from "effect"
 import type { RoutingConfig } from "@opencode-ai/schema/routing/config"
-import { createRoutingResolver, type RoutingResolveDeps } from "@/session/routing-resolve"
+import { createRoutingResolver, sessionConfigReadPort, createBoundedLru, type RoutingResolveDeps } from "@/session/routing-resolve"
+import { createConfigAdapter, AUTHORITY } from "@/routing/adapters/outbound/config-adapter"
 import type { DecisionStore } from "@/routing/application/ports"
 import type { Decision } from "@opencode-ai/schema/routing/decision"
 
@@ -285,5 +286,80 @@ describe("createRoutingResolver — provider eligibility (DEFECT 3)", () => {
     )
     const out = await Effect.runPromise(resolve(INPUT))
     expect(out).toEqual({ providerID: "zzz", modelID: "model-a" } as never)
+  })
+})
+
+// =============================================================================
+// Feature 043 follow-up — the SessionProcessor effective-enforcement memo keys on
+// the routing authorities' CAS VERSIONS, not config-object identity. Under the
+// deployed global-profile model `Config.getGlobal()` returns a FRESH merged object
+// on every call, so an identity guard never hits and `resolveEffective` (schema
+// decode + contentHash) would run on every step. This drives the exact resolver
+// pattern (real `sessionConfigReadPort` + `createConfigAdapter` + `createBoundedLru`
+// + `AUTHORITY`) with a fresh-but-equal getGlobal to prove the memo now hits.
+// =============================================================================
+
+describe("SessionProcessor enforcement memo keys on CAS version, not object identity", () => {
+  const globalRoot = (version: string) => ({
+    operator: {
+      authorities: {
+        "global:routing": {
+          version,
+          updatedAtMs: 1,
+          payload: routingConfig({ enabled: true, mode: "auto", rolePools: { worker: ["m"] } }),
+        },
+      },
+    },
+  })
+
+  // Mirrors SessionProcessor.resolveRoutingEnforcement verbatim (version-keyed memo).
+  function makeResolver(getGlobal: () => Record<string, unknown>, onResolve: () => void) {
+    const memo = createBoundedLru<{ readonly enabled: boolean }>(1, () => {})
+    const run = <A>(e: Effect.Effect<A>) => Effect.runPromise(e)
+    const readPort = sessionConfigReadPort(
+      { get: () => Effect.succeed({ operator: { authorities: {} } }), getGlobal: () => Effect.succeed(getGlobal()) },
+      run,
+    )
+    return async () => {
+      const project = await readPort.get(AUTHORITY.project)
+      const global = await readPort.get(AUTHORITY.global)
+      const key = `${project?.version ?? ""}|${global?.version ?? ""}`
+      const cached = memo.get(key)
+      if (cached) return cached
+      onResolve()
+      const effective = await createConfigAdapter({ config: readPort }).resolveEffective()
+      const value = { enabled: effective.config.activation.enabled }
+      memo.set(key, value)
+      return value
+    }
+  }
+
+  test("a fresh-but-equal global object on each call still HITS the memo (resolveEffective runs once)", async () => {
+    let resolves = 0
+    let getGlobalCalls = 0
+    const resolve = makeResolver(
+      () => {
+        getGlobalCalls++
+        return globalRoot("cas_v1") // a NEW object literal every call (the profile-merge model)
+      },
+      () => resolves++,
+    )
+    let last: { enabled: boolean } | undefined
+    for (let i = 0; i < 5; i++) last = await resolve()
+    expect(getGlobalCalls).toBeGreaterThanOrEqual(5) // getGlobal genuinely returned a fresh object each call
+    expect(resolves).toBe(1) // …yet the expensive resolveEffective ran exactly ONCE
+    expect(last?.enabled).toBe(true) // and it resolved the operator config correctly
+  })
+
+  test("a config change (new CAS version) INVALIDATES the memo (never serves a stale value)", async () => {
+    let resolves = 0
+    let version = "cas_v1"
+    const resolve = makeResolver(() => globalRoot(version), () => resolves++)
+    await resolve()
+    await resolve()
+    expect(resolves).toBe(1) // stable version → one resolve across two calls
+    version = "cas_v2" // operator changed the routing config → new CAS version
+    await resolve()
+    expect(resolves).toBe(2) // invalidated → recomputed exactly once
   })
 })

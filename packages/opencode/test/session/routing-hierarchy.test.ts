@@ -37,6 +37,7 @@ import {
 import { Permission } from "@/permission"
 import { PermissionV1 } from "@opencode-ai/core/v1/permission"
 import { createRoutingSessionStateStore } from "@/session/routing-state"
+import { ZERO_CONSUMPTION } from "@/session/budget-consume"
 import type { SessionID } from "@/session/schema"
 
 function routingConfig(overrides: {
@@ -205,6 +206,47 @@ describe("createHierarchyDispatchResolver — fresh per-spawn decision", () => {
     if (out?.kind !== "route") throw new Error("expected route")
     expect(out.childRole).toBe("worker")
     expect(out.childDepth).toBe(2)
+  })
+})
+
+describe("createHierarchyDispatchResolver — consumption-bound fan-out (Feature 043 FR-C1)", () => {
+  // A cross-domain task fans out to a Manager child with requestedFanout > 1, so the
+  // real cost/token headroom (budget − recorded parent consumption) can bind the
+  // granted worker count below max_workers.
+  const cfg = routingConfig({ enabled: true, mode: "auto", rolePools: { worker: ["worker-model"], manager: ["manager-model"] } })
+
+  test("a fresh (store-less) resolver grants a positive fan-out on a cross-domain spawn", async () => {
+    const resolve = createHierarchyDispatchResolver(deps(cfg))
+    const out = await Effect.runPromise(resolve(input({ taskText: CROSS_DOMAIN })))
+    if (out?.kind !== "route") throw new Error("expected route")
+    expect(out.childRole).toBe("manager")
+    expect(out.fanoutGranted).toBeGreaterThan(0)
+  })
+
+  test("seeded parent consumption bounds fanout_granted BELOW max_workers (real token headroom)", async () => {
+    const store = createRoutingSessionStateStore()
+    // token_budget 1_000_000; spend 600k → 400k headroom = floor(400000/208000) = 1 worker.
+    store.recordConsumption("ses_parent" as SessionID, {
+      ...ZERO_CONSUMPTION,
+      throughput: { turns_used: 3, context_tokens_used: 600_000, output_tokens_used: 0 },
+    })
+    const resolve = createHierarchyDispatchResolver({ ...deps(cfg), store })
+    const out = await Effect.runPromise(resolve(input({ taskText: CROSS_DOMAIN })))
+    if (out?.kind !== "route") throw new Error("expected route")
+    expect(out.fanoutGranted).toBe(1) // < max_workers (4): the consumption-bound reduction, FR-C1
+  })
+
+  test("a nearly-spent parent budget denies the fan-out spawn outright (admission_denied)", async () => {
+    const store = createRoutingSessionStateStore()
+    // 950k spent → 50k headroom < one worker's 208k reserve → 0 workers → blocked.
+    store.recordConsumption("ses_parent" as SessionID, {
+      ...ZERO_CONSUMPTION,
+      throughput: { turns_used: 5, context_tokens_used: 950_000, output_tokens_used: 0 },
+    })
+    const resolve = createHierarchyDispatchResolver({ ...deps(cfg), store })
+    const out = await Effect.runPromise(resolve(input({ taskText: CROSS_DOMAIN })))
+    if (out?.kind !== "blocked") throw new Error("expected blocked")
+    expect(out.rejection.reason).toBe("admission_denied")
   })
 })
 
