@@ -1,6 +1,6 @@
 /**
  * Feature 050 / T019 (FR9) — the production `LiveDocSource` for the
- * `agents`/`skills`/`skill_chunks` collections.
+ * `agents`/`skills`/`skill_chunks`/`tools` collections.
  *
  * Composes the Wave 1 pure builders (`AgentDocBuilder.build`, `SkillDocBuilder.build`,
  * `SkillChunker.chunkSkill`) with the injected embedding/spool seams to close the
@@ -52,14 +52,32 @@ import { AgentDocBuilder } from "@opencode-ai/core/semantic/agent-doc"
 import { SkillDocBuilder } from "@opencode-ai/core/semantic/skill-doc"
 import { SkillChunker } from "@opencode-ai/core/semantic/skill-chunk"
 import type { SkillChunkDoc } from "@opencode-ai/schema/semantic/documents"
-import type { CollectionKind } from "@opencode-ai/protocol/semantic/commands"
+import type { CollectionKind, ToolProjectionInput } from "@opencode-ai/protocol/semantic/commands"
 import { IndexJobs } from "@/semantic/index-jobs"
+import { ToolProjection } from "@/semantic/tool-projection"
 import type { MandatoryFilters } from "@/semantic/milvus-adapter"
 import type { OutputSpoolStore } from "@/semantic/output-spool-store"
 
 /** One live skill's structural input — `SkillDocBuilder.SkillInfoLike` plus the optional Feature 004 language tag. */
 export interface SkillSourceInput extends SkillDocBuilder.SkillInfoLike {
   /** Feature 004 Lang Lock tag when available; the chunker falls back to `"und"` when absent (honest floor). */
+  readonly languageTag?: string
+}
+
+/**
+ * One live tool descriptor projected into the `tools` collection (Feature 009 / FR11). `toolId` is the
+ * EXACT runtime tool-record key (`registry.tools()` item id for native/plugin, `mcp.tools()` key for
+ * MCP) — the `feature050-tool-id-equality` invariant. `rawParameterSchema` is the native `tool.jsonSchema`
+ * / MCP `inputSchema`; `ToolProjection.project` sanitizes it (names/types/descriptions allowlist) before
+ * anything reaches the index — the raw schema is never stored.
+ */
+export interface ToolSourceInput {
+  readonly toolId: string
+  readonly displayName: string
+  readonly rawDescription: string
+  readonly rawParameterSchema: unknown
+  readonly source: "native" | "mcp" | "custom" | "plugin"
+  readonly mcpServerRef?: string
   readonly languageTag?: string
 }
 
@@ -75,6 +93,8 @@ export interface LiveDocSourceDeps {
   readonly agents: () => Promise<readonly AgentDocBuilder.AgentInfoLike[]>
   /** The live skill pool, mapped the same way. */
   readonly skills: () => Promise<readonly SkillSourceInput[]>
+  /** The live tool descriptors (native/plugin/custom + MCP), keyed by their EXACT runtime id (FR11). */
+  readonly tools?: () => Promise<readonly ToolSourceInput[]>
   /** Embed already-sanitized ranking text, in call order; ONE call per changed batch, never per doc. */
   readonly embed: (texts: readonly string[]) => Promise<ReadonlyArray<readonly number[]>>
   readonly spool: OutputSpoolStore
@@ -204,6 +224,41 @@ export const createLiveDocSource = (deps: LiveDocSourceDeps): LiveDocSource => {
     return entries.map((entry) => IndexJobs.skillChunkLiveDoc(entry.doc, vectorsFor(vectorsById, entry.canonicalId), filters))
   }
 
+  /**
+   * Feature 009 (FR11) — project every live tool descriptor into a `ToolDoc` (sanitized, content-hashed)
+   * and embed each description under the SAME embed-skip + full-rebuild semantics as the other collections.
+   * `toolLiveDoc` reads the `ToolDoc`'s own `DocScope` for its partition filters (unlike skills, whose
+   * scope is caller-supplied), so the scope is derived once from `deps.filters` and stamped on every doc.
+   */
+  const collectTools = async (projectId: string, full: boolean): Promise<readonly IndexJobs.LiveDoc[]> => {
+    if (deps.tools === undefined) {
+      return Promise.reject(new Error('createLiveDocSource: no tools source configured for the "tools" collection'))
+    }
+    const [tools, indexedHashes] = await Promise.all([deps.tools(), readIndexedHashes("tools", full)])
+    const filters = deps.filters(projectId)
+    const scope = {
+      project_id: projectId,
+      scope: filters.scope,
+      visibility: filters.visibility,
+      permission_ref: filters.permissionRef ?? `perm:tools:${projectId}`,
+    } as unknown as ToolProjectionInput["scope"]
+    const entries = tools.map((tool): HashedEntry<ReturnType<typeof ToolProjection.project>["doc"]> => {
+      const { doc } = ToolProjection.project({
+        source: tool.source,
+        toolId: tool.toolId as ToolProjectionInput["toolId"],
+        displayName: tool.displayName,
+        ...(tool.mcpServerRef ? { mcpServerRef: tool.mcpServerRef } : {}),
+        rawDescription: tool.rawDescription,
+        rawParameterSchema: tool.rawParameterSchema,
+        scope,
+        languageTag: tool.languageTag ?? "und",
+      })
+      return { canonicalId: doc.id, contentHash: doc.identity.content_hash, embedText: doc.descriptor.description, doc }
+    })
+    const vectorsById = await embedChanged(entries, indexedHashes, deps.embed)
+    return entries.map((entry) => IndexJobs.toolLiveDoc(entry.doc, vectorsFor(vectorsById, entry.canonicalId)))
+  }
+
   return {
     collect: (input) => {
       const full = input.full === true
@@ -214,9 +269,10 @@ export const createLiveDocSource = (deps: LiveDocSourceDeps): LiveDocSource => {
           return collectSkills(input.projectId, full)
         case "skill_chunks":
           return collectSkillChunks(input.projectId, full)
+        case "tools":
+          return collectTools(input.projectId, full)
         default:
-          // Feature 009 owns the `tools` collection's own live-doc wiring; this source is scoped to
-          // agents/skills/skill_chunks only (FR9, plan.md component #5) — never a fabricated snapshot.
+          // Never a fabricated snapshot for a collection this source does not own.
           return Promise.reject(
             new Error(`createLiveDocSource: collection "${input.collection}" is not produced by this source`),
           )

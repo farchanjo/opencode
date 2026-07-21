@@ -47,6 +47,17 @@ const skillInput = (overrides: Partial<{ name: string; description: string; cont
   content: overrides.content ?? "# Deploy Helper\n\nThis skill deploys things reliably across environments.",
 })
 
+const toolInput = (
+  overrides: Partial<{ toolId: string; displayName: string; rawDescription: string; source: "native" | "mcp" | "custom" | "plugin"; mcpServerRef: string }> = {},
+) => ({
+  toolId: overrides.toolId ?? "billing_createInvoice",
+  displayName: overrides.displayName ?? "Create Invoice",
+  rawDescription: overrides.rawDescription ?? "Create a billing invoice for a customer",
+  rawParameterSchema: { properties: { customer: { type: "string", description: "the customer id" } } },
+  source: overrides.source ?? ("native" as const),
+  ...(overrides.mcpServerRef ? { mcpServerRef: overrides.mcpServerRef } : {}),
+})
+
 const baseDeps = (over: Partial<Parameters<typeof LiveDocSource.createLiveDocSource>[0]> = {}) => {
   const embedCalls: readonly string[][] = []
   const embed = (texts: readonly string[]): Promise<ReadonlyArray<readonly number[]>> => {
@@ -214,8 +225,47 @@ describe("LiveDocSource — full rebuild embeds every doc (C2 regression)", () =
   })
 })
 
+describe("LiveDocSource — tools (T019, FR11)", () => {
+  test("projects each live tool descriptor into a sanitized ToolDoc row and embeds its description", async () => {
+    const { deps, embedCalls } = baseDeps({ tools: async () => [toolInput()] })
+    const source = LiveDocSource.createLiveDocSource(deps)
+    const rows = await source.collect({ collection: "tools", projectId: "proj-1" })
+    expect(rows).toHaveLength(1)
+    // The row canonicalId MUST equal the runtime tool-record key verbatim (feature050-tool-id-equality invariant).
+    expect(rows[0]!.row.canonicalId).toBe("billing_createInvoice")
+    expect(rows[0]!.row.filters.projectId).toBe("proj-1")
+    expect(rows[0]!.row.dense.length).toBeGreaterThan(0)
+    expect(embedCalls).toHaveLength(1)
+    expect(embedCalls[0]).toHaveLength(1)
+  })
+
+  test("preserves the exact MCP record key as the ToolDoc id", async () => {
+    const { deps } = baseDeps({ tools: async () => [toolInput({ toolId: "github_create_issue", source: "mcp", mcpServerRef: "github" })] })
+    const rows = await LiveDocSource.createLiveDocSource(deps).collect({ collection: "tools", projectId: "proj-1" })
+    expect(rows[0]!.row.canonicalId).toBe("github_create_issue")
+  })
+
+  test("embed-skip: an unchanged tool content hash makes ZERO embedding calls (AC5)", async () => {
+    const { deps: firstDeps } = baseDeps({ tools: async () => [toolInput()] })
+    const priorHash = (await LiveDocSource.createLiveDocSource(firstDeps).collect({ collection: "tools", projectId: "proj-1" }))[0]!.contentHash
+    const { deps, embedCalls } = baseDeps({ tools: async () => [toolInput()], indexedHashes: async () => new Map([["billing_createInvoice", priorHash]]) })
+    const rows = await LiveDocSource.createLiveDocSource(deps).collect({ collection: "tools", projectId: "proj-1" })
+    expect(rows).toHaveLength(1)
+    expect(embedCalls).toHaveLength(0)
+  })
+
+  test("a full rebuild re-embeds every tool even with matching indexed hashes (C2)", async () => {
+    const { deps: firstDeps } = baseDeps({ tools: async () => [toolInput()] })
+    const priorHash = (await LiveDocSource.createLiveDocSource(firstDeps).collect({ collection: "tools", projectId: "proj-1" }))[0]!.contentHash
+    const { deps, embedCalls } = baseDeps({ tools: async () => [toolInput()], indexedHashes: async () => new Map([["billing_createInvoice", priorHash]]) })
+    const rows = await LiveDocSource.createLiveDocSource(deps).collect({ collection: "tools", projectId: "proj-1", full: true })
+    expect(rows[0]!.row.dense.length).toBeGreaterThan(0)
+    expect(embedCalls).toHaveLength(1)
+  })
+})
+
 describe("LiveDocSource — unsupported collection", () => {
-  test("rejects rather than fabricating a snapshot for a collection this source does not own", async () => {
+  test("rejects when no tools source is configured rather than fabricating a snapshot", async () => {
     const { deps } = baseDeps()
     const source = LiveDocSource.createLiveDocSource(deps)
     await expect(source.collect({ collection: "tools" as CollectionKind, projectId: "proj-1" })).rejects.toThrow()
