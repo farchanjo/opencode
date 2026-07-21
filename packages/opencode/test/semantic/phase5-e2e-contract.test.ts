@@ -98,7 +98,8 @@ describe("T044 surface parity — same op from any surface, zero admin tokens (A
   test("all 30 ids dispatch to a typed result (never unhandled)", async () => {
     for (const id of SemanticCommandPort.RESERVED_SEMANTIC_IDS) {
       const result = await invoke(ctx(id, { confirmed: true, id: "x", collection: "agents", generationId: "g", casToken: "c" }))
-      expect(result.kind === "query" || result.kind === "failure").toBe(true)
+      // Feature 050 — the mutating index maintenance verbs shape as an effectOnly mutation_plan.
+      expect(result.kind === "query" || result.kind === "failure" || result.kind === "mutation_plan").toBe(true)
     }
   })
 })

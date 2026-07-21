@@ -109,6 +109,14 @@ export interface MilvusIndexBindingDeps {
   readonly context?: () => Promise<MaintenanceContext>
   /** The Feature 005 spool sink for the bounded job log; a bounded content-free ref when absent. */
   readonly spool?: IndexJobs.OutputSpoolSink
+  /**
+   * Feature 050 (FR9) — ensure a collection physically EXISTS (built at the active binding's
+   * probed dimension, alias pointed at it) before a FULL rebuild upserts into it. A first-ever
+   * reindex of a fresh Milvus would otherwise upsert into a non-existent alias and fail
+   * "collection not found". Idempotent — a no-op when the collection already exists. Absent →
+   * the caller assumes the alias already exists (a post-cutover profile).
+   */
+  readonly ensure?: (collection: CollectionKind) => Promise<void>
 }
 
 const DEFAULT_TIMEOUT_MS = 2000
@@ -173,16 +181,30 @@ export function createMilvusIndexPort(deps: MilvusIndexBindingDeps): IndexPort {
       const health = yield* runProbe
       if (!health.reachable) return yield* Effect.fail(milvusUnavailable("milvus endpoint unreachable"))
       const ctx = yield* Effect.tryPromise({ try: () => deps.context!(), catch: () => milvusUnavailable("maintenance context unavailable") })
+      // Feature 050 — a FULL rebuild bootstraps the target collection (built at the probed dimension,
+      // alias pointed at it) before upserting, so a first-ever reindex of a fresh Milvus never fails
+      // "collection not found". Idempotent; a bounded, secret-free reason on failure.
+      if (full && deps.ensure !== undefined) {
+        yield* Effect.tryPromise({
+          try: () => deps.ensure!(collection),
+          catch: (cause): IndexError => milvusUnavailable(`ensure collection failed: ${String(cause).slice(0, 160)}`),
+        })
+      }
       const live = yield* Effect.tryPromise({
         // A full rebuild embeds EVERY doc (C2 fix): the source disables its embed-skip for `full`.
         try: () => source.collect({ collection, projectId: ctx.projectId, full }),
-        // A missing embedding provider / definition source degrades typed — never fabricated vectors (FR6).
-        catch: () => milvusUnavailable("live-doc source unavailable (embedding provider not configured)"),
+        // Carry the actual (bounded, secret-free) cause so a collect failure — a missing embedding
+        // provider, an unsupported collection, or a builder/embed error — is diagnosable (Feature 050).
+        catch: (cause): IndexError => {
+          const message = cause instanceof Error ? cause.message : String(cause)
+          return milvusUnavailable(`live-doc source failed for ${collection}: ${message.slice(0, 160)}`)
+        },
       })
       const indexed = full
         ? []
         : yield* dataPlaneRetry(port.enumerateIndexed({ collection, projectId: ctx.projectId })).pipe(
-            Effect.mapError((): IndexError => milvusUnavailable("enumerate indexed docs failed")),
+            // Carry the typed, secret-free underlying gap so an enumerate failure is diagnosable (Feature 050).
+            Effect.mapError((gap): IndexError => milvusUnavailable(`enumerate indexed docs failed: ${gap.type}${gap.reason ? ` (${gap.reason})` : ""}`)),
             Effect.map((r) => r.docs),
           )
       const result = yield* dataPlaneRetry(
@@ -190,7 +212,8 @@ export function createMilvusIndexPort(deps: MilvusIndexBindingDeps): IndexPort {
           { milvus: port, spool },
           { collection, live, indexed, projectId: ctx.projectId, bindingVersion: ctx.bindingVersion },
         ),
-      ).pipe(Effect.mapError((): IndexError => milvusUnavailable("index maintenance failed")))
+        // Carry the underlying Milvus gap type/reason (bounded, secret-free) so a reconcile failure is diagnosable.
+      ).pipe(Effect.mapError((gap): IndexError => milvusUnavailable(`index maintenance failed: ${gap.type}${gap.reason ? ` (${gap.reason})` : ""}`)))
       return {
         upsertedCount: result.summary.upsertedCount,
         tombstonedCount: result.summary.tombstonedCount,

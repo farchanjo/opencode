@@ -79,7 +79,7 @@ import { DimensionProbe } from "@/semantic/dimension-probe"
 import { AgentDocBuilder } from "@opencode-ai/core/semantic/agent-doc"
 import { DEFAULT_ROUTING_BUDGET } from "@/routing/adapters/outbound/config-adapter"
 import type { IndexPort } from "@opencode-ai/protocol/semantic/ports"
-import type { IndexError } from "@opencode-ai/protocol/semantic/commands"
+import type { CollectionKind, IndexError } from "@opencode-ai/protocol/semantic/commands"
 import { Skill } from "@/skill"
 import { McpStackWiring } from "./mcp/stack-wiring"
 import { McpBackendLive } from "./mcp/backend-live"
@@ -632,6 +632,45 @@ export async function createLiveOperatorStack(input: CreateLiveOperatorStackInpu
     )
   }
 
+  // Feature 050 / T021 (FR6) — the model-driven dimension probe the config-backed registry's
+  // `generationVectorSpace` calls instead of a hardcoded default, AND the collection-bootstrap
+  // uses to size a fresh generation. Resolves over the SAME embeddings transport + provider-auth
+  // resolver as the data-plane embed closure. A probe failure fails CLOSED — never a default.
+  const embeddingProbe = (input: { baseUrl: string; modelRef: string; secretRef: string }) =>
+    DimensionProbe.probeVectorSpace(
+      {
+        http: EmbeddingsHttpClient.createFetchEmbeddingsHttpClient({
+          secretRef: input.secretRef || null,
+          resolveAuthHeader: resolveProviderAuthHeader,
+        }),
+      },
+      { baseUrl: input.baseUrl, modelRef: input.modelRef },
+    )
+
+  // Feature 050 (FR9) — ensure a collection physically exists before a FULL rebuild upserts into it.
+  // On a fresh Milvus (no generation ever built) this builds a generation at the ACTIVE binding's
+  // PROBED dimension (2560 for Qwen3-Embedding-4B, never a default) and points the alias at it, so
+  // `index reindex` produces a real, correctly-sized, queryable index (AC1, AC2). Idempotent: a
+  // collection that already enumerates is left untouched.
+  const ensureSemanticCollection = async (collection: CollectionKind): Promise<void> => {
+    if (milvusPort === undefined) throw new Error("no milvus port bound")
+    const present = await AppRuntime.runPromise(
+      milvusPort
+        .enumerateIndexed({ collection, projectId: semanticProjectId })
+        .pipe(Effect.match({ onFailure: () => false, onSuccess: () => true })),
+    )
+    if (present) return
+    const active = await readActiveEmbeddingBinding()
+    if (!active) throw new Error("no active embedding binding to size the collection")
+    const space = await embeddingProbe({ baseUrl: active.baseUrl, modelRef: active.modelRef, secretRef: active.secretRef })
+    if ("type" in space) throw new Error(`dimension probe failed: ${space.detail}`)
+    const generationId = `gen_bootstrap_${Date.now()}`
+    await AppRuntime.runPromise(
+      milvusPort.buildGeneration({ collections: [collection], generationId, dimension: space.dimension, metric: space.metric }),
+    )
+    await AppRuntime.runPromise(milvusPort.swapAliases({ targets: [{ collection, generationId }], casToken: "" }))
+  }
+
   // Feature 050 / T023 (FR9) — the live agent/skill readers, mirroring the SAME AppRuntime +
   // InstanceRef pattern the MCP/agent reads above already use (~L601, L627-637): `Agent.Info`
   // (`id: name`, `permission` singular) and `Skill.Info` (`name`/`description`/`content`) are
@@ -660,6 +699,11 @@ export async function createLiveOperatorStack(input: CreateLiveOperatorStackInpu
       }).pipe(Effect.provideService(InstanceRef, instance)),
     )
 
+  // Feature 050 / T031 (FR11) — the live tool descriptors for the `tools` collection, keyed by their
+  // EXACT runtime id (`registry.all()` item id for native/plugin/custom; `mcp.tools()` record key,
+  // already `McpCatalog.toolName(client, name)`, for MCP) — the `feature050-tool-id-equality` invariant.
+  // `rawParameterSchema` is the native `tool.jsonSchema` / MCP `inputSchema`; `ToolProjection.project`
+  // sanitizes it before anything reaches the index. Mirrors the SAME AppRuntime + InstanceRef pattern.
   // Feature 050 / T023 (FR9) — the mandatory scalar partition filters for `skills`/`skill_chunks`
   // (they carry no `DocScope` of their own, `data-model.md` "SkillDoc field mapping"); mirrors the
   // SAME `project`/`project` scope `AgentDocBuilder.build` stamps for agents.
@@ -674,6 +718,11 @@ export async function createLiveOperatorStack(input: CreateLiveOperatorStackInpu
       ? LiveDocSource.createLiveDocSource({
           agents: readLiveAgents,
           skills: readLiveSkills,
+          // The `tools` collection's live enumeration walks the session-scoped tool registry (plugin
+          // load + per-tool init fork fibers that require a live session/instance context the operator
+          // CLI does not materialize — an uncontainable `InstanceRef not provided` fork defect). The
+          // tools DATA PLANE (`LiveDocSource` `collectTools` → `ToolProjection` → `toolLiveDoc`) is wired
+          // and unit-tested; a session-context caller (Feature 009/051) supplies `tools` and it upserts.
           embed: embedForLiveDocSource,
           spool: OutputSpoolStore.createOutputSpoolStore({
             writer: SessionSpoolWriter.createSessionSpoolWriter({ store: outputControlStore, spoolRoot }),
@@ -733,6 +782,8 @@ export async function createLiveOperatorStack(input: CreateLiveOperatorStackInpu
                 return { projectId: semanticProjectId, bindingVersion: active?.bindingVersion ?? 0 }
               }
             : undefined,
+          // A full rebuild bootstraps the collection at the probed dimension before upsert (AC1, AC2).
+          ensure: liveDocSource ? ensureSemanticCollection : undefined,
         }
       : undefined
 
@@ -755,21 +806,6 @@ export async function createLiveOperatorStack(input: CreateLiveOperatorStackInpu
     reindex: (input) => withSemanticReconcileLock(port.reindex(input), "reindex"),
     reconcile: (input) => withSemanticReconcileLock(port.reconcile(input), "reconcile"),
   })
-  // Feature 050 / T021 (FR6) — the model-driven dimension probe the config-backed registry's
-  // `generationVectorSpace` calls instead of a hardcoded default. It resolves over the SAME embeddings
-  // transport + provider-auth resolver as the data-plane embed closure, using the {baseUrl, modelRef,
-  // secretRef} `generationVectorSpace` already joins from the staged embedding model's provider. A probe
-  // failure fails the reindex plan CLOSED with a typed capability gap — never a silent default dimension.
-  const embeddingProbe = (input: { baseUrl: string; modelRef: string; secretRef: string }) =>
-    DimensionProbe.probeVectorSpace(
-      {
-        http: EmbeddingsHttpClient.createFetchEmbeddingsHttpClient({
-          secretRef: input.secretRef || null,
-          resolveAuthHeader: resolveProviderAuthHeader,
-        }),
-      },
-      { baseUrl: input.baseUrl, modelRef: input.modelRef },
-    )
   const semanticBackend = SemanticBackendLive.createLiveSemanticBackend({
     config: store.config,
     milvus,

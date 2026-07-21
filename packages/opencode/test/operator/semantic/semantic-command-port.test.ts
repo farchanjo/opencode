@@ -79,7 +79,8 @@ describe("dispatch", () => {
   test("all 30 reserved ids dispatch to a typed result (never unhandled)", async () => {
     for (const id of SemanticCommandPort.RESERVED_SEMANTIC_IDS) {
       const result = await invoke(ctx(id, { confirmed: true, id: "x", collection: "agents" }))
-      expect(result.kind === "query" || result.kind === "failure").toBe(true)
+      // Feature 050 — the mutating index maintenance verbs shape as an effectOnly mutation_plan.
+      expect(result.kind === "query" || result.kind === "failure" || result.kind === "mutation_plan").toBe(true)
     }
   })
 
@@ -109,6 +110,31 @@ describe("confirmation matrix", () => {
   test("rotate-secret and rollback require confirmation", async () => {
     const rollback = await invoke(ctx("semantic.reranker.rollback", { confirmed: false }))
     expect(rollback.kind).toBe("failure")
+  })
+})
+
+describe("index maintenance verbs (Feature 050)", () => {
+  test("reindex shapes an effectOnly mutation_plan; its deferred effect carries the typed reason", async () => {
+    // The fake backend's index port is the honest gap (createLiveSemanticBackend().index) — reindex
+    // fails with a typed `milvus_unavailable` carrying a secret-free reason.
+    const result = await invoke(ctx("semantic.index.reindex", { collection: "agents" }))
+    expect(result.kind).toBe("mutation_plan")
+    if (result.kind === "mutation_plan") {
+      expect(result.effectOnly).toBe(true)
+      const outcome = await result.effect!()
+      expect(outcome.ok).toBe(false)
+      if (!outcome.ok) {
+        expect(outcome.code).toBe("unavailable")
+        expect(typeof outcome.details?.reason).toBe("string")
+        expect(String(outcome.details?.reason).length).toBeGreaterThan(0)
+      }
+    }
+  })
+
+  test("reconcile also shapes an effectOnly mutation_plan (never a query result for a mutating verb)", async () => {
+    const result = await invoke(ctx("semantic.index.reconcile", { collection: "skills" }))
+    expect(result.kind).toBe("mutation_plan")
+    if (result.kind === "mutation_plan") expect(result.effectOnly).toBe(true)
   })
 })
 

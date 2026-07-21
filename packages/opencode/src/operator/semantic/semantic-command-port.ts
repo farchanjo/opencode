@@ -81,8 +81,8 @@ function bool(record: Record<string, unknown>, key: string): boolean {
   return record[key] === true
 }
 
-function fail(code: FailureHandlerResult["code"], message: string): FailureHandlerResult {
-  return { kind: "failure", code, message }
+function fail(code: FailureHandlerResult["code"], message: string, details?: FailureHandlerResult["details"]): FailureHandlerResult {
+  return { kind: "failure", code, message, ...(details !== undefined ? { details } : {}) }
 }
 
 /** Map the Feature 007 operator principal onto the semantic operator principal (C15). */
@@ -91,17 +91,24 @@ function toOperator(principal: OperatorPrincipalCore): OperatorPrincipal {
   return { kind, id: principal.subject }
 }
 
-/** Map any typed port error onto the operator audit outcome + failure envelope (content-free). */
-function mapError(error: { readonly type: string }): { outcome: SemanticAuditEvent["outcome"]; failure: FailureHandlerResult } {
+/**
+ * Map any typed port error onto the operator audit outcome + failure envelope. The
+ * typed, secret-free `reason` (e.g. an `IndexError.reason` naming WHICH maintenance
+ * seam degraded) is carried through `details.reason` so a `milvus_unavailable` gap is
+ * diagnosable at the CLI/RPC boundary instead of collapsing to the bare type
+ * (Feature 050 — the reason is content-free: never an endpoint, credential, or path).
+ */
+function mapError(error: { readonly type: string; readonly reason?: string }): { outcome: SemanticAuditEvent["outcome"]; failure: FailureHandlerResult } {
   const type = error.type
-  if (type === "denied") return { outcome: "denied", failure: fail("unauthorized", "denied") }
+  const details = typeof error.reason === "string" && error.reason.length > 0 ? { reason: error.reason } : undefined
+  if (type === "denied") return { outcome: "denied", failure: fail("unauthorized", "denied", details) }
   if (type === "confirmation_required") return { outcome: "rejected", failure: fail("invalid_argument", "interactive confirmation is required") }
-  if (type === "version_conflict" || type === "cas_conflict") return { outcome: "conflict", failure: fail("invalid_argument", `conflict: ${type}`) }
+  if (type === "version_conflict" || type === "cas_conflict") return { outcome: "conflict", failure: fail("invalid_argument", `conflict: ${type}`, details) }
   // Feature 019 (FR3) — honest reranker/embedding activation gates carry a typed, secret-free reason.
-  if (type === "not_validated" || type === "no_archived_prior" || type === "no_candidate_staged") return { outcome: "rejected", failure: fail("invalid_argument", type) }
+  if (type === "not_validated" || type === "no_archived_prior" || type === "no_candidate_staged") return { outcome: "rejected", failure: fail("invalid_argument", type, details) }
   if (type === "not_implemented") return { outcome: "rejected", failure: fail("not_implemented", "operation is not implemented") }
-  if (type.endsWith("unavailable")) return { outcome: "unavailable", failure: fail("unavailable", type) }
-  return { outcome: "rejected", failure: fail("invalid_argument", type) }
+  if (type.endsWith("unavailable")) return { outcome: "unavailable", failure: fail("unavailable", type, details) }
+  return { outcome: "rejected", failure: fail("invalid_argument", type, details) }
 }
 
 const query = (value: unknown): HandlerResult => ({ kind: "query", effective: value })
@@ -114,11 +121,11 @@ const query = (value: unknown): HandlerResult => ({ kind: "query", effective: va
  * persisted while the caller is told it failed (FR5, FR14).
  */
 function runner(deps: SemanticCommandDeps, commandId: string, principalId: string, target: string) {
-  const auditFailure = (error: { readonly type: string }): Effect.Effect<HandlerResult> => {
+  const auditFailure = (error: { readonly type: string; readonly reason?: string }): Effect.Effect<HandlerResult> => {
     const mapped = mapError(error)
     return deps.audit.record({ commandId, principalId, target, outcome: mapped.outcome }).pipe(Effect.as(mapped.failure))
   }
-  const run = <A>(effect: Effect.Effect<A, { readonly type: string }>, onSuccess: (value: A) => HandlerResult): Promise<HandlerResult> =>
+  const run = <A>(effect: Effect.Effect<A, { readonly type: string; readonly reason?: string }>, onSuccess: (value: A) => HandlerResult): Promise<HandlerResult> =>
     Effect.runPromise(
       effect.pipe(
         Effect.matchEffect({
@@ -128,7 +135,7 @@ function runner(deps: SemanticCommandDeps, commandId: string, principalId: strin
         }),
       ),
     )
-  const plan = (effect: Effect.Effect<OperatorMutationPlan, { readonly type: string }>): Promise<HandlerResult> =>
+  const plan = (effect: Effect.Effect<OperatorMutationPlan, { readonly type: string; readonly reason?: string }>): Promise<HandlerResult> =>
     Effect.runPromise(
       effect.pipe(
         Effect.matchEffect({
@@ -137,7 +144,42 @@ function runner(deps: SemanticCommandDeps, commandId: string, principalId: strin
         }),
       ),
     )
-  return { run, plan }
+  /**
+   * Shape a MUTATING external-side-effect verb (the `semantic.index.*` maintenance ops) that
+   * writes Milvus but NOT the config authority. The `mutates:true` dispatcher contract forbids a
+   * query result, so this returns an `effectOnly` mutation plan: the index effect is DEFERRED so
+   * `mutateAuthority` runs it exactly ONCE after the contract/idempotency/CAS checks (never at plan
+   * time), the authority document is left unchanged (`apply` is identity, CAS write skipped), and the
+   * counts surface as `effective`. A typed failure carries the secret-free `reason` through details.
+   */
+  const effectPlan = <A>(
+    run: () => Effect.Effect<A, { readonly type: string; readonly reason?: string }>,
+    toValue: (value: A) => Record<string, unknown>,
+  ): Promise<HandlerResult> =>
+    Promise.resolve<HandlerResult>({
+      kind: "mutation_plan",
+      authority: "semantic",
+      effectOnly: true,
+      apply: (current) => current,
+      effect: () =>
+        Effect.runPromise(
+          run().pipe(
+            Effect.match({
+              onSuccess: (value) => ({ ok: true, value: toValue(value) }) as const,
+              onFailure: (error) => {
+                const mapped = mapError(error)
+                return {
+                  ok: false as const,
+                  code: mapped.failure.code,
+                  message: mapped.failure.message,
+                  ...(mapped.failure.details ? { details: mapped.failure.details } : {}),
+                }
+              },
+            }),
+          ),
+        ),
+    })
+  return { run, plan, effectPlan }
 }
 
 interface Ctx {
@@ -286,8 +328,8 @@ function bindingIndexInvoke(port: SemanticPort, c: Ctx): Promise<HandlerResult> 
     }
     case "semantic.index.status": return c.io.run(port.index.status({ collection, scope: c.scope, scopeId: c.scopeId }), query)
     case "semantic.index.test": return c.io.run(port.index.test({ principal: c.principal }), query)
-    case "semantic.index.reindex": return c.io.run(port.index.reindex({ collection, principal: c.principal }), query)
-    case "semantic.index.reconcile": return c.io.run(port.index.reconcile({ collection, scheduledOccurrenceId: str(c.payload, ["scheduledOccurrenceId", "scheduled_occurrence_id"]) }), query)
+    case "semantic.index.reindex": return c.io.effectPlan(() => port.index.reindex({ collection, principal: c.principal }), (r) => ({ ...r }))
+    case "semantic.index.reconcile": return c.io.effectPlan(() => port.index.reconcile({ collection, scheduledOccurrenceId: str(c.payload, ["scheduledOccurrenceId", "scheduled_occurrence_id"]) }), (r) => ({ ...r }))
     case "semantic.index.show-collections": return c.io.run(port.index.showCollections({ scope: c.scope, scopeId: c.scopeId }), query)
     default: return null
   }
