@@ -453,7 +453,7 @@ coordinator) is FIRST — nothing runs without it.
 
 ## Group F — Tests + guard scope + doc sync (FR12)
 
-- [ ] **T015 — Composition + coordinator tests (arming, fail-open, admit→run→terminal)**
+- [x] **T015 — Composition + coordinator tests (arming, fail-open, admit→run→terminal)**
 - **Depends:** T001-T007
 - **Paths:** `packages/opencode/test/jobs/**`
 - **Deliverable:** tests that the executor arms eagerly and fails open on a fault; the
@@ -472,7 +472,7 @@ coordinator) is FIRST — nothing runs without it.
   counting `ScheduledSessionSeam`; capable → exactly one persisted session). `bun test
   test/jobs` 94 pass; `bun run typecheck` EXIT=0.
 
-- [ ] **T016 — Run-now + occurrence-history tests (effect once, overlap, real history)**
+- [x] **T016 — Run-now + occurrence-history tests (effect once, overlap, real history)**
 - **Depends:** T008-T011
 - **Paths:** `packages/opencode/test/operator/**`
 - **Deliverable:** tests that the run-now effect enqueues once after the CAS/idempotency
@@ -492,7 +492,7 @@ coordinator) is FIRST — nothing runs without it.
   bounded terminal `reason` — the swallowed-reason fix, FR11). `bun test test/jobs
   test/operator` 527 pass / 2 skip.
 
-- [ ] **T017 — Interrupt-edge + availability/parity tests (FR12)**
+- [x] **T017 — Interrupt-edge + availability/parity tests (FR12)**
 - **Depends:** T012-T014
 - **Paths:** `packages/core/test/session/**`, `packages/opencode/test/operator/**`, `packages/core/test/operator/**`
 - **Deliverable:** tests that the execution layer registers the active root run, the
@@ -514,7 +514,7 @@ coordinator) is FIRST — nothing runs without it.
   `unavailable`, same canonical id). `bun test test/session test/operator` (core) 335 pass;
   `bun test test/operator` (opencode) 527 pass / 2 skip; `bun test test/operator` (tui) 175 pass.
 
-- [ ] **T018 — Guard scope + doc sync + `speckit analyze` + `validate --json` green**
+- [x] **T018 — Guard scope + doc sync + `speckit analyze` + `validate --json` green**
 - **Depends:** T001-T017
 - **Paths:** `doc/arch/speckit.toml`, `doc/arch/sdd/018-*/**`, `doc/arch/adr/0018-*.md`, `doc/arch/schemas/executor-composition/**`, `doc/arch/statecharts/job-executor-composition.md`, `doc/arch/functional/product-overview.md`
 - **Deliverable:** confirm the Feature 018 guard block covers every genuinely-new

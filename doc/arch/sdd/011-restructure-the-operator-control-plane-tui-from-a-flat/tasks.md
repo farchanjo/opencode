@@ -247,7 +247,7 @@ Checkbox backlog (details under each group below).
 - **Verification:** integration/parity assertion green.
 - **Evidence:** 2026-07-19 — new `packages/tui/test/operator/parity.test.ts` (3 tests) spies the wire text `executeOperatorCommand` produces via the fake `OperatorSlashPort`: a read query (`langlock.status`) and a mutation (`langlock.set` with `{tag}`) both dispatch the command token `/op.<id>` equal to the entry's `slashAlias` (which itself is `/op.${id}`), proving payload does not fork the id and no divergent name/registry is introduced (FR8); a sample sweep (`langlock.status`,`jobs.status`,`process.status`,`task.status`,`routing.status`) confirms the token is always `/op.<canonical-id>` on the SAME loopback slash/CLI use. `bun test test/operator/parity.test.ts` 3 pass/0 fail; full `bun test` (tui) 320 pass/0 fail; `oxlint` clean.
 
-- [ ] **T017 — Doc sync + `speckit validate` green**
+- [x] **T017 — Doc sync + `speckit validate` green**
 - **Depends:** T014, T015, T016
 - **Paths:** docs under allowed globs (spec, ADR-0011, `operator-menu/*.cue`,
   `operator-menu-navigation.md`; `AGENTS.md`/`README.md` only if a surface description

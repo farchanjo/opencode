@@ -47,7 +47,7 @@ Checkbox backlog (details under each group below).
 
 ## Group A — Forward and thread the structured result
 
-- [ ] **T001 — Forward `outcome`/`effective`/`version` at the inbound seam**
+- [x] **T001 — Forward `outcome`/`effective`/`version` at the inbound seam**
 - **Depends:** none
 - **Paths:** `packages/opencode/src/operator/adapters/inbound/tui-port.ts`
 - **Deliverable:** in the handled branch (currently lines 114-135) add the typed
@@ -71,7 +71,7 @@ Checkbox backlog (details under each group below).
   The production-path forwarding is now pinned by the structured assertions in
   `slash-runtime-wire.test.ts` (worker-RPC `:191-192`, HTTP `:354-355`).
 
-- [ ] **T002 — Extend `OperatorSlashHandled` with an optional structured result**
+- [x] **T002 — Extend `OperatorSlashHandled` with an optional structured result**
 - **Depends:** T001
 - **Paths:** `packages/tui/src/context/operator-slash.tsx`
 - **Deliverable:** add an optional structured result to `OperatorSlashHandled` — the
@@ -89,7 +89,7 @@ Checkbox backlog (details under each group below).
   `OperatorSlashResult`). `bun run typecheck` (tui) clean; existing
   `test/operator/dispatch.test.ts` handled results with no `effective` type-check + pass.
 
-- [ ] **T003 — Return the structured result from `executeOperatorCommand`**
+- [x] **T003 — Return the structured result from `executeOperatorCommand`**
 - **Depends:** T002
 - **Paths:** `packages/tui/src/operator/execute.ts`
 - **Deliverable:** widen the return type from `{ outcome?; cancelled? }` to also
@@ -416,7 +416,7 @@ Checkbox backlog (details under each group below).
   no second dispatch path is added; a sample of five reads confirms token parity.
   `bun test test/operator/structured-parity.test.ts` → 3 pass / 0 fail / 17 expect().
 
-- [ ] **T018 — Doc sync + `speckit validate` green**
+- [x] **T018 — Doc sync + `speckit validate` green**
 - **Depends:** T014, T015, T016, T017
 - **Paths:** docs under allowed globs (spec, ADR-0012, `operator-result-signal/*.cue`,
   `operator-result-projection.md`; `AGENTS.md`/`README.md` only if a surface
