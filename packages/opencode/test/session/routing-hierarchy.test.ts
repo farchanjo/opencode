@@ -20,6 +20,7 @@ import {
   createHierarchyDispatchResolver,
   classifyChildRole,
   poolModelsForRole,
+  resolveRoleModel,
   parentRoleForSpawn,
   recordHierarchyDispatch,
   escalateWorkerToManager,
@@ -27,6 +28,7 @@ import {
   type HierarchyResolveDeps,
   type ResolveHierarchyDispatchInput,
 } from "@/session/routing-hierarchy"
+import type { ResolvedRoutingModel } from "@/session/routing-resolve"
 import {
   isOrchestrationAllowedTool,
   orchestrationChildToolRules,
@@ -305,12 +307,111 @@ describe("poolModelsForRole — role → pool mapping (Decision #2)", () => {
     expect(poolModelsForRole(cfg, "worker")).toEqual(["wk-model"])
     expect(poolModelsForRole(cfg, "manager")).toEqual(["mgr-model"])
   })
-  test("architect → role_pools[decision_model.pool[0]]", () => {
+  test("architect POOL FALLBACK → role_pools[decision_model.pool[0]] (below the main-context model)", () => {
+    // The architect pool is the CONFIGURABLE FALLBACK tier only (Feature 042 /
+    // ADR-0042). The primary tier — the main-context model — is applied above this
+    // in `resolveRoleModel`, not here. This asserts only the fallback pool mapping.
     expect(poolModelsForRole(cfg, "architect")).toEqual(["arch-model"])
   })
   test("missing pool falls back to the floor role", () => {
     const floored = routingConfig({ enabled: true, mode: "auto", floorRole: "worker", rolePools: { worker: ["wk-model"] } })
     expect(poolModelsForRole(floored, "manager")).toEqual(["wk-model"])
+  })
+  test("role_pools is a GENERIC record — architect is not special-cased vs an arbitrary role", () => {
+    // `architect` resolves through the same generic `role_pools[role]` lookup as
+    // any other configurable role (e.g. a hypothetical custom role), proving it is
+    // a first-class, settable role pool — not a hard-coded name.
+    const generic = routingConfig({
+      enabled: true,
+      mode: "auto",
+      decisionPool: ["architect"],
+      floorRole: "worker",
+      rolePools: { architect: ["arch-model"], worker: ["wk-model"] },
+    })
+    expect(poolModelsForRole(generic, "architect")).toEqual(["arch-model"])
+    // A role with no pool of its own falls through to the floor role, identical
+    // handling regardless of the role name.
+    expect(poolModelsForRole(generic, "manager")).toEqual(["wk-model"])
+  })
+})
+
+describe("resolveRoleModel — Architect precedence (main-context ▶ pool ▶ floor, ADR-0042)", () => {
+  // Drive the exported model-resolution helper directly over the same Provider /
+  // Auth fakes as the resolver. `run` executes each fake Effect on the default
+  // runtime (the fakes need no InstanceRef). This is a DELIBERATE, documented
+  // behavior change: the Architect is the main-context selected model FIRST; the
+  // routing engine never overrides it, and role_pools.architect is a fallback only.
+  const run = <A>(effect: Effect.Effect<A>): Promise<A> => Effect.runPromise(effect)
+  const MAIN_CONTEXT: ResolvedRoutingModel = { providerID: "anthropic", modelID: "main-ctx-model" } as never
+
+  const cfg = routingConfig({
+    enabled: true,
+    mode: "auto",
+    decisionPool: ["architect"],
+    floorRole: "worker",
+    rolePools: { architect: ["arch-model"], manager: ["mgr-model"], worker: ["wk-model"] },
+  })
+  const fakes = {
+    providerModels: {
+      anthropic: [
+        { id: "main-ctx-model" },
+        { id: "arch-model" },
+        { id: "mgr-model" },
+        { id: "wk-model" },
+      ],
+    },
+  }
+
+  test("Architect WITH a main-context model → that model is used, NOT role_pools.architect", async () => {
+    const d = deps(cfg, fakes)
+    const out = await resolveRoleModel(cfg, "architect", MAIN_CONTEXT, d, run)
+    expect(out).toEqual(MAIN_CONTEXT)
+    // Proven distinct from the pool: the architect pool would have yielded arch-model.
+    expect(out?.modelID).not.toBe("arch-model")
+  })
+
+  test("Architect with NO main-context model → falls back to role_pools.architect", async () => {
+    const d = deps(cfg, fakes)
+    const out = await resolveRoleModel(cfg, "architect", undefined, d, run)
+    expect(out).toEqual({ providerID: "anthropic", modelID: "arch-model" } as never)
+  })
+
+  test("Architect with NO main-context model AND no architect pool → falls back to the floor role", async () => {
+    const floored = routingConfig({
+      enabled: true,
+      mode: "auto",
+      decisionPool: ["architect"],
+      floorRole: "worker",
+      rolePools: { worker: ["wk-model"] },
+    })
+    const out = await resolveRoleModel(floored, "architect", undefined, deps(floored, fakes), run)
+    expect(out).toEqual({ providerID: "anthropic", modelID: "wk-model" } as never)
+  })
+
+  test("Manager / Worker IGNORE the main-context model → resolve from their own pools (unchanged)", async () => {
+    const d = deps(cfg, fakes)
+    // Even when a main-context model is passed, Manager/Worker take their own pool.
+    expect(await resolveRoleModel(cfg, "manager", MAIN_CONTEXT, d, run)).toEqual({
+      providerID: "anthropic",
+      modelID: "mgr-model",
+    } as never)
+    expect(await resolveRoleModel(cfg, "worker", MAIN_CONTEXT, d, run)).toEqual({
+      providerID: "anthropic",
+      modelID: "wk-model",
+    } as never)
+  })
+
+  test("Architect main-context model is returned even if its provider is UNauthenticated (it is the live running model)", async () => {
+    // The main-context model is the model the primary session is already running
+    // as — it is trusted and never re-verified, so an unauthenticated-provider
+    // read cannot demote the Architect to the pool.
+    const out = await resolveRoleModel(cfg, "architect", MAIN_CONTEXT, deps(cfg, { ...fakes, authProviders: [] }), run)
+    expect(out).toEqual(MAIN_CONTEXT)
+  })
+
+  test("Manager/Worker pool model with NO provider auth → undefined (parent inheritance, unchanged)", async () => {
+    const out = await resolveRoleModel(cfg, "worker", undefined, deps(cfg, { ...fakes, authProviders: [] }), run)
+    expect(out).toBeUndefined()
   })
 })
 
