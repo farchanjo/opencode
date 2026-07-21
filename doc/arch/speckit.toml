@@ -596,6 +596,18 @@ specScopeGlobs = [
   #   packages/opencode/test/telemetry/** + test/session/** (Feature 001/017) — the emitter tests.
   # Genuinely new path — the pure attribute-mapping emitters module (listed for exactness):
   "packages/opencode/src/routing/application/telemetry-emitters.ts",
+
+  # Feature 049 — Wire the hierarchy dispatch resolver into the live LLM `task`-tool
+  #   execution path. Most seams are ALREADY in scope and are NOT re-added
+  #   (traceability only):
+  #   packages/opencode/src/session/** (Feature 017) — tools.ts ctx.extra injection,
+  #     prompt.ts live-seam wiring + command-subtask model fix, routing-hierarchy.ts
+  #     createLiveHierarchyResolve / toHierarchyDispatchExtra;
+  #   packages/opencode/src/tool/task.ts (Feature 044 block) — per-invocation consume;
+  #   packages/schema/src/**/routing (n/a) — SubtaskPart.model already optional;
+  #   packages/opencode/test/session/** + test/routing/** — resolver seam tests.
+  # Genuinely new path — the live-seam consumption test on the TaskTool surface:
+  "packages/opencode/test/tool/task.test.ts",
 ]
 
 # Waivers for intentional near-empty files (warnings only; errors are never
