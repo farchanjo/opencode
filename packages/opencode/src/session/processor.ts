@@ -25,6 +25,10 @@ import { isRecord } from "@/util/record"
 import { EventV2Bridge } from "@/event-v2-bridge"
 import { Database } from "@opencode-ai/core/database/database"
 import { Usage, type LLMEvent } from "@opencode-ai/llm"
+import { RoutingSessionStore } from "./routing-session-store"
+import { recordTurnAndEvaluate, deltaFromUsage } from "./budget-consume"
+import { createConfigAdapter } from "@/routing/adapters/outbound/config-adapter"
+import { sessionConfigReadPort } from "./routing-resolve"
 
 const DOOM_LOOP_THRESHOLD = 3
 export type Result = "compact" | "stop" | "continue"
@@ -94,6 +98,24 @@ const layer = Layer.effect(
     const image = yield* Image.Service
     const events = yield* EventV2Bridge.Service
     const database = yield* Database.Service
+    // Feature 043 / Phase 2b — the shared `RoutingSessionState` store (one instance
+    // across the processor + prompt layers) and the effective routing budget the
+    // live response loop records consumption onto and enforces mid-session.
+    const routingStore = yield* RoutingSessionStore.Service
+
+    // Resolve the effective routing budget (project ▶ global ▶ the sensible
+    // default) — enforcement is ACTIVE out-of-box; an explicit operator budget
+    // always wins. Bound by the caller's captured context so config reads run on
+    // the request `InstanceRef`. Any failure degrades to a no-op (FR-F1).
+    const resolveRoutingBudget = Effect.fn("SessionProcessor.routingBudget")(function* () {
+      const context = yield* Effect.context<never>()
+      const run = <A>(effect: Effect.Effect<A>): Promise<A> => Effect.runPromiseWith(context)(effect)
+      const port = createConfigAdapter({
+        config: sessionConfigReadPort({ get: () => config.get(), getGlobal: () => config.getGlobal() }, run),
+      })
+      const effective = yield* Effect.promise(() => port.resolveEffective())
+      return effective.config.enforcement.budget
+    })
 
     const create = Effect.fn("SessionProcessor.create")(function* (input: Input) {
       // Pre-capture snapshot before the LLM stream starts. The AI SDK
@@ -454,6 +476,31 @@ const layer = Layer.effect(
               cost: usage.cost,
             })
             yield* session.updateMessage(ctx.assistantMessage)
+            // Feature 043 / Phase 2b — record the completed response's REAL
+            // turn/token/cost spend onto the shared store (accumulated running
+            // total), then re-evaluate the budget against it. A genuine hard-maximum
+            // breach is the engine's explicit `blocked` / `escalation` / `error`
+            // outcome — surfaced honestly as a stopped turn (mirroring the
+            // permission-rejection `ctx.blocked` path), never a silent truncation and
+            // never relaxable by any model/nested instruction. This runs BETWEEN
+            // turns (at step-finish), not inside the LLM stream, and the whole path
+            // degrades to a no-op on any error/defect so the turn never crashes or
+            // blocks (FR-A/B, FR-F1).
+            yield* Effect.gen(function* () {
+              const budget = yield* resolveRoutingBudget()
+              const enforcement = recordTurnAndEvaluate(routingStore, ctx.sessionID, budget, deltaFromUsage(usage))
+              if (!enforcement.breached) return
+              const violation = enforcement.decision.violations[0]
+              const detail = violation
+                ? `${violation.reason} (observed ${violation.observed} exceeds ${violation.dimension} ${violation.limit})`
+                : enforcement.decision.outcome
+              const error = parse(new Error(`Session budget ${enforcement.decision.outcome}: ${detail}`))
+              ctx.assistantMessage.error = error
+              ctx.assistantMessage.finish = "error"
+              ctx.blocked = true
+              yield* session.updateMessage(ctx.assistantMessage)
+              yield* events.publish(Session.Event.Error, { sessionID: ctx.sessionID, error })
+            }).pipe(Effect.catchCause(() => Effect.void))
             if (ctx.snapshot) {
               const patch = yield* snapshot.patch(ctx.snapshot)
               if (patch.files.length) {
@@ -641,7 +688,7 @@ const layer = Layer.effect(
 
             yield* stream.pipe(
               Stream.tap((event) => handleEvent(event)),
-              Stream.takeUntil(() => ctx.needsCompaction),
+              Stream.takeUntil(() => ctx.needsCompaction || ctx.blocked),
               Stream.runDrain,
             )
           }).pipe(
@@ -712,6 +759,7 @@ export const node = LayerNode.make({
     Image.node,
     EventV2Bridge.node,
     Database.node,
+    RoutingSessionStore.node,
   ],
 })
 
