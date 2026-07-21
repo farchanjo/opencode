@@ -140,7 +140,10 @@ function memFs(): DecisionStorePort {
   }
 }
 
-function service(candidates: ReadonlyArray<EvaluationCandidate> = CANDIDATES) {
+function service(
+  candidates: ReadonlyArray<EvaluationCandidate> = CANDIDATES,
+  consumptionFor?: (sessionId: string) => Budget.Consumption | undefined,
+) {
   return createRoutingService({
     config: CONFIG_SOURCE,
     candidates: candidateSource(candidates),
@@ -148,6 +151,7 @@ function service(candidates: ReadonlyArray<EvaluationCandidate> = CANDIDATES) {
     decisions: createDomainDecisionStore(memFs(), "/decisions"),
     clock: () => 1_700_000_000_000,
     nowIso: () => NOW,
+    consumptionFor,
   })
 }
 
@@ -187,6 +191,31 @@ describe("createRoutingService.evaluate", () => {
     expect(d.accounting.policy_version).toBe("policy_v1")
     expect(d.accounting.auth_context.hard_gates_authoritative).toBe(true)
     expect(d.lifecycle.execution_boundary).toBe("safe")
+  })
+
+  test("accounting.budget_consumed reflects the recorded running total, not ZERO (Feature 043 FR-D1)", async () => {
+    const recorded: Budget.Consumption = {
+      throughput: { turns_used: 4, context_tokens_used: 12_345, output_tokens_used: 678 },
+      concurrency: { workers_requested: 2, workers_granted: 2, delegation_depth_used: 1 },
+      retrieval: { retrieval_chunks_used: 0, skill_tokens_used: 0 },
+      cost: { time_ms_used: 5_000, cost_usd_used: 0.42 },
+      resilience: { retry_count: 0, validation_count: 0, escalation_count: 0 },
+    }
+    const out = await run(service(CANDIDATES, (id) => (id === EVAL_INPUT.sessionId ? recorded : undefined)).evaluate(EVAL_INPUT))
+    expect(out.ok).toBe(true)
+    if (!out.ok) return
+    expect(out.value.accounting.budget_consumed).toEqual(recorded)
+  })
+
+  test("accounting.budget_consumed stays ZERO when no consumption is threaded (back-compat)", async () => {
+    const out = await run(service().evaluate(EVAL_INPUT))
+    expect(out.ok).toBe(true)
+    if (!out.ok) return
+    expect(out.value.accounting.budget_consumed.throughput).toEqual({
+      turns_used: 0,
+      context_tokens_used: 0,
+      output_tokens_used: 0,
+    })
   })
 
   test("is idempotent on the (session, turn, fingerprint) key", async () => {
