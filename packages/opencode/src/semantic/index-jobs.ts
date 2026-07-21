@@ -21,7 +21,7 @@ import { Effect } from "effect"
 import { Projection } from "@opencode-ai/core/semantic/projection"
 import type { CollectionKind } from "@opencode-ai/protocol/semantic/commands"
 import type { ToolDoc } from "@opencode-ai/schema/semantic/tool-doc"
-import type { AgentDoc, SkillDoc } from "@opencode-ai/schema/semantic/documents"
+import type { AgentDoc, SkillChunkDoc, SkillDoc } from "@opencode-ai/schema/semantic/documents"
 import type { DocumentRow, MandatoryFilters, MilvusGap, MilvusPort } from "./milvus-adapter"
 
 /** A live-core document projected to its content hash and mandatory scalar fields (never a body, C22). */
@@ -133,6 +133,27 @@ export const agentLiveDoc = (doc: AgentDoc, vectors: ToolVectors): LiveDoc => ({
  * content-free — only the canonical id, its content hash, and the injected vectors.
  */
 export const skillLiveDoc = (doc: SkillDoc, vectors: ToolVectors, filters: MandatoryFilters): LiveDoc => ({
+  canonicalId: doc.id,
+  contentHash: doc.identity.content_hash,
+  row: {
+    canonicalId: doc.id,
+    canonicalVersion: doc.identity.content_hash,
+    dense: vectors.dense,
+    terms: vectors.terms,
+    filters,
+  },
+})
+
+/**
+ * Feature 050 / T019 (FR9) — project a sanitized `SkillChunkDoc` into the generic
+ * `LiveDoc` for the `skill_chunks` collection, following `skillLiveDoc` exactly:
+ * `SkillChunkDoc` carries no `DocScope` either, so the mandatory partition
+ * `filters` are supplied by the caller (the reconcile projection context), never
+ * read off the doc. Content-free — only the canonical chunk id, its content
+ * hash, and the injected vectors; the chunk BODY lives in the `OutputSpool`
+ * behind `body_ref`, never inlined here (FR8, `projection.ts:41`).
+ */
+export const skillChunkLiveDoc = (doc: SkillChunkDoc, vectors: ToolVectors, filters: MandatoryFilters): LiveDoc => ({
   canonicalId: doc.id,
   contentHash: doc.identity.content_hash,
   row: {
