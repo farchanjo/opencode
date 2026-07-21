@@ -4,27 +4,27 @@
 
 ### Phase 1 — Schema + role-to-agent binding
 
-- [ ] T001 Add `manager_agent`, `data_agent`, `composer_agent` as optional
+- [x] T001 Add `manager_agent`, `data_agent`, `composer_agent` as optional
   `Schema.optional(AgentName)` fields to `RoutingConfig.Enforcement.hierarchy`
   in `packages/schema/src/routing/config.ts:108-114`, mirroring the
   `orchestration_mode` field the SAME struct already carries. Does NOT touch
   `max_depth`/`orchestration_only`/`orchestration_mode`.
-- [ ] T002 Add the mirrored optional fields to `#RoutingEnforcement.hierarchy`
+- [x] T002 Add the mirrored optional fields to `#RoutingEnforcement.hierarchy`
   in `doc/arch/schemas/routing/config.cue:95-107`, per
   `#HierarchyHandoffBinding` in this feature's CUE schema (the CUE element
   documents the delta; this task performs the actual owning-struct edit).
-- [ ] T003 Add `resolveManagerAgentBinding(cfg, childRole, forceManager,
+- [x] T003 Add `resolveManagerAgentBinding(cfg, childRole, forceManager,
   agentGet): Effect<Agent.Info | undefined>` to
   `packages/opencode/src/tool/task.ts` (near `applyManagerPersona`, `:142`):
   returns the resolved bound agent only when `childRole === "manager" &&
   forceManager && hierarchy.manager_agent` resolves via `Agent.Service.get`
   AND its `Agent.Info.model` is unset; returns `undefined` (degrade) on any
   miss, emitting exactly one `Effect.logWarning` (FR1, FR7).
-- [ ] T004 Wire `resolveManagerAgentBinding` into the agent-resolution seam
+- [x] T004 Wire `resolveManagerAgentBinding` into the agent-resolution seam
   (`tool/task.ts:236-238` live path, `:304-307` default path): when it
   returns a bound agent, `next` = that agent instead of `agent.get(params.
   subagent_type)`; unchanged when it returns `undefined`.
-- [ ] T005 Unit tests
+- [x] T005 Unit tests
   (`packages/opencode/test/tool/task.test.ts`, extended): binding applies
   only under `force_manager` + `childRole === "manager"`; an unknown name,
   a model-pinned agent, and `force_manager` off/`childRole !== "manager"`
@@ -33,12 +33,12 @@
 
 ### Phase 2 — Synchronous interception (Data -> Composer)
 
-- [ ] T006 Add `synthetic: boolean` (default `false`) to
+- [x] T006 Add `synthetic: boolean` (default `false`) to
   `RoutingSessionState` (`packages/opencode/src/session/routing-state.ts`,
   beside `autoSkillInjected`) and a `markSynthetic(sessionId)` store method;
   cleared with the rest of the state at the existing `clear` — no new store,
   no new lifecycle hook (FR5).
-- [ ] T007 Create `packages/opencode/src/tool/orchestration-handoff.ts`:
+- [x] T007 Create `packages/opencode/src/tool/orchestration-handoff.ts`:
   `spawnSyntheticSubSession(deps, { parentSessionId, agentName, promptOps
   }): Effect<{ sessionId: SessionID; resultText: string }>` — creates a
   child session via `Session.Service.create` (permission derived via the
@@ -46,25 +46,25 @@
   `tool/task.ts:312-315`), calls `store.markSynthetic(sessionId)`
   IMMEDIATELY after creation and BEFORE `ops.resolvePromptParts`/`ops.prompt`
   run, then awaits the synchronous turn (FR2, FR5).
-- [ ] T008 Add the re-entrancy guard as a pure predicate
+- [x] T008 Add the re-entrancy guard as a pure predicate
   `interceptionEligible(childRole, forceManager, synthetic): boolean` in
   `orchestration-handoff.ts`, returning true only when `childRole ===
   "manager" && forceManager && !synthetic`; wired into `tool/task.ts`'s
   `runTask` closure (`:416`) BEFORE any interception work begins (FR5).
-- [ ] T009 Unit tests (`packages/opencode/test/tool/orchestration-handoff.test.ts`,
+- [x] T009 Unit tests (`packages/opencode/test/tool/orchestration-handoff.test.ts`,
   NEW): `interceptionEligible` truth table (all four combinations of
   `childRole`/`forceManager`/`synthetic`); `spawnSyntheticSubSession` stamps
   `synthetic:true` BEFORE the fake `ops.prompt` is invoked (assert call
   order); a simulated nested `task` call from within a synthetic session
   never re-reaches `interceptionEligible === true`.
-- [ ] T010 Add `runInterception(deps, input): Effect<{ promptOverride?:
+- [x] T010 Add `runInterception(deps, input): Effect<{ promptOverride?:
   string; log: OrchestrationHandoffLog }>` to `orchestration-handoff.ts`:
   sequences Data (bound `data_agent`, default `"explore"`) then, only if
   Data succeeds, Composer (bound `composer_agent`, no default); each stage
   wrapped in its own bounded deadline (`Effect.timeout`); a missing/
   unresolved required binding for the stage about to run yields a
   `"skipped"` stage outcome, never an attempted spawn (FR2, FR7).
-- [ ] T011 Unit tests (`orchestration-handoff.test.ts`, extended): Data
+- [x] T011 Unit tests (`orchestration-handoff.test.ts`, extended): Data
   always precedes Composer; Composer never runs if Data failed, timed out,
   or `data_agent` did not resolve; `composer_agent` absent yields a
   `"skipped"` Composer stage and the whole interception degrades; each
@@ -73,66 +73,72 @@
 
 ### Phase 3 — Fresh catalog, brief validation, composed brief
 
-- [ ] T012 Add the fresh-catalog call to `runInterception`'s Composer stage:
+- [x] T012 Add the fresh-catalog call to `runInterception`'s Composer stage:
   build a `RetrievalRequest` from the Composer subtask's OWN text and call
   `RetrievalFacade.retrieveAgents` directly — explicitly bypassing
   `RoutingSessionState.narrowedSets` (never read or written by this call);
   a `RetrievalError` or empty result falls open to
   `Agent.Service.listSpecialists()` (FR3).
-- [ ] T013 Unit tests (`orchestration-handoff.test.ts`, extended): the
+- [x] T013 Unit tests (`orchestration-handoff.test.ts`, extended): the
   retrieval request text is the SUBTASK text, not the parent Architect's
   `lastUser.id`-memoized text; a fake `RoutingSessionStateStore` asserts
   `narrowedSets` is never touched by this call; a scripted retrieval
   failure and a scripted empty result both fall open to a fake
   `listSpecialists()`, never an empty/missing catalog reaching the Composer
   prompt.
-- [ ] T014 Create `packages/opencode/src/routing/application/brief-validator.ts`:
-  pure `validateBrief(brief: ComposedBrief, resolveSpecialist: (id: string)
-  => Agent.Info | undefined, rankedCatalog: readonly RankedAgent[]):
-  { brief: ValidatedBrief; tally: BriefValidationTally }` — for each
-  subtask's cited specialist name, `resolveSpecialist` against the FULL
-  live registry decides validity (never `rankedCatalog`, which is
-  ranking/repair input only); an invalid name with an unambiguous
-  highest-ranked valid substitute in `rankedCatalog` is repaired; an
-  invalid name with no unambiguous substitute (including a top-rank tie) is
-  flagged, never dropped (FR6).
-- [ ] T015 Unit tests
-  (`packages/core/test/routing/brief-validator.test.ts` or the package's
-  equivalent test root, NEW): valid name untouched; invalid name +
-  unambiguous substitute repaired; invalid name + no substitute (including
-  a tie) flagged; a name valid in the registry but ABSENT from
-  `rankedCatalog` is accepted (registry wins over catalog, per FR6's
-  explicit precedence); tally counts match the input exactly for a mixed
-  brief.
-- [ ] T016 Wire brief validation into `runInterception`: after a successful
+- [x] T014 Create `packages/opencode/src/session/brief-validator.ts` (path
+  deviates from `plan.md`'s `routing/application/brief-validator.ts` —
+  `routing/application/` was in a concurrent agent's exclusive scope on this
+  branch; the module boundary and pure-function contract are unchanged):
+  pure `validateBrief(brief: string, deps: { resolveSpecialist, listSpecialists,
+  ranked? }): { brief: string; repairs: readonly {from,to}[]; flagged:
+  readonly string[] }` — for each subtask's cited specialist name,
+  `resolveSpecialist` against the FULL live registry decides validity
+  (never `deps.ranked`, which is ranking/repair input only); an invalid
+  name with an unambiguous valid substitute (ranked order first, then
+  case/hyphen-normalized fuzzy match against `listSpecialists`) is
+  repaired; an invalid name with no unambiguous substitute (including a
+  tie) is flagged inline (`[unassigned — route explicitly]`), never
+  dropped (FR6).
+- [x] T015 Unit tests
+  (`packages/opencode/test/session/brief-validator.test.ts`, NEW): valid
+  name untouched; invalid name + unambiguous ranked substitute repaired;
+  invalid name + unambiguous fuzzy substitute repaired without a ranked
+  list; invalid name + no substitute (including a tie) flagged with the
+  subtask preserved; a name valid in the registry but ABSENT from `ranked`
+  is accepted (registry wins over catalog, per FR6's explicit precedence);
+  mixed brief (valid + repaired + flagged); empty/no-name brief unchanged;
+  free-text fallback convention tolerated; deterministic across repeated
+  calls.
+- [x] T016 Wire brief validation into `runInterception`: after a successful
   Composer stage, call `validateBrief` and render `ValidatedBrief` into the
   `promptOverride` string; a Composer failure or timeout skips validation
   entirely (no partial brief is ever rendered) (FR4, FR6).
 
 ### Phase 4 — Call-site wiring, observability, verification
 
-- [ ] T017 Edit `tool/task.ts`'s `runTask` closure (`:416-438`): call
+- [x] T017 Edit `tool/task.ts`'s `runTask` closure (`:416-438`): call
   `runInterception` (gated by `interceptionEligible`, T008) BEFORE computing
   `promptText`; feed `promptOverride ?? params.prompt` into the EXISTING,
   UNCHANGED `applyManagerPersona(..., childRole, forceManager)` call. No
   second call to `applyManagerPersona` is introduced (FR2, FR4).
-- [ ] T018 Add `emitOrchestrationHandoff(log: OrchestrationHandoffLog)` to
+- [x] T018 Add `emitOrchestrationHandoff(log: OrchestrationHandoffLog)` to
   `packages/opencode/src/routing/application/telemetry-emitters.ts`, sibling
   to `emitOrchestrationWorker`/`emitFanoutAdmission`, gated by the existing
   `isTelemetryArmed()`; call it from `runInterception` for every attempt
   (including `guard.eligible === false`), content-free per FR8 (stage
   enums, durations, `BriefValidationTally` counts only — never subtask
   text, agent output, or specialist names).
-- [ ] T019 Unit test — observability content-freeness: assert the emitted
+- [x] T019 Unit test — observability content-freeness: assert the emitted
   `OrchestrationHandoffLog` payload for a scripted run contains no string
   field longer than a bounded enum/id length and no brief/recon text,
   mirroring the Feature 047 content-free emitter test convention.
-- [ ] T020 Golden — disabled path: byte-identical snapshot of a
+- [x] T020 Golden — disabled path: byte-identical snapshot of a
   `force_manager` manager-role spawn's resolved agent AND rendered prompt,
   with all three `hierarchy.*_agent` bindings absent, before and after this
   feature's changes (FR7, mirrors Feature 048's own byte-identical
   precedent for `heuristic` mode).
-- [ ] T021 Integration test — full Point A + Point B flow
+- [x] T021 Integration test — full Point A + Point B flow
   (`packages/opencode/test/tool/task.test.ts`, extended): against a fake
   `Session.Service`/`TaskPromptOps`/`RetrievalPort`, assert the bound
   `manager_agent` spawns, Data and Composer sub-sessions are correctly
@@ -150,7 +156,7 @@
   not (AC4/AC5); no depth/budget rejection is observed at
   `max_delegation_depth: 2` (AC6); unbound config renders byte-identical
   (AC7).
-- [ ] T023 Gates: `bun test test/tool/ test/routing/ test/session/` green;
+- [x] T023 Gates: `bun test test/tool/ test/routing/ test/session/` green;
   `bunx tsgo --noEmit -p packages/opencode/tsconfig.json` clean; `speckit
   validate --json` -> `ok:true`.
 

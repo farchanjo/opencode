@@ -664,6 +664,27 @@ specScopeGlobs = [
   "packages/opencode/src/skill/**",
   "packages/opencode/test/skill/**",
   "packages/core/src/v1/config/skills.ts",
+
+  # Feature 053 — Deterministic orchestration handoff: role-to-agent binding on
+  #   `hierarchy.manager_agent`/`data_agent`/`composer_agent`, plus the always-on
+  #   synchronous Data -> Composer interception before a manager-role spawn's prompt
+  #   is finalized. Most seams ALREADY in scope and NOT re-added (traceability only):
+  #   packages/schema/src/routing/config.ts (Feature 049 routing) — the three optional
+  #     binding leaves;
+  #   packages/protocol/src/enforcement/** (Feature 046 operator) — the hierarchy leaves
+  #     for the `op hierarchy set/show` round-trip;
+  #   packages/opencode/src/tool/task.ts (Feature 044/049) — binding resolution +
+  #     interception call-site wiring;
+  #   packages/opencode/src/session/** (Feature 017) — routing-state.ts synthetic flag,
+  #     brief-validator.ts pure validator;
+  #   packages/opencode/src/routing/application/telemetry-emitters.ts (Feature 047) —
+  #     the content-free handoff emitter;
+  #   packages/opencode/src/semantic/** (Feature 006/050) — retrieveAgents fresh catalog;
+  #   packages/opencode/test/tool/task.test.ts (Feature 049) — call-site integration tests.
+  # Genuinely new paths — the interception module + its unit test suite (no existing
+  # `packages/opencode/{src,test}/tool/**` glob covers these files):
+  "packages/opencode/src/tool/orchestration-handoff.ts",
+  "packages/opencode/test/tool/orchestration-handoff.test.ts",
 ]
 
 # Waivers for intentional near-empty files (warnings only; errors are never
