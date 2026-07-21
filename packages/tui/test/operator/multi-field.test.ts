@@ -224,6 +224,34 @@ describe("T005 — routing.configure structured sub-form + advanced-JSON (FR21)"
   })
 })
 
+describe("Feature 040 — routing.configure prefills from the effective read's activation shape (FR-C1)", () => {
+  const routingField = (key: string) => resolveOperatorFieldList("routing.configure")!.fields.find((f) => f.key === key)!
+
+  test("reads the Feature 036 nested `activation.{enabled,mode}` the routing.status read returns", () => {
+    // The exact shape the backend `createRoutingStatusHandler` projects (redacted activation).
+    const effective = { authority: "routing", configured: true, activation: { enabled: true, mode: "auto" } }
+    expect(routingField("enabled").prefill!(effective)).toBe("true")
+    expect(routingField("mode").prefill!(effective)).toBe("auto")
+  })
+
+  test("a persisted enabled:true / mode seeds the toggle-on / picker value; absent activation → honest placeholder", () => {
+    const off = { authority: "routing", configured: true, activation: { enabled: false, mode: "never" } }
+    expect(routingField("enabled").prefill!(off)).toBe("false")
+    expect(routingField("mode").prefill!(off)).toBe("never")
+    // Honest absence — an unconfigured read seeds nothing → `[ ] off` / `— select —`.
+    expect(routingField("enabled").prefill!({ configured: false, activation: null })).toBeUndefined()
+    expect(routingField("mode").prefill!({ configured: false, activation: null })).toBeUndefined()
+    expect(routingField("enabled").prefill!(undefined)).toBeUndefined()
+    expect(routingField("mode").prefill!({})).toBeUndefined()
+  })
+
+  test("back-compat: still reads the top-level domain-port StatusResponse shape when served", () => {
+    // The routing DOMAIN-port `StatusResponse` (top-level enabled/mode) any stack may serve.
+    expect(routingField("enabled").prefill!({ enabled: true, mode: "always" })).toBe("true")
+    expect(routingField("mode").prefill!({ enabled: true, mode: "always" })).toBe("always")
+  })
+})
+
 describe("T004 — pools.set bindings-list editor (FR22)", () => {
   test("pre-fills ordered { role, models } rows from the pools.show effective", () => {
     const rows = prefillBindings({ bindings: [{ role: "worker", models: ["a", "b"] }, { role: "manager", models: ["c"] }] })
@@ -274,7 +302,8 @@ describe("019 fix-round — bindings save-time validation blocks a doomed dispat
 describe("019 fix-round — hoisted modal state survives a sub-dialog push/pop (FR22)", () => {
   test("createMultiFieldState seeds one raw key per field and an empty bindings list", () => {
     const [store] = createMultiFieldState(resolveOperatorFieldList("telemetry.configure")!)
-    expect(Object.keys(store.raw).sort()).toEqual(["endpoint", "transport"])
+    // Feature 034 seeds the synthetic Request-scope row alongside one raw key per field.
+    expect(Object.keys(store.raw).sort()).toEqual(["__requestScope__", "endpoint", "transport"])
     expect(store.bindings).toEqual([])
     expect(store.loaded).toBe(false)
   })
