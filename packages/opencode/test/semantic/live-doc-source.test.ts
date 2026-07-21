@@ -177,6 +177,43 @@ describe("LiveDocSource — tombstone flow (T020)", () => {
   })
 })
 
+describe("LiveDocSource — full rebuild embeds every doc (C2 regression)", () => {
+  test("a full rebuild embeds an unchanged-hash doc instead of carrying an empty vector", async () => {
+    // Seed a prior indexed hash that MATCHES the live doc — an incremental reconcile would skip it.
+    const { deps: firstDeps } = baseDeps()
+    const first = await LiveDocSource.createLiveDocSource(firstDeps).collect({ collection: "agents", projectId: "proj-1" })
+    const priorHash = first[0]!.contentHash
+
+    const { deps, embedCalls } = baseDeps({ indexedHashes: async () => new Map([["agent-a", priorHash]]) })
+    const source = LiveDocSource.createLiveDocSource(deps)
+
+    // Incremental (full unset) → skip: zero embeds, empty vector.
+    const incremental = await source.collect({ collection: "agents", projectId: "proj-1" })
+    expect(incremental[0]!.row.dense).toEqual([])
+    expect(embedCalls.length).toBe(0)
+
+    // Full rebuild → EVERY doc embeds despite the unchanged hash; never an empty vector into the new generation.
+    const rebuilt = await source.collect({ collection: "agents", projectId: "proj-1", full: true })
+    expect(rebuilt[0]!.row.dense.length).toBeGreaterThan(0)
+    expect(embedCalls.length).toBe(1)
+  })
+
+  test("a full rebuild embeds every skill_chunk even with matching indexed hashes", async () => {
+    const shortBody = "A short skill body that fits in a single chunk window."
+    const { deps: firstDeps } = baseDeps({ skills: async () => [skillInput({ content: shortBody })] })
+    const priorRows = await LiveDocSource.createLiveDocSource(firstDeps).collect({ collection: "skill_chunks", projectId: "proj-1" })
+    const priorHash = priorRows[0]!.contentHash
+
+    const { deps, embedCalls } = baseDeps({
+      skills: async () => [skillInput({ content: shortBody })],
+      indexedHashes: async () => new Map([[priorRows[0]!.canonicalId, priorHash]]),
+    })
+    const rows = await LiveDocSource.createLiveDocSource(deps).collect({ collection: "skill_chunks", projectId: "proj-1", full: true })
+    expect(rows[0]!.row.dense.length).toBeGreaterThan(0)
+    expect(embedCalls.length).toBe(1)
+  })
+})
+
 describe("LiveDocSource — unsupported collection", () => {
   test("rejects rather than fabricating a snapshot for a collection this source does not own", async () => {
     const { deps } = baseDeps()

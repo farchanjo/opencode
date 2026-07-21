@@ -30,7 +30,9 @@ export * as MilvusBinding from "./milvus-binding"
 
 import { Effect } from "effect"
 import { IndexJobs } from "@/semantic/index-jobs"
-import type { MilvusPort } from "@/semantic/milvus-adapter"
+import type { MilvusPort, MilvusGap } from "@/semantic/milvus-adapter"
+import { isTransientDataPlaneError, withDataPlaneRetry } from "@/util/effect-http-client"
+import { DataPlaneRetryStats } from "@/semantic/data-plane-retry-stats"
 import type { IndexPort } from "@opencode-ai/protocol/semantic/ports"
 import type { CollectionKind, IndexError } from "@opencode-ai/protocol/semantic/commands"
 
@@ -80,6 +82,8 @@ export interface LiveDocSource {
   readonly collect: (input: {
     readonly collection: CollectionKind
     readonly projectId: string
+    /** Feature 050 (C2 fix) — a full rebuild embeds EVERY doc (the source disables its embed-skip). */
+    readonly full?: boolean
   }) => Promise<readonly IndexJobs.LiveDoc[]>
 }
 
@@ -147,6 +151,13 @@ export function createMilvusIndexPort(deps: MilvusIndexBindingDeps): IndexPort {
   const source = deps.source
   const spool = deps.spool ?? boundedSpool
 
+  // Feature 050 (FR12) — bound, jittered-exponential transient-only retry for the MAINTENANCE
+  // data plane (never the live query runner). `milvus_unavailable`/transport retries; a domain gap
+  // (`invalid_filters`/`cas_conflict`/`dimension_mismatch`) never does. Each taken retry increments
+  // the resilience `retry_count` recorder (AC7).
+  const dataPlaneRetry = <A>(effect: Effect.Effect<A, MilvusGap>): Effect.Effect<A, MilvusGap> =>
+    withDataPlaneRetry(effect, isTransientDataPlaneError, { onRetry: DataPlaneRetryStats.record })
+
   /**
    * Feature 019 (FR6, FR7) — run one collection's reconcile over the live port: read
    * the pinned context, collect the live docs, enumerate the indexed docs, then diff +
@@ -163,19 +174,22 @@ export function createMilvusIndexPort(deps: MilvusIndexBindingDeps): IndexPort {
       if (!health.reachable) return yield* Effect.fail(milvusUnavailable("milvus endpoint unreachable"))
       const ctx = yield* Effect.tryPromise({ try: () => deps.context!(), catch: () => milvusUnavailable("maintenance context unavailable") })
       const live = yield* Effect.tryPromise({
-        try: () => source.collect({ collection, projectId: ctx.projectId }),
+        // A full rebuild embeds EVERY doc (C2 fix): the source disables its embed-skip for `full`.
+        try: () => source.collect({ collection, projectId: ctx.projectId, full }),
         // A missing embedding provider / definition source degrades typed — never fabricated vectors (FR6).
         catch: () => milvusUnavailable("live-doc source unavailable (embedding provider not configured)"),
       })
       const indexed = full
         ? []
-        : yield* port.enumerateIndexed({ collection, projectId: ctx.projectId }).pipe(
+        : yield* dataPlaneRetry(port.enumerateIndexed({ collection, projectId: ctx.projectId })).pipe(
             Effect.mapError((): IndexError => milvusUnavailable("enumerate indexed docs failed")),
             Effect.map((r) => r.docs),
           )
-      const result = yield* IndexJobs.runReconcile(
-        { milvus: port, spool },
-        { collection, live, indexed, projectId: ctx.projectId, bindingVersion: ctx.bindingVersion },
+      const result = yield* dataPlaneRetry(
+        IndexJobs.runReconcile(
+          { milvus: port, spool },
+          { collection, live, indexed, projectId: ctx.projectId, bindingVersion: ctx.bindingVersion },
+        ),
       ).pipe(Effect.mapError((): IndexError => milvusUnavailable("index maintenance failed")))
       return {
         upsertedCount: result.summary.upsertedCount,

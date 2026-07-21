@@ -13,25 +13,22 @@
  * (`index-jobs.ts:52-65`, `Projection.decideMutation`) — that classification never
  * reads `.row`, so an unchanged doc's `row.dense`/`.terms` are deliberately empty
  * (`EMPTY_VECTORS` below); this is safe for an INCREMENTAL reconcile (the only
- * caller that passes real prior hashes through to `planMutations`). A CLI full
- * rebuild (`milvus-binding.ts`'s `runMaintenance(collection, true)`) instead
- * discards prior hashes and forces every live doc through the "upsert" branch —
- * on a profile that already has a live, non-empty generation, running that path
- * would read an unchanged doc's empty vector. This is a DOCUMENTED, pre-existing
- * seam boundary (the source cannot see the caller's `full` flag, and widening
- * `LiveDocSource.collect`'s signature a second time was explicitly out of scope
- * for this slice, see below) — not a regression this feature introduces, and it
- * does not manifest for a first-ever reindex of an empty profile (AC1), which is
- * the only full-rebuild scenario this feature's acceptance criteria cover.
+ * caller that passes real prior hashes through to `planMutations`).
  *
- * **Interface choice (documented, FR9 "extend minimally").** The shipped
- * `LiveDocSource.collect` signature (`milvus-binding.ts:79-84`) takes only
- * `{collection, projectId}` — no `indexedHashes` parameter. Rather than widening
- * that already-consumed interface a second time, `indexedHashes` is wired here as
- * a DEPENDENCY closure the composition root binds over the SAME `MilvusPort.
- * enumerateIndexed` `runMaintenance` already calls for its own upsert/tombstone
- * diff (`milvus-binding.ts:172-175`) — one extra read per collect, paid only to
- * decide the embed-skip, never exposed as a second port method.
+ * **Full rebuild embeds EVERY doc (C2 fix).** A CLI full rebuild
+ * (`milvus-binding.ts`'s `runMaintenance(collection, true)`) discards prior hashes
+ * and forces every live doc through the "upsert" branch. Because content hashes are
+ * model-INDEPENDENT, an unchanged hash on a provider switch would otherwise carry an
+ * empty vector into the fresh generation and corrupt it. `collect` therefore takes a
+ * `full` flag (threaded from `runMaintenance`): a full rebuild disables the embed-skip
+ * entirely (`readIndexedHashes` returns an empty map), so EVERY doc is re-embedded into
+ * the new space. An incremental reconcile keeps the hash-skip (AC5).
+ *
+ * **`indexedHashes` wiring (FR9).** The embed-skip reads the currently indexed
+ * `{canonicalId -> contentHash}` map as a DEPENDENCY closure the composition root binds
+ * over the SAME `MilvusPort.enumerateIndexed` `runMaintenance` already calls for its own
+ * upsert/tombstone diff (`milvus-binding.ts:172-175`) — one extra read per incremental
+ * collect, paid only to decide the embed-skip, never exposed as a second port method.
  *
  * **Embedding text (a decision this feature makes, not inherited).** Neither
  * `AgentDoc`/`SkillDoc` nor the shipped pipeline carries a canonical "text to
@@ -92,11 +89,18 @@ export interface LiveDocSourceDeps {
   readonly filters: (projectId: string) => MandatoryFilters
 }
 
-/** Mirrors `milvus-binding.ts:79-84` exactly — this feature does NOT widen the shipped `LiveDocSource` interface. */
 export interface LiveDocSource {
   readonly collect: (input: {
     readonly collection: CollectionKind
     readonly projectId: string
+    /**
+     * Feature 050 (C2 fix) — a FULL rebuild embeds EVERY live doc: the embed-skip is
+     * disabled so an unchanged-hash doc never carries an empty vector into a fresh
+     * generation (hashes are model-independent, so a provider switch would otherwise
+     * corrupt the new space). An incremental reconcile (`full` unset/false) keeps the
+     * hash-skip. `runMaintenance` passes this flag (`milvus-binding.ts`).
+     */
+    readonly full?: boolean
   }) => Promise<readonly IndexJobs.LiveDoc[]>
 }
 
@@ -134,11 +138,13 @@ const vectorsFor = (byCanonicalId: ReadonlyMap<string, IndexJobs.ToolVectors>, c
 
 /** Build the production `LiveDocSource` over the injected agent/skill sources, embedding client, and chunk spool (FR9). */
 export const createLiveDocSource = (deps: LiveDocSourceDeps): LiveDocSource => {
-  const readIndexedHashes = async (collection: CollectionKind): Promise<ReadonlyMap<string, string>> =>
-    deps.indexedHashes ? deps.indexedHashes(collection) : new Map()
+  // A full rebuild forces an empty indexed map so EVERY live doc embeds (C2 fix); an incremental
+  // reconcile reads the real indexed hashes so an unchanged doc skips the embed call (FR9, AC5).
+  const readIndexedHashes = async (collection: CollectionKind, full: boolean): Promise<ReadonlyMap<string, string>> =>
+    full || !deps.indexedHashes ? new Map() : deps.indexedHashes(collection)
 
-  const collectAgents = async (projectId: string): Promise<readonly IndexJobs.LiveDoc[]> => {
-    const [agents, indexedHashes] = await Promise.all([deps.agents(), readIndexedHashes("agents")])
+  const collectAgents = async (projectId: string, full: boolean): Promise<readonly IndexJobs.LiveDoc[]> => {
+    const [agents, indexedHashes] = await Promise.all([deps.agents(), readIndexedHashes("agents", full)])
     const entries = agents.map((agent): HashedEntry<ReturnType<typeof AgentDocBuilder.build>> => {
       const doc = AgentDocBuilder.build(agent, { projectId })
       return { canonicalId: doc.id, contentHash: doc.identity.content_hash, embedText: doc.classification.description, doc }
@@ -147,8 +153,8 @@ export const createLiveDocSource = (deps: LiveDocSourceDeps): LiveDocSource => {
     return entries.map((entry) => IndexJobs.agentLiveDoc(entry.doc, vectorsFor(vectorsById, entry.canonicalId)))
   }
 
-  const collectSkills = async (projectId: string): Promise<readonly IndexJobs.LiveDoc[]> => {
-    const [skills, indexedHashes] = await Promise.all([deps.skills(), readIndexedHashes("skills")])
+  const collectSkills = async (projectId: string, full: boolean): Promise<readonly IndexJobs.LiveDoc[]> => {
+    const [skills, indexedHashes] = await Promise.all([deps.skills(), readIndexedHashes("skills", full)])
     const filters = deps.filters(projectId)
     const entries = skills.map((skill): HashedEntry<ReturnType<typeof SkillDocBuilder.build>> => {
       const doc = SkillDocBuilder.build(skill)
@@ -159,8 +165,8 @@ export const createLiveDocSource = (deps: LiveDocSourceDeps): LiveDocSource => {
   }
 
   /** Chunk every live skill, spool each sanitized chunk body, then apply the SAME embed-skip decision per chunk. */
-  const collectSkillChunks = async (projectId: string): Promise<readonly IndexJobs.LiveDoc[]> => {
-    const [skills, indexedHashes] = await Promise.all([deps.skills(), readIndexedHashes("skill_chunks")])
+  const collectSkillChunks = async (projectId: string, full: boolean): Promise<readonly IndexJobs.LiveDoc[]> => {
+    const [skills, indexedHashes] = await Promise.all([deps.skills(), readIndexedHashes("skill_chunks", full)])
     const filters = deps.filters(projectId)
     const chunkResults = skills.flatMap((skill) =>
       SkillChunker.chunkSkill({
@@ -200,13 +206,14 @@ export const createLiveDocSource = (deps: LiveDocSourceDeps): LiveDocSource => {
 
   return {
     collect: (input) => {
+      const full = input.full === true
       switch (input.collection) {
         case "agents":
-          return collectAgents(input.projectId)
+          return collectAgents(input.projectId, full)
         case "skills":
-          return collectSkills(input.projectId)
+          return collectSkills(input.projectId, full)
         case "skill_chunks":
-          return collectSkillChunks(input.projectId)
+          return collectSkillChunks(input.projectId, full)
         default:
           // Feature 009 owns the `tools` collection's own live-doc wiring; this source is scoped to
           // agents/skills/skill_chunks only (FR9, plan.md component #5) — never a fabricated snapshot.
