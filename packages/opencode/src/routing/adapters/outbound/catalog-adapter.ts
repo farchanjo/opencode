@@ -406,9 +406,10 @@ export function createCatalogModelValidator(catalog: Pick<CatalogPort, "resolveC
       // from a POPULATED catalog that is genuinely missing the id. When the live
       // catalog resolves to ZERO models EVERY id looks `not_found_in_catalog`, so
       // flagging them would false-reject an otherwise-valid `pools.set`. Instead
-      // throw, so the write path degrades to `unavailable` (skip validation) — the
-      // SAME outcome a thrown catalog outage produces. A POPULATED catalog with a
-      // genuinely-absent id still returns it here → `invalid_argument`.
+      // throw, so the write path SKIPS validation and PERSISTS (Feature 039:
+      // best-effort — a thrown/empty catalog is non-fatal) — the SAME outcome a
+      // thrown catalog outage produces. A POPULATED catalog with a genuinely-absent
+      // id still returns it here → `invalid_argument`.
       if ((await catalog.listAll()).candidates.length === 0)
         throw new Error("catalog is empty (unavailable): skipping role-pool validation")
       return unknown

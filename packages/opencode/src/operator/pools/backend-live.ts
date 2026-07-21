@@ -230,18 +230,24 @@ export function createLivePoolsBackend(deps: LivePoolsBackendDeps): PoolsBackend
    * provider-qualified id that DOES resolve passes. A no-op when no catalog
    * validator is injected (pre-038 behavior).
    *
-   * A catalog outage OR a transiently-empty catalog (a SUCCESSFUL but empty
-   * provider read — `unknownModelIds` throws for the empty case) degrades to
-   * `unavailable`, NEVER `invalid_argument`: we cannot validate, so we do not
-   * false-reject a valid write while the catalog is cold.
+   * Feature 039 — the catalog check is BEST-EFFORT: it may only REJECT, never
+   * BLOCK a write. When the catalog cannot be consulted — a thrown resolver error
+   * (InstanceRef/outage, the F039 stack-seam defect) OR a transiently-empty
+   * provider catalog (cold start / provider-reload race, which `unknownModelIds`
+   * signals by throwing) — we SKIP validation and let the write PERSIST, rather
+   * than failing the mutation `unavailable`. Only a POPULATED, reachable catalog
+   * that positively reports an id as `not_found_in_catalog` rejects
+   * `invalid_argument`, naming the offender.
    */
   const validateAgainstCatalog = (bindings: RolePoolBindingList): Effect.Effect<void, PoolsError> =>
     Effect.gen(function* () {
       if (deps.catalog === undefined) return
-      const unknown = yield* Effect.tryPromise({
-        try: () => deps.catalog!.unknownModelIds(distinctModelIds(bindings)),
-        catch: (cause): PoolsError => unavailable(`catalog validation unavailable: ${String(cause)}`),
-      })
+      // A thrown resolver error (unreachable) OR the empty-catalog signal recovers
+      // to an empty unknown list — skip-and-proceed. Only a positively-returned
+      // non-empty list (reachable + id absent) rejects below.
+      const unknown = yield* Effect.tryPromise(() =>
+        deps.catalog!.unknownModelIds(distinctModelIds(bindings)),
+      ).pipe(Effect.orElseSucceed<ReadonlyArray<string>>(() => []))
       if (unknown.length > 0)
         return yield* Effect.fail<PoolsError>({
           type: "invalid_argument",
