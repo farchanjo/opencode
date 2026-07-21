@@ -26,12 +26,31 @@ import { EventV2Bridge } from "@/event-v2-bridge"
 import { Database } from "@opencode-ai/core/database/database"
 import { Usage, type LLMEvent } from "@opencode-ai/llm"
 import { RoutingSessionStore } from "./routing-session-store"
-import { recordTurnAndEvaluate, deltaFromUsage } from "./budget-consume"
-import { createConfigAdapter } from "@/routing/adapters/outbound/config-adapter"
-import { sessionConfigReadPort } from "./routing-resolve"
+import { recordTurn, evaluateRecorded, deltaFromUsage, exceedsTurnLimit } from "./budget-consume"
+import { createConfigAdapter, AUTHORITY } from "@/routing/adapters/outbound/config-adapter"
+import { sessionConfigReadPort, createBoundedLru } from "./routing-resolve"
+import type { RoutingConfig } from "@opencode-ai/schema/routing/config"
 
 const DOOM_LOOP_THRESHOLD = 3
 export type Result = "compact" | "stop" | "continue"
+
+// Feature 043 — the effective routing enforcement inputs the budget seam needs:
+// the activation gate and the (default-or-operator) budget policy.
+interface EffectiveEnforcement {
+  readonly activation: RoutingConfig.Info["activation"]
+  readonly budget: RoutingConfig.Enforcement["budget"]
+}
+
+/**
+ * Budget enforcement is ACTIVE only when Smart Routing is effectively on (enabled
+ * and not `never`) — the SAME gate F037/F042 use for the routing/spawn paths. The
+ * out-of-box default (`enabled:false`/`mode:"never"`) is byte-identical to pre-F043:
+ * no recording, no re-evaluation, no block. The sensible default budget applies only
+ * once an operator turns Smart Routing on without configuring every numeric limit.
+ */
+function enforcementActive(activation: RoutingConfig.Info["activation"]): boolean {
+  return activation.enabled && activation.mode !== "never"
+}
 
 export interface Handle {
   readonly message: SessionV1.Assistant
@@ -103,18 +122,35 @@ const layer = Layer.effect(
     // live response loop records consumption onto and enforces mid-session.
     const routingStore = yield* RoutingSessionStore.Service
 
-    // Resolve the effective routing budget (project ▶ global ▶ the sensible
-    // default) — enforcement is ACTIVE out-of-box; an explicit operator budget
-    // always wins. Bound by the caller's captured context so config reads run on
-    // the request `InstanceRef`. Any failure degrades to a no-op (FR-F1).
-    const resolveRoutingBudget = Effect.fn("SessionProcessor.routingBudget")(function* () {
+    // Resolve the effective routing ACTIVATION + budget (project ▶ global ▶ the
+    // sensible default). Bound by the caller's captured context so config reads run
+    // on the request `InstanceRef`. MEMOIZED by the routing authorities' CAS VERSIONS
+    // (stable strings), NOT config-object identity: `Config.getGlobal()` returns a
+    // FRESH merged object on every call whenever a global PROFILE exists (the deployed
+    // two-level config model), so an identity guard would never hit and the
+    // schema-decode + contentHash of `resolveEffective` would run on every
+    // step-finish / pre-turn call. The version key is read WITHOUT a schema decode and
+    // changes iff the config changes, so the memo hits under a profile yet is
+    // invalidated by a real config change. Capacity-1 LRU. Any failure degrades to a
+    // no-op (FR-F1).
+    const enforcementMemo = createBoundedLru<EffectiveEnforcement>(1, () => {})
+    const resolveRoutingEnforcement = Effect.fn("SessionProcessor.routingEnforcement")(function* () {
       const context = yield* Effect.context<never>()
       const run = <A>(effect: Effect.Effect<A>): Promise<A> => Effect.runPromiseWith(context)(effect)
-      const port = createConfigAdapter({
-        config: sessionConfigReadPort({ get: () => config.get(), getGlobal: () => config.getGlobal() }, run),
-      })
-      const effective = yield* Effect.promise(() => port.resolveEffective())
-      return effective.config.enforcement.budget
+      const readPort = sessionConfigReadPort({ get: () => config.get(), getGlobal: () => config.getGlobal() }, run)
+      // Cheap, decode-free stable key: the CAS versions of the two routing authorities.
+      const project = yield* Effect.promise(() => readPort.get(AUTHORITY.project))
+      const global = yield* Effect.promise(() => readPort.get(AUTHORITY.global))
+      const key = `${project?.version ?? ""}|${global?.version ?? ""}`
+      const cached = enforcementMemo.get(key)
+      if (cached) return cached
+      const effective = yield* Effect.promise(() => createConfigAdapter({ config: readPort }).resolveEffective())
+      const value: EffectiveEnforcement = {
+        activation: effective.config.activation,
+        budget: effective.config.enforcement.budget,
+      }
+      enforcementMemo.set(key, value)
+      return value
     })
 
     const create = Effect.fn("SessionProcessor.create")(function* (input: Input) {
@@ -476,31 +512,37 @@ const layer = Layer.effect(
               cost: usage.cost,
             })
             yield* session.updateMessage(ctx.assistantMessage)
-            // Feature 043 / Phase 2b — record the completed response's REAL
-            // turn/token/cost spend onto the shared store (accumulated running
-            // total), then re-evaluate the budget against it. A genuine hard-maximum
-            // breach is the engine's explicit `blocked` / `escalation` / `error`
-            // outcome — surfaced honestly as a stopped turn (mirroring the
+            // Feature 043 / Phase 2b — when Smart Routing is effectively ON, record
+            // the completed response's REAL turn/token/cost spend onto the shared
+            // store (accumulated running total), then re-evaluate the budget against
+            // it. A genuine hard-maximum breach is the engine's explicit `blocked` /
+            // `error` outcome — surfaced honestly as a stopped turn (mirroring the
             // permission-rejection `ctx.blocked` path), never a silent truncation and
-            // never relaxable by any model/nested instruction. This runs BETWEEN
-            // turns (at step-finish), not inside the LLM stream, and the whole path
-            // degrades to a no-op on any error/defect so the turn never crashes or
-            // blocks (FR-A/B, FR-F1).
+            // never relaxable by any model/nested instruction. When routing is OFF
+            // (the out-of-box default) this is a NO-OP — byte-identical to pre-F043.
+            // Recording happens BEFORE evaluation (FR-A3). This runs BETWEEN turns (at
+            // step-finish), not inside the LLM stream. The whole path degrades to a
+            // no-op on any defect/failure so the turn never crashes or blocks
+            // (FR-A/B, FR-F1) — but a genuine fiber INTERRUPTION is re-raised so a
+            // user-abort while awaiting config I/O is never swallowed.
             yield* Effect.gen(function* () {
-              const budget = yield* resolveRoutingBudget()
-              const enforcement = recordTurnAndEvaluate(routingStore, ctx.sessionID, budget, deltaFromUsage(usage))
-              if (!enforcement.breached) return
-              const violation = enforcement.decision.violations[0]
+              const enforcement = yield* resolveRoutingEnforcement()
+              if (!enforcementActive(enforcement.activation)) return
+              const delta = deltaFromUsage(usage)
+              const consumption = recordTurn(routingStore, ctx.sessionID, delta)
+              const result = evaluateRecorded(enforcement.budget, consumption, delta)
+              if (!result.breached) return
+              const violation = result.decision.violations[0]
               const detail = violation
                 ? `${violation.reason} (observed ${violation.observed} exceeds ${violation.dimension} ${violation.limit})`
-                : enforcement.decision.outcome
-              const error = parse(new Error(`Session budget ${enforcement.decision.outcome}: ${detail}`))
+                : result.decision.outcome
+              const error = parse(new Error(`Session budget ${result.decision.outcome}: ${detail}`))
               ctx.assistantMessage.error = error
               ctx.assistantMessage.finish = "error"
               ctx.blocked = true
               yield* session.updateMessage(ctx.assistantMessage)
               yield* events.publish(Session.Event.Error, { sessionID: ctx.sessionID, error })
-            }).pipe(Effect.catchCause(() => Effect.void))
+            }).pipe(Effect.catchCauseIf((cause) => !Cause.hasInterruptsOnly(cause), () => Effect.void))
             if (ctx.snapshot) {
               const patch = yield* snapshot.patch(ctx.snapshot)
               if (patch.files.length) {
@@ -671,6 +713,28 @@ const layer = Layer.effect(
         yield* status.set(ctx.sessionID, { type: "idle" })
       })
 
+      // Feature 043 — PRE-turn gate for the one COUNTABLE dimension, `max_turns`.
+      // Token/cost lateness is inherent to post-execution accounting (the spend is
+      // only known at step-finish), but a countable turn can be gated EXACTLY: block
+      // BEFORE starting a turn that would push `turns_used` over `max_turns`, so the
+      // limit is honored precisely rather than one turn late. Gated on activation and
+      // hang/crash-safe like the step-finish path; an interruption is re-raised.
+      const preTurnBudgetGate = Effect.fn("SessionProcessor.preTurnBudgetGate")(function* () {
+        yield* Effect.gen(function* () {
+          const enforcement = yield* resolveRoutingEnforcement()
+          if (!enforcementActive(enforcement.activation)) return
+          if (!exceedsTurnLimit(enforcement.budget, routingStore.get(ctx.sessionID).consumption)) return
+          const error = parse(
+            new Error(`Session budget blocked: next turn would exceed max_turns ${enforcement.budget.limits.max_turns}`),
+          )
+          ctx.assistantMessage.error = error
+          ctx.assistantMessage.finish = "error"
+          ctx.blocked = true
+          yield* session.updateMessage(ctx.assistantMessage)
+          yield* events.publish(Session.Event.Error, { sessionID: ctx.sessionID, error })
+        }).pipe(Effect.catchCauseIf((cause) => !Cause.hasInterruptsOnly(cause), () => Effect.void))
+      })
+
       const process = Effect.fn("SessionProcessor.process")(function* (streamInput: LLM.StreamInput) {
         yield* Effect.logInfo("process", {
           "session.id": input.sessionID,
@@ -684,13 +748,19 @@ const layer = Layer.effect(
             ctx.currentText = undefined
             ctx.reasoningMap = {}
             yield* status.set(ctx.sessionID, { type: "busy" })
-            const stream = llm.stream(streamInput)
+            // Feature 043 — gate the countable turn BEFORE the LLM stream starts, so
+            // a `max_turns` breach blocks the over-limit turn rather than detecting it
+            // one turn late. A no-op when routing is off (byte-identical to pre-F043).
+            yield* preTurnBudgetGate()
+            if (!ctx.blocked) {
+              const stream = llm.stream(streamInput)
 
-            yield* stream.pipe(
-              Stream.tap((event) => handleEvent(event)),
-              Stream.takeUntil(() => ctx.needsCompaction || ctx.blocked),
-              Stream.runDrain,
-            )
+              yield* stream.pipe(
+                Stream.tap((event) => handleEvent(event)),
+                Stream.takeUntil(() => ctx.needsCompaction || ctx.blocked),
+                Stream.runDrain,
+              )
+            }
           }).pipe(
             Effect.onInterrupt(() =>
               Effect.gen(function* () {

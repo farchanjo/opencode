@@ -1554,7 +1554,18 @@ const layer = Layer.effect(
     const loop: (input: LoopInput) => Effect.Effect<SessionV1.WithParts> = Effect.fn("SessionPrompt.loop")(function* (
       input: LoopInput,
     ) {
-      return yield* state.ensureRunning(input.sessionID, lastAssistant(input.sessionID), runLoop(input.sessionID))
+      return yield* state.ensureRunning(
+        input.sessionID,
+        lastAssistant(input.sessionID),
+        // Feature 043 — release the ROOT session's recorded budget consumption when
+        // its turn completes (success, breach, or interrupt), mirroring the F042
+        // CHILD-session clear in tool/task.ts. A stale breach can never permanently
+        // brick the session (each new prompt starts from a fresh running total) and
+        // `RoutingSessionState` never leaks one Map entry per root session.
+        runLoop(input.sessionID).pipe(
+          Effect.ensuring(Effect.sync(() => routingSessionState.clear(input.sessionID))),
+        ),
+      )
     })
 
     const shell: (input: ShellInput) => Effect.Effect<SessionV1.WithParts, Session.BusyError> = Effect.fn(
