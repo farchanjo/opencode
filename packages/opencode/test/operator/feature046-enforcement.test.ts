@@ -124,6 +124,34 @@ describe("Feature 046 (a) — hierarchy.set persists only the set leaf on the pr
   })
 })
 
+describe("Feature 048 — hierarchy.set round-trips the orchestrationMode leaf", () => {
+  test("set orchestrationMode=force_manager, absent by default, round-trips back to heuristic", async () => {
+    const { tuiPort, config } = wiredStack(freshStore())
+    const before = await readEffective(config)
+    expect(before.enforcement.hierarchy.orchestration_mode).toBeUndefined()
+
+    const res = await setLeaves(tuiPort, "hierarchy.set", { orchestrationMode: "force_manager" })
+    expect(res.result?.outcome).toBe("success")
+
+    const eff = await readEffective(config)
+    expect(eff.enforcement.hierarchy.orchestration_mode).toBe("force_manager")
+    expect(eff.enforcement.hierarchy.max_depth).toBe(2) // default preserved
+    expect(eff.enforcement.hierarchy.orchestration_only).toBe(true) // default preserved
+
+    const back = await setLeaves(tuiPort, "hierarchy.set", { orchestrationMode: "heuristic" })
+    expect(back.result?.outcome).toBe("success")
+    expect((await readEffective(config)).enforcement.hierarchy.orchestration_mode).toBe("heuristic")
+  })
+
+  test("hierarchy.set orchestrationMode=bogus → typed rejection, no write", async () => {
+    const { tuiPort, config } = wiredStack(freshStore())
+    const res = await setLeaves(tuiPort, "hierarchy.set", { orchestrationMode: "bogus" })
+    expect(res.result?.outcome).not.toBe("success")
+    expect(await config.get("routing")).toBe(null)
+    expect(await config.get("global:routing")).toBe(null)
+  })
+})
+
 describe("Feature 046 (b) — capability.set round-trips enum + boolean leaves", () => {
   test("set metadataSource=observed, unknownPolicy=allow, probingEnabled=true", async () => {
     const { tuiPort, config } = wiredStack(freshStore())
