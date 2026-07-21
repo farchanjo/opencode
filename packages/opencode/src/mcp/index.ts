@@ -32,6 +32,7 @@ import { InstanceState } from "@/effect/instance-state"
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process"
 import { CrossSpawnSpawner } from "@opencode-ai/core/cross-spawn-spawner"
 import { McpCatalog } from "./catalog"
+import { McpSchemaValidator } from "./schema-validator"
 import { McpEvent } from "@opencode-ai/schema/mcp-event"
 import { McpBrowser } from "./browser"
 
@@ -73,7 +74,13 @@ export class NotFoundError extends Schema.TaggedErrorClass<NotFoundError>()("MCP
 type MCPClient = Client
 
 function createClient(directory: string) {
-  const client = new Client({ name: "opencode", version: InstallationVersion }, CLIENT_OPTIONS)
+  // Inject a fresh format-aware validator per client so the SDK's tool-schema
+  // compile recognizes schemars' unsigned-int formats (uint*) instead of flooding
+  // the log with `unknown format` warnings on every connect. See schema-validator.ts.
+  const client = new Client(
+    { name: "opencode", version: InstallationVersion },
+    { ...CLIENT_OPTIONS, jsonSchemaValidator: McpSchemaValidator.create() },
+  )
   client.setRequestHandler(ListRootsRequestSchema, () =>
     Promise.resolve({ roots: [{ uri: pathToFileURL(directory).href }] }),
   )
