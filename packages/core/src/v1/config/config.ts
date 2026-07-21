@@ -1,5 +1,6 @@
 export * as ConfigV1 from "./config"
 
+import { NarrowingConfig } from "@opencode-ai/schema/semantic/narrowing-config"
 import { ToolConfig } from "@opencode-ai/schema/semantic/tool-config"
 import { Schema } from "effect"
 import { NonNegativeInt, PositiveInt, type DeepMutable } from "../../schema"
@@ -236,6 +237,10 @@ export const Info = Schema.Struct({
       tool_search: Schema.optional(ToolConfig.ToolSearchConfig).annotate({
         description:
           "Feature 009 per-surface semantic tool-search config. Absent, or a surface absent from 'surfaces', keeps the full-set passthrough floor (no narrowing, identical to today).",
+      }),
+      semantic_narrowing: Schema.optional(NarrowingConfig.SemanticNarrowingConfig).annotate({
+        description:
+          "Feature 051 live per-turn narrowing config for the agents/skills surfaces (tools reuse 'tool_search'). Absent, or every gate false, keeps the full-set passthrough floor (identical to today).",
       }),
     }),
   ),

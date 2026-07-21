@@ -1,5 +1,6 @@
 export * as ConfigExperimental from "./experimental"
 
+import { NarrowingConfig } from "@opencode-ai/schema/semantic/narrowing-config"
 import { ToolConfig } from "@opencode-ai/schema/semantic/tool-config"
 import { Schema } from "effect"
 import { Catalog } from "../catalog"
@@ -41,6 +42,13 @@ export class Experimental extends Schema.Class<Experimental>("ConfigV2.Experimen
    * identical to today (FR18, FR21, C9, C12, C15).
    */
   tool_search: ToolConfig.ToolSearchConfig.pipe(Schema.optional),
+  /**
+   * Feature 051: per-surface live per-turn semantic narrowing config for the agents
+   * and skills surfaces (the tools surface reuses `tool_search`, never duplicated).
+   * Absent, or every gate `false`, is the full-set passthrough floor — byte-identical
+   * to pre-Feature-051 behavior (FR6, AC7).
+   */
+  semantic_narrowing: NarrowingConfig.SemanticNarrowingConfig.pipe(Schema.optional),
 }) {}
 
 /**
@@ -97,3 +105,54 @@ export const resolveToolSurfaceConfig = (
     cacheTtlMs: config?.cache_ttl_ms ?? TOOL_SEARCH_DEFAULTS.cacheTtlMs,
   }
 }
+
+/**
+ * The two live-narrowing surfaces (Feature 051) gated independently by Config.Service.
+ * The tools surface is intentionally absent — it reuses the Feature 009 `tool_search`
+ * per-surface gate (`resolveToolSurfaceConfig`), never a duplicated gate (FR6, T001).
+ */
+export const NARROWING_SURFACES = ["agents", "skills"] as const
+export type NarrowingSurface = (typeof NARROWING_SURFACES)[number]
+
+/**
+ * Provisional bound defaults for the live-narrowing config, applied when
+ * `experimental.semantic_narrowing` is absent. `minPromptLength` mirrors the CUE
+ * `#SemanticNarrowingConfig.min_prompt_length` default (8); `latencyBudgetMs` reuses the
+ * shared Feature 009 `TOOL_SEARCH_DEFAULTS.latencyBudgetMs` knob — never a second constant.
+ */
+export const SEMANTIC_NARROWING_DEFAULTS = Object.freeze({
+  minPromptLength: 8,
+  latencyBudgetMs: TOOL_SEARCH_DEFAULTS.latencyBudgetMs,
+  debugLog: false,
+})
+
+/** The resolved live-narrowing config; both surface gates and `debugLog` default off (FR6, FR8). */
+export interface ResolvedNarrowingConfig {
+  readonly agents: boolean
+  readonly skills: boolean
+  readonly minPromptLength: number
+  readonly latencyBudgetMs: number
+  readonly debugLog: boolean
+}
+
+/**
+ * Resolve the live-narrowing config from the optional experimental block, mirroring
+ * `resolveToolSurfaceConfig`. A missing block resolves every gate to `false` (the
+ * full-set passthrough floor) with the default `minPromptLength`/`latencyBudgetMs`/
+ * `debugLog` bounds — narrowing is never worse than today (FR6). Pure and total.
+ */
+export const resolveNarrowingConfig = (
+  config: NarrowingConfig.SemanticNarrowingConfig | undefined,
+): ResolvedNarrowingConfig => ({
+  agents: config?.agents?.enabled ?? false,
+  skills: config?.skills?.enabled ?? false,
+  minPromptLength: config?.min_prompt_length ?? SEMANTIC_NARROWING_DEFAULTS.minPromptLength,
+  latencyBudgetMs: config?.latency_budget_ms ?? SEMANTIC_NARROWING_DEFAULTS.latencyBudgetMs,
+  debugLog: config?.debug_log ?? SEMANTIC_NARROWING_DEFAULTS.debugLog,
+})
+
+/** Whether one live-narrowing surface is opted into ranked consumption (the FR6 gate the seams honor). */
+export const narrowingSurfaceEnabled = (
+  config: NarrowingConfig.SemanticNarrowingConfig | undefined,
+  surface: NarrowingSurface,
+): boolean => resolveNarrowingConfig(config)[surface]
