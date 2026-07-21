@@ -11,6 +11,8 @@ import { deriveSubagentSessionPermission } from "../agent/subagent-permissions"
 import { RoutingHierarchy } from "../session/routing-hierarchy"
 import type { RoutingSessionStateStore } from "../session/routing-state"
 import { OrchestrationAggregate } from "../session/orchestration-aggregate"
+import { emitOrchestrationWorker } from "@/routing/application/telemetry-emitters"
+import { isTelemetryArmed } from "@/routing/telemetry-export"
 import { TodoAuthority } from "@/routing/domain/todo-authority"
 import { Todo } from "@/session/todo"
 import type { SessionPrompt } from "../session/prompt"
@@ -393,6 +395,18 @@ export const TaskTool = Tool.define(
             failureText,
           })
           dispatch.store.updateWorkerOutcome(ctx.sessionID, outcome)
+          // Feature 047 (FR5) — emit the worker terminal outcome (lifecycle,
+          // delivery, validation verdict + fail-action). Fire-and-forget:
+          // non-blocking, error-swallowed. The seam-level armed guard runs FIRST so
+          // a telemetry-OFF session allocates nothing here (byte-identical, FR8).
+          if (isTelemetryArmed() && outcome.lifecycle !== "pending") {
+            emitOrchestrationWorker({
+              lifecycle: outcome.lifecycle,
+              delivery: outcome.delivery,
+              validation: chain ? chain.acceptance : "none",
+              failAction: outcome.failAction,
+            })
+          }
         }).pipe(Effect.catchCauseIf((cause) => !Cause.hasInterruptsOnly(cause), () => Effect.void))
       })
 

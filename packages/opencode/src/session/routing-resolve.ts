@@ -49,6 +49,8 @@ import { createTaskAnalyzer } from "@/routing/application/task-analyzer"
 import { createDomainDecisionStore } from "@/routing/application/decision-store"
 import { createFsDecisionStorePort } from "@/routing/adapters/outbound/decision-store-fs"
 import { createRoutingService } from "@/routing/application/routing-service"
+import { emitRoutingDecision } from "@/routing/application/telemetry-emitters"
+import { isTelemetryArmed } from "@/routing/telemetry-export"
 import type { DecisionStore } from "@/routing/application/ports"
 import {
   createRoutingSessionStateStore,
@@ -422,11 +424,26 @@ export function createRoutingResolver(deps: RoutingResolveDeps): ResolveRoutingM
       catalogVersion: decision.accounting.catalog_version,
       policyVersion: decision.accounting.policy_version,
     }
-    decisionRefs.recordDecision(
-      input.sessionID as never,
-      ref,
-      hierarchyRoleOf(decision.classification.routing_profile),
-    )
+    const role = hierarchyRoleOf(decision.classification.routing_profile)
+    decisionRefs.recordDecision(input.sessionID as never, ref, role)
+    // Feature 047 (FR2) — emit a content-free `routing.decision` span for the live
+    // top-level selection. Fire-and-forget: non-blocking, error-swallowed — the
+    // turn's latency is unaffected and a down collector can never break it. The
+    // seam-level armed guard runs FIRST so a telemetry-OFF session allocates
+    // NOTHING on the hot path (byte-identical, FR8).
+    if (isTelemetryArmed()) {
+      emitRoutingDecision({
+        taskClass: decision.classification.task_class,
+        routingProfile: decision.classification.routing_profile,
+        hierarchyRole: role,
+        selectedModel: decision.selection.executor_model,
+        scope: input.scope,
+        authorizedCount: decision.evaluation.candidates.length,
+        decisionModelCalled: decision.evaluation.decision_model_id !== null,
+        offline: decision.lifecycle.offline,
+        latencyMs: decision.lifecycle.decision_latency_ms,
+      })
+    }
   }
 
   async function resolveOnce(

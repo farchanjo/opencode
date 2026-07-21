@@ -27,6 +27,8 @@ import { Database } from "@opencode-ai/core/database/database"
 import { Usage, type LLMEvent } from "@opencode-ai/llm"
 import { RoutingSessionStore } from "./routing-session-store"
 import { recordTurn, evaluateRecorded, deltaFromUsage, exceedsTurnLimit } from "./budget-consume"
+import { emitBudgetConsumption, emitCompletionGate } from "@/routing/application/telemetry-emitters"
+import { isTelemetryArmed } from "@/routing/telemetry-export"
 import { OrchestrationAggregate } from "./orchestration-aggregate"
 import { createConfigAdapter, AUTHORITY } from "@/routing/adapters/outbound/config-adapter"
 import { sessionConfigReadPort, createBoundedLru } from "./routing-resolve"
@@ -532,6 +534,31 @@ const layer = Layer.effect(
               const delta = deltaFromUsage(usage)
               const consumption = recordTurn(routingStore, ctx.sessionID, delta)
               const result = evaluateRecorded(enforcement.budget, consumption, delta)
+              // Feature 047 (FR3) — emit the per-turn consumption span and, on a
+              // hard-stop breach, the breach counter. Fire-and-forget: non-blocking,
+              // error-swallowed. The seam-level armed guard runs FIRST so a
+              // telemetry-OFF session allocates NOTHING here (byte-identical, FR8).
+              if (isTelemetryArmed()) {
+                emitBudgetConsumption(
+                  {
+                    turnsUsed: consumption.throughput.turns_used,
+                    contextTokensUsed: consumption.throughput.context_tokens_used,
+                    outputTokensUsed: consumption.throughput.output_tokens_used,
+                    costUsdUsed: consumption.cost.cost_usd_used,
+                    scope: "session",
+                  },
+                  result.breached
+                    ? {
+                        outcome: result.decision.outcome,
+                        // A breach with no per-dimension violation falls back to a
+                        // sentinel INSIDE the bounded dimension domain, never the
+                        // raw outcome string (bounded-label safety, FIX 5).
+                        dimension: result.decision.violations[0]?.dimension ?? "unspecified",
+                        scope: "session",
+                      }
+                    : undefined,
+                )
+              }
               if (!result.breached) return
               const violation = result.decision.violations[0]
               const detail = violation
@@ -577,6 +604,10 @@ const layer = Layer.effect(
               if (!(enforcement.activation.enabled && enforcement.activation.mode !== "never")) return
               const gate = OrchestrationAggregate.managerCompletionGate(aggregate)
               if (gate.outcome !== "blocked") return
+              // Feature 047 (FR5) — emit the blocked completion-gate metric with the
+              // pending-worker count (fire-and-forget, non-blocking). Armed guard
+              // first so a telemetry-OFF session allocates nothing (FR8).
+              if (isTelemetryArmed()) emitCompletionGate({ pendingWorkers: gate.pendingWorkers })
               const error = parse(
                 new Error(`Orchestration completion blocked: ${gate.pendingWorkers} delegated worker(s) still pending`),
               )

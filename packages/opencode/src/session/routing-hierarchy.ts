@@ -56,6 +56,8 @@ import {
 } from "./routing-resolve"
 import type { RoutingSessionStateStore } from "./routing-state"
 import { ZERO_CONSUMPTION, headroomFor, perWorkerReserve } from "./budget-consume"
+import { emitFanoutAdmission } from "@/routing/application/telemetry-emitters"
+import { isTelemetryArmed } from "@/routing/telemetry-export"
 import type { SessionID } from "./schema"
 
 // =============================================================================
@@ -387,12 +389,37 @@ export function createHierarchyDispatchResolver(deps: HierarchyResolveDeps): Res
     const outcome = HierarchyDispatcher.planDispatch(
       buildDispatchRequest(input, childRole, requestedFanout, budget, consumed),
     )
-    if (!outcome.ok) return { kind: "blocked", rejection: outcome.rejection }
+    if (!outcome.ok) {
+      // Feature 047 (FR4) — a denied admission emits a `hierarchy.fanout` span with
+      // admitted=false and the engine's typed rejection reason (never user text).
+      // Armed guard first so a telemetry-OFF session allocates nothing (FR8).
+      if (isTelemetryArmed()) {
+        emitFanoutAdmission({
+          parentRole: input.parentRole,
+          childRole,
+          fanoutRequested: requestedFanout,
+          fanoutGranted: 0,
+          admitted: false,
+          deniedReason: outcome.rejection.reason,
+        })
+      }
+      return { kind: "blocked", rejection: outcome.rejection }
+    }
 
     // FR-B3 — the config may be STRICTER than the engine invariant; enforce the
     // MIN of the two so a config can never widen delegation beyond the engine.
     const effectiveMaxDepth = Math.min(HierarchyDispatcher.MAX_DELEGATION_DEPTH, hierarchy.max_depth)
     if (outcome.envelope.childDepth > effectiveMaxDepth) {
+      if (isTelemetryArmed()) {
+        emitFanoutAdmission({
+          parentRole: input.parentRole,
+          childRole,
+          fanoutRequested: requestedFanout,
+          fanoutGranted: 0,
+          admitted: false,
+          deniedReason: "depth_exceeded",
+        })
+      }
       return {
         kind: "blocked",
         rejection: {
@@ -408,7 +435,35 @@ export function createHierarchyDispatchResolver(deps: HierarchyResolveDeps): Res
     // from their own pools. Any unresolved / unauthenticated model degrades to
     // `undefined` (parent inheritance) — never a block.
     const model = await resolveRoleModel(cfg, childRole, input.mainContextModel, deps, run)
-    if (!model) return undefined
+    if (!model) {
+      // FIX 5 — an engine-ADMITTED dispatch that cannot resolve a role model
+      // degrades to parent inheritance; still emit a `hierarchy.fanout` observation
+      // (admitted=false, `model_unresolved`) so every admission decision is visible.
+      if (isTelemetryArmed()) {
+        emitFanoutAdmission({
+          parentRole: input.parentRole,
+          childRole,
+          fanoutRequested: requestedFanout,
+          fanoutGranted: 0,
+          admitted: false,
+          deniedReason: "model_unresolved",
+        })
+      }
+      return undefined
+    }
+
+    // Feature 047 (FR4) — an admitted dispatch emits a `hierarchy.fanout` span with
+    // the granted worker count from the engine envelope (fire-and-forget). Armed
+    // guard first so a telemetry-OFF session allocates nothing (FR8).
+    if (isTelemetryArmed()) {
+      emitFanoutAdmission({
+        parentRole: input.parentRole,
+        childRole,
+        fanoutRequested: requestedFanout,
+        fanoutGranted: outcome.envelope.fanout.fanout_granted,
+        admitted: true,
+      })
+    }
 
     return {
       kind: "route",
