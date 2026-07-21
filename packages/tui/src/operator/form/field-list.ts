@@ -151,14 +151,32 @@ function prefillNestedScalar(parent: string, key: string): (effective: unknown) 
   }
 }
 
-/** Extract a top-level scalar (string/number/boolean) from the read effective as a string, or `undefined`. */
-function prefillScalar(key: string): (effective: unknown) => string | undefined {
+/** Coerce a scalar (string/number/boolean) to its string form for a toggle/picker seed, else `undefined`. */
+function scalarToString(raw: unknown): string | undefined {
+  if (typeof raw === "string") return raw
+  if (typeof raw === "number" || typeof raw === "boolean") return String(raw)
+  return undefined
+}
+
+/**
+ * Feature 040 — extract the routing activation `enabled`/`mode` for the Configure modal from
+ * the scope-resolved effective read. Feature 036 nests activation under
+ * `effective.activation.{enabled,mode}` (the config-status projection this modal prefills
+ * from); a back-compat fallback reads the top-level domain-port `StatusResponse` shape
+ * (`effective.enabled`/`effective.mode`) for any stack that still serves it. Honest
+ * `undefined` on genuine absence → the toggle/picker keeps its `[ ] off` / `— select —`
+ * placeholder; a persisted `enabled:true` seeds `"true"` (→ `[x] on`) and a persisted `mode`
+ * seeds the picker option.
+ */
+function prefillActivation(key: "enabled" | "mode"): (effective: unknown) => string | undefined {
   return (effective) => {
     if (!isRecord(effective)) return undefined
-    const raw = effective[key]
-    if (typeof raw === "string") return raw
-    if (typeof raw === "number" || typeof raw === "boolean") return String(raw)
-    return undefined
+    const activation = effective.activation
+    if (isRecord(activation)) {
+      const nested = scalarToString(activation[key])
+      if (nested !== undefined) return nested
+    }
+    return scalarToString(effective[key])
   }
 }
 
@@ -323,8 +341,8 @@ const DESCRIPTORS: readonly EditFieldListDescriptor[] = [
     commandId: "routing.configure",
     readId: "routing.status",
     fields: [
-      { key: "enabled", label: "Enabled", kind: "toggle", required: false, prefill: prefillScalar("enabled") },
-      { key: "mode", label: "Mode", kind: "picker", required: false, options: ROUTING_MODES, prefill: prefillString("mode") },
+      { key: "enabled", label: "Enabled", kind: "toggle", required: false, prefill: prefillActivation("enabled") },
+      { key: "mode", label: "Mode", kind: "picker", required: false, options: ROUTING_MODES, prefill: prefillActivation("mode") },
       { key: "advanced", label: "Advanced policy (JSON)", kind: "advanced_json", required: false, placeholder: '{"budgetPolicy":{…}}', parse: optionalJsonObject("Advanced policy") },
     ],
     // Omit an absent enabled/mode (composePayload drops an optional-blank field) so the

@@ -12,7 +12,7 @@
  * global toast (FR20). A secret field is never pre-filled from a resolved value.
  */
 import { InputRenderable, TextAttributes, TextareaRenderable } from "@opentui/core"
-import { batch, createEffect, For, onMount, Show, type JSX } from "solid-js"
+import { batch, createEffect, For, on, onMount, Show, type JSX } from "solid-js"
 import { createStore, type SetStoreFunction } from "solid-js/store"
 import { listOperatorPaletteEntries, type OperatorPaletteEntry } from "@opencode-ai/core/operator"
 import type { OperatorRequestScope, OperatorSlashPort } from "../../context/operator-slash"
@@ -72,6 +72,13 @@ type MultiFieldStore = {
   error: string | undefined
   busy: boolean
   loaded: boolean
+  /**
+   * Monotonic latest-wins token for `reseedForScope` (Feature 040 fix-round). Hoisted
+   * onto the store — not a component-local `let` — so it survives the form's
+   * unmount/remount under a pushed sub-dialog (the same reason `raw`/`bindings` live
+   * here, see `createMultiFieldState`'s doc comment).
+   */
+  reseedToken: number
 }
 
 /** A hoisted store/setter pair, created ONCE per modal open so it survives sub-dialog push/pop. */
@@ -95,6 +102,7 @@ export function createMultiFieldState(descriptor: EditFieldListDescriptor): Mult
     error: undefined,
     busy: false,
     loaded: false,
+    reseedToken: 0,
   })
 }
 
@@ -177,6 +185,22 @@ export function MultiFieldForm(props: MultiFieldModalProps): JSX.Element {
     if (!store.loaded) void load()
   })
 
+  // Feature 040 (FR-B2) — re-issue the scope-resolved read when the operator switches the
+  // Request-scope picker, re-seeding the non-secret fields for the new scope's effective
+  // config without closing the modal. Deferred so the initial `onMount` load is not
+  // double-issued; guarded on `loaded` so it only fires for an in-modal scope change.
+  if (scopeField && props.descriptor.readId) {
+    createEffect(
+      on(
+        () => store.raw[REQUEST_SCOPE_KEY],
+        () => {
+          if (store.loaded) void reseedForScope()
+        },
+        { defer: true },
+      ),
+    )
+  }
+
   // Focus follows the active row; picker/toggle/bindings/Save rows carry no input.
   createEffect(() => {
     const active = store.active
@@ -198,10 +222,16 @@ export function MultiFieldForm(props: MultiFieldModalProps): JSX.Element {
     })
   }
 
-  /** Issue the descriptor's silent read and seed each non-secret field from its effective (FR19). */
+  /**
+   * Issue the descriptor's silent read and seed each non-secret field from its effective
+   * (FR19). Feature 040 (FR-B1): a scope-flexible modal threads its selected Request scope
+   * into the read so it resolves that scope's authority/effective config — not an
+   * unconditional project default; a single-scope modal passes nothing (unchanged).
+   */
   async function prefillFromRead(initial: Record<string, string>) {
     const readEntry = listOperatorPaletteEntries().find((entry) => entry.id === props.descriptor.readId)
     if (!readEntry) return
+    const requestedScope = scopeField ? (store.raw[REQUEST_SCOPE_KEY] as OperatorRequestScope) : undefined
     const result = await executeOperatorCommand({
       entry: readEntry,
       port: props.port,
@@ -209,6 +239,7 @@ export function MultiFieldForm(props: MultiFieldModalProps): JSX.Element {
       sessionId: props.sessionId,
       dialog: props.dialog,
       toast: props.toast,
+      ...(requestedScope ? { requestedScope } : {}),
       silent: true,
     })
     const effective = result.result?.effective
@@ -218,6 +249,36 @@ export function MultiFieldForm(props: MultiFieldModalProps): JSX.Element {
       if (seed !== undefined) initial[field.key] = seed
     }
     setStore("bindings", prefillBindings(effective))
+  }
+
+  /**
+   * Re-seed the non-secret fields from the currently-selected scope's effective read on a
+   * Request-scope switch (FR-B2). Resets each seeded field to empty first so a value absent at
+   * the new scope falls back to the honest placeholder, then re-issues the scope-resolved
+   * read; the Request-scope selection itself is preserved.
+   *
+   * Fix-round: latest-wins guard against an out-of-order read. A rapid scope toggle
+   * (project→global→project) can have two scoped reads in flight at once; without a
+   * guard, an earlier-issued read that resolves LATER clobbers the store with stale
+   * values and reverts the request-scope key to its own stale snapshot (re-triggering
+   * this effect). The monotonic `reseedToken` on the store identifies the most
+   * recently ISSUED call: bump it before the read, and after the await, write only if
+   * no newer reseed has started since. The request-scope key is additionally taken
+   * from the LIVE store (not the stale local snapshot) so even the winning write can
+   * never regress it.
+   */
+  async function reseedForScope() {
+    const token = store.reseedToken + 1
+    setStore("reseedToken", token)
+    const seeded: Record<string, string> = { ...store.raw }
+    for (const field of fields) {
+      if (field.key === REQUEST_SCOPE_KEY || field.secret || field.kind === "bindings_list") continue
+      seeded[field.key] = ""
+    }
+    await prefillFromRead(seeded)
+    if (store.reseedToken !== token) return // superseded by a newer scope switch — drop this stale result
+    seeded[REQUEST_SCOPE_KEY] = store.raw[REQUEST_SCOPE_KEY]
+    setStore("raw", seeded)
   }
 
   function move(delta: number) {
