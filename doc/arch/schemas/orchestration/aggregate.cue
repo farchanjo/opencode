@@ -12,6 +12,15 @@ package orchestration
 // DDD role: ValueObject
 #WorkerLifecycle: "pending" | "done" | "failed" | "aborted"
 
+// WorkerDelivery distinguishes a FOREGROUND (awaited-in-turn, completion-gate
+// enforced) Worker from a BACKGROUND (fire-and-continue, informational) Worker
+// incl. a promoted foreground Worker (FR-B1, ADR-0044 Decision #3). The enforcing
+// completion gate holds a turn open ONLY for a foreground pending Worker; a
+// background launch is fire-and-continue by the experimental background-subagent
+// contract and is tracked informationally, never error-blocking the launching turn.
+// DDD role: ValueObject
+#WorkerDelivery: "foreground" | "background"
+
 // TodoStatusCounts is the bounded per-status count of a child's Todo items — the
 // roll-up carries counts only, never full item content (FR-A1, Security).
 // DDD role: ValueObject
@@ -40,9 +49,15 @@ package orchestration
 #WorkerOutcome: {
 	child_session_id: #SessionId
 	lifecycle:        #WorkerLifecycle
-	todo:             #TodoRollup
+	// Foreground (gate-enforced) vs background (fire-and-continue, informational).
+	delivery: #WorkerDelivery
+	todo:     #TodoRollup
 	// Present only for a failed or aborted Worker (FR-A3).
 	reason?: #FailureReason
+	// For a validation-REJECTED completed Worker, the first failed stage's
+	// fail-action (reject / reject_redispatch / surface_blocked) so the Manager can
+	// act on it downstream (re-dispatch vs surface) (FR-C2). Defined in gates.cue.
+	fail_action?: #ValidationFailAction
 }
 
 // WorkerRollupCounters is the aggregate's invariant summary: the counts always sum
