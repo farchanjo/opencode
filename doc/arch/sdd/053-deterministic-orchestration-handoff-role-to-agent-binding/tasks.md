@@ -145,7 +145,7 @@
   parented under `nextSession.id`, the composed (not raw) brief reaches
   `applyManagerPersona`, and both synthetic sessions are released via
   `store.clear` on the same terminal path `nextSession` already uses.
-- [ ] T022 Live smoke (`OPENCODE_CONFIG_DIR=~/.opencodedev`,
+- [x] T022 Live smoke (`OPENCODE_CONFIG_DIR=~/.opencodedev`,
   `opencode-cli run "<delegating task>" --print-logs`): full-chain — bound
   `manager_agent` spawns, Data recon runs, Composer brief cites only valid
   reranked names, the Manager receives the brief (not raw text), Workers
