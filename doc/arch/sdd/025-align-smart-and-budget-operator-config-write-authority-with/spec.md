@@ -2,7 +2,7 @@
 id: 019f802b-0eb0-7a00-a740-ab0853aafa31
 number: 025
 slug: align-smart-and-budget-operator-config-write-authority-with
-status: analyzed
+status: implemented
 created_at: 2026-07-20T15:35:33.296366Z
 ---
 # Feature Specification: Align Smart And Budget Operator Config Write Authority With The Request Scope

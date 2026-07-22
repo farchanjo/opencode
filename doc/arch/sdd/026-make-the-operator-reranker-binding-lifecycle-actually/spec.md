@@ -2,7 +2,7 @@
 id: 019f8048-1976-7be3-b473-657efb1b5f99
 number: 026
 slug: make-the-operator-reranker-binding-lifecycle-actually
-status: analyzed
+status: implemented
 created_at: 2026-07-20T16:07:16.598868Z
 ---
 # Feature Specification: Make The Operator Reranker Binding Lifecycle Actually Functional End-To-End

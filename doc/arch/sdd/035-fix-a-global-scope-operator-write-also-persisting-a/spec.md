@@ -2,7 +2,7 @@
 id: 019f818f-cdf4-7b72-8353-b0f5952db428
 number: 035
 slug: fix-a-global-scope-operator-write-also-persisting-a
-status: analyzed
+status: implemented
 created_at: 2026-07-20T22:05:13.076373Z
 ---
 # Feature Specification: Fix A Global-Scope Operator Write Also Persisting A Global Authority Into The Per-Project Profile

@@ -2,7 +2,7 @@
 id: 019f8087-0533-73a2-8f4c-ae00adf22b20
 number: 028
 slug: make-the-global-opencode-config-honor-the-opencode-config
-status: analyzed
+status: implemented
 created_at: 2026-07-20T17:16:00.179905Z
 ---
 # Feature Specification: Make The Global Opencode Config Honor The Opencode Config

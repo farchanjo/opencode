@@ -2,7 +2,7 @@
 id: 019f8224-173a-75e1-981f-eae6ef86af70
 number: 038
 slug: make-operator-role-pools-accept-the-standard-provider
-status: analyzed
+status: implemented
 created_at: 2026-07-21T00:47:11.162323Z
 ---
 # Feature Specification: Make Operator Role Pools Accept The Standard Provider

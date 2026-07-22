@@ -2,7 +2,7 @@
 id: 019f7f01-035e-7f42-883f-5f87a5f1bdee
 number: 023
 slug: make-native-tools-the-default-always-and-make-them-actually
-status: analyzed
+status: implemented
 created_at: 2026-07-20T10:10:00.67073Z
 ---
 # Feature Specification: Make Native Tools The Default Always And Make Them Actually Load From The Compiled Binary

@@ -2,7 +2,7 @@
 id: 019f80c4-4eb0-7b02-92b6-75cec3ef0006
 number: 030
 slug: correct-feature-028-so-an-opencode-config-dir-profile-layers
-status: analyzed
+status: implemented
 created_at: 2026-07-20T18:22:56.688517Z
 ---
 # Feature Specification: Correct Feature 028 So An Opencode Config Dir Profile Layers

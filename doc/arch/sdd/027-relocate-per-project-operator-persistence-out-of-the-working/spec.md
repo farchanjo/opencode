@@ -2,7 +2,7 @@
 id: 019f8065-e5c1-7481-a071-b4cab3cc7901
 number: 027
 slug: relocate-per-project-operator-persistence-out-of-the-working
-status: analyzed
+status: implemented
 created_at: 2026-07-20T16:39:49.441814Z
 ---
 # Feature Specification: Relocate Per Project Operator Persistence Out Of The Working

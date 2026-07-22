@@ -2,7 +2,7 @@
 id: 019f814b-e01a-7683-9f5e-6abfcdd364b7
 number: 033
 slug: add-a-global-authority-scope-for-the-pools-role-pools-and
-status: analyzed
+status: implemented
 created_at: 2026-07-20T20:51:01.27446Z
 ---
 # Feature Specification: Add A Global Authority Scope For The Pools (role_pools) Operator Config

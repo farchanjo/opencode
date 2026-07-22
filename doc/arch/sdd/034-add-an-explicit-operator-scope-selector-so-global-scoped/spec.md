@@ -2,7 +2,7 @@
 id: 019f8167-7841-7d80-9a9b-ddc334d47cd1
 number: 034
 slug: add-an-explicit-operator-scope-selector-so-global-scoped
-status: analyzed
+status: implemented
 created_at: 2026-07-20T21:21:09.697408Z
 ---
 # Feature Specification: Add An Explicit Operator Scope Selector So Global-Scoped Config Is Reachable

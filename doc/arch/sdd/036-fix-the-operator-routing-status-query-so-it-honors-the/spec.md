@@ -2,7 +2,7 @@
 id: 019f81af-3b9f-7ab3-8651-1140aa9293a9
 number: 036
 slug: fix-the-operator-routing-status-query-so-it-honors-the
-status: analyzed
+status: implemented
 created_at: 2026-07-20T22:39:32.767302Z
 ---
 # Feature Specification: Fix The Operator Routing Status Query So It Honors The Request Scope

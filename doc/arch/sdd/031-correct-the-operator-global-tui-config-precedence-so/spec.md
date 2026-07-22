@@ -2,7 +2,7 @@
 id: 019f80ef-83ae-7fc1-8e50-5af68cbbc754
 number: 031
 slug: correct-the-operator-global-tui-config-precedence-so
-status: analyzed
+status: implemented
 created_at: 2026-07-20T19:10:08.302977Z
 ---
 # Feature Specification: Correct The Operator Global Tui Config Precedence So
