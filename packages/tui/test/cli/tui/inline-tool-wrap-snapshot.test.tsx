@@ -280,6 +280,55 @@ describe("TUI inline tool wrapping", () => {
     expect(formatSubagentToolcalls(0)).toBe("0 toolcalls")
   })
 
+  test("Feature 054 — completed detail appends model/effort/tokens with per-segment degradation", () => {
+    // AC3 — empty usage is byte-identical to the pre-054 floor.
+    expect(formatCompletedSubagentDetail(1, "21.1s", undefined)).toBe("1 toolcall · 21.1s")
+    expect(formatCompletedSubagentDetail(1, "21.1s", {})).toBe("1 toolcall · 21.1s")
+
+    // Model only (no effort).
+    expect(
+      formatCompletedSubagentDetail(1, "21.1s", {
+        providerID: "openai",
+        modelID: "gpt-5.6-terra-fast",
+      }),
+    ).toBe("1 toolcall · 21.1s · openai/gpt-5.6-terra-fast")
+
+    // Model + effort (AC2 inverse).
+    expect(
+      formatCompletedSubagentDetail(1, "21.1s", {
+        providerID: "openai",
+        modelID: "gpt-5.6-terra-fast",
+        effort: "xhigh",
+      }),
+    ).toBe("1 toolcall · 21.1s · openai/gpt-5.6-terra-fast (xhigh)")
+
+    // Full line (AC1).
+    expect(
+      formatCompletedSubagentDetail(1, "21.1s", {
+        providerID: "openai",
+        modelID: "gpt-5.6-terra-fast",
+        effort: "xhigh",
+        tokens: { input: 10200, output: 1300 },
+      }),
+    ).toBe("1 toolcall · 21.1s · openai/gpt-5.6-terra-fast (xhigh) · 10.2k in/1.3k out")
+
+    // Tokens without model; effort alone is ignored (no model segment).
+    expect(
+      formatCompletedSubagentDetail(2, "501ms", {
+        effort: "high",
+        tokens: { input: 42, output: 7 },
+      }),
+    ).toBe("2 toolcalls · 501ms · 42 in/7 out")
+
+    // Zero toolcalls floor still accepts usage segments.
+    expect(
+      formatCompletedSubagentDetail(0, "501ms", {
+        providerID: "openai",
+        modelID: "gpt-oss-120b",
+      }),
+    ).toBe("501ms · openai/gpt-oss-120b")
+  })
+
   test("keeps background state attached to the subagent identity", () => {
     expect(formatSubagentTitle("Explore", "Inspect renderer", false)).toBe("Explore Task — Inspect renderer")
     expect(formatSubagentTitle("Explore", "Inspect renderer", true)).toBe(

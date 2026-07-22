@@ -2280,7 +2280,19 @@ function Task(props: ToolProps) {
     }
 
     if (!isRunning() && props.part.state.status === "completed") {
-      content.push(`↳ ${formatCompletedSubagentDetail(tools().length, Locale.duration(duration()))}`)
+      // Feature 054 — append provider/model/effort/tokens from part metadata (FR3).
+      const model = recordValue(props.metadata.model)
+      const tokens = recordValue(props.metadata.tokens)
+      const input = numberValue(tokens?.input)
+      const output = numberValue(tokens?.output)
+      content.push(
+        `↳ ${formatCompletedSubagentDetail(tools().length, Locale.duration(duration()), {
+          providerID: stringValue(model?.providerID),
+          modelID: stringValue(model?.modelID),
+          effort: stringValue(props.metadata.effort),
+          tokens: input !== undefined && output !== undefined ? { input, output } : undefined,
+        })}`,
+      )
     }
 
     return content.join("\n")
@@ -2320,9 +2332,45 @@ export function formatSubagentRetry(attempt: number, message: string) {
   return `Retrying (attempt ${attempt}) · ${message}`
 }
 
-export function formatCompletedSubagentDetail(toolcalls: number, duration: string) {
-  if (toolcalls === 0) return duration
-  return `${formatSubagentToolcalls(toolcalls)} · ${duration}`
+export type CompletedSubagentUsage = {
+  providerID?: string
+  modelID?: string
+  effort?: string
+  tokens?: {
+    input: number
+    output: number
+    reasoning?: number
+    cache?: { read?: number; write?: number }
+  }
+}
+
+/** Compact token count for the completed task line (e.g. 10.2k). */
+export function formatCompactTokenCount(n: number) {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}m`
+  if (n >= 1000) return `${(n / 1000).toFixed(1)}k`
+  return String(n)
+}
+
+/**
+ * Feature 054 (FR3/AC3) — completed subagent detail line.
+ * Floor (no usage): byte-identical to pre-054 (`N toolcalls · duration` / bare duration).
+ * Segments degrade independently: model without effort, tokens without model, etc.
+ */
+export function formatCompletedSubagentDetail(toolcalls: number, duration: string, usage?: CompletedSubagentUsage) {
+  const base = toolcalls === 0 ? duration : `${formatSubagentToolcalls(toolcalls)} · ${duration}`
+  if (!usage) return base
+  const segments: string[] = []
+  if (usage.providerID && usage.modelID) {
+    const model = `${usage.providerID}/${usage.modelID}`
+    segments.push(usage.effort ? `${model} (${usage.effort})` : model)
+  }
+  if (usage.tokens && Number.isFinite(usage.tokens.input) && Number.isFinite(usage.tokens.output)) {
+    segments.push(
+      `${formatCompactTokenCount(usage.tokens.input)} in/${formatCompactTokenCount(usage.tokens.output)} out`,
+    )
+  }
+  if (segments.length === 0) return base
+  return `${base} · ${segments.join(" · ")}`
 }
 
 type ExecuteCall = { tool: string; status: "running" | "completed" | "error"; input?: Record<string, unknown> }
