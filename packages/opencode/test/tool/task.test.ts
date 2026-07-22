@@ -16,7 +16,13 @@ import { MessageID, PartID, SessionID } from "../../src/session/schema"
 import { SessionRunState } from "@/session/run-state"
 import { SessionStatus } from "@/session/status"
 
-import { TaskTool, resolveReasoningEffort, stampCompletionTokens, type TaskPromptOps } from "../../src/tool/task"
+import {
+  TaskTool,
+  resolveChildVariant,
+  resolveReasoningEffort,
+  stampCompletionTokens,
+  type TaskPromptOps,
+} from "../../src/tool/task"
 import { Truncate } from "@/tool/truncate"
 import { ToolRegistry } from "@/tool/registry"
 import { RuntimeFlags } from "@/effect/runtime-flags"
@@ -1493,6 +1499,13 @@ describe("tool.task Feature 054 helpers", () => {
         { providerID: "openai", modelID: "gpt-x" },
       ),
     ).toBe("low")
+    // Bare model id when catalog uses provider/model form.
+    expect(
+      resolveReasoningEffort(
+        { provider: { openai: { models: { "gpt-5.6-terra-fast": { options: { reasoningEffort: "medium" } } } } } },
+        { providerID: "openai", modelID: "openai/gpt-5.6-terra-fast" },
+      ),
+    ).toBe("medium")
     expect(resolveReasoningEffort({}, { providerID: "openai", modelID: "gpt-x" })).toBeUndefined()
     expect(
       resolveReasoningEffort(
@@ -1500,6 +1513,33 @@ describe("tool.task Feature 054 helpers", () => {
         { providerID: "openai", modelID: "gpt-x" },
       ),
     ).toBeUndefined()
+  })
+
+  test("resolveChildVariant prefers config effort over parent inheritance", () => {
+    expect(
+      resolveChildVariant({
+        effort: "medium",
+        agentPinnedModel: false,
+        agentVariant: undefined,
+        parentVariant: "xhigh",
+      }),
+    ).toBe("medium")
+    expect(
+      resolveChildVariant({
+        effort: undefined,
+        agentPinnedModel: true,
+        agentVariant: undefined,
+        parentVariant: "xhigh",
+      }),
+    ).toBeUndefined()
+    expect(
+      resolveChildVariant({
+        effort: "high",
+        agentPinnedModel: true,
+        agentVariant: "low",
+        parentVariant: "xhigh",
+      }),
+    ).toBe("low")
   })
 
   test("stampCompletionTokens spreads tokens or leaves the envelope unchanged", () => {

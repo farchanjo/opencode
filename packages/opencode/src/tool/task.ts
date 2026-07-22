@@ -240,11 +240,34 @@ export function resolveReasoningEffort(
 ): string | undefined {
   const provider = cfg.provider?.[model.providerID]
   if (!provider) return undefined
-  const modelEffort = provider.models?.[model.modelID]?.options?.reasoningEffort
+  // Prefer exact modelID, then bare id when catalog uses "provider/model" form.
+  const bareID = model.modelID.includes("/") ? model.modelID.slice(model.modelID.lastIndexOf("/") + 1) : model.modelID
+  const modelEffort =
+    provider.models?.[model.modelID]?.options?.reasoningEffort ??
+    provider.models?.[bareID]?.options?.reasoningEffort
   if (typeof modelEffort === "string" && modelEffort.length > 0) return modelEffort
   const providerEffort = provider.options?.reasoningEffort
   if (typeof providerEffort === "string" && providerEffort.length > 0) return providerEffort
   return undefined
+}
+
+/**
+ * Choose the child-session `variant` (reasoning effort tier).
+ * Config model options take precedence over parent inheritance so subagents
+ * actually run with the profile's reasoningEffort (not only a UI stamp).
+ */
+export function resolveChildVariant(input: {
+  readonly effort: string | undefined
+  readonly agentPinnedModel: boolean
+  readonly agentVariant: string | undefined
+  readonly parentVariant: string | undefined
+}): string | undefined {
+  if (input.agentPinnedModel) {
+    // Agent-pinned model: agent.variant wins, else config effort for that model.
+    return input.agentVariant ?? input.effort
+  }
+  // Hierarchy/parent path: config effort for the resolved model, then agent, then parent.
+  return input.effort ?? input.agentVariant ?? input.parentVariant
 }
 
 type TaskTokenUsage = {
@@ -488,6 +511,12 @@ export const TaskTool = Tool.define(
       // `tokens` is filled on foreground completion (FR1); declared optional so the
       // envelope type covers both spawn and completion without a union collapse.
       const effort = resolveReasoningEffort(cfg, model)
+      const childVariant = resolveChildVariant({
+        effort,
+        agentPinnedModel: Boolean(next.model),
+        agentVariant: next.variant,
+        parentVariant: variant,
+      })
       const metadata: {
         parentSessionId: SessionID
         sessionId: SessionID
@@ -499,6 +528,7 @@ export const TaskTool = Tool.define(
         parentSessionId: ctx.sessionID,
         sessionId: nextSession.id,
         model,
+        // Feature 054 FR2 — stamp config-derived effort only (not parent inheritance alone).
         ...(effort ? { effort } : {}),
         ...(runInBackground ? { background: true } : {}),
       }
@@ -539,11 +569,18 @@ export const TaskTool = Tool.define(
         prompt: ({ sessionID, agentName, parts }) =>
           Effect.gen(function* () {
             const sub = yield* agent.get(agentName)
+            const handoffModel = sub?.model ?? { modelID: model.modelID, providerID: model.providerID }
+            const handoffEffort = resolveReasoningEffort(cfg, handoffModel)
             const result = yield* ops.prompt({
               messageID: MessageID.ascending(),
               sessionID,
-              model: sub?.model ?? { modelID: model.modelID, providerID: model.providerID },
-              variant: sub?.model ? undefined : variant,
+              model: handoffModel,
+              variant: resolveChildVariant({
+                effort: handoffEffort,
+                agentPinnedModel: Boolean(sub?.model),
+                agentVariant: sub?.variant,
+                parentVariant: variant,
+              }),
               agent: agentName,
               parts,
             })
@@ -613,7 +650,7 @@ export const TaskTool = Tool.define(
             modelID: model.modelID,
             providerID: model.providerID,
           },
-          variant: next.model ? undefined : variant,
+          variant: childVariant,
           agent: next.name,
           parts,
         })
