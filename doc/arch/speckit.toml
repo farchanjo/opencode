@@ -691,6 +691,14 @@ specScopeGlobs = [
   # 052 auto-skill, 053 composer catalog retrieval) silently resolved absent in the
   # serving path. Mount-parity fix; no existing glob covers this file:
   "packages/opencode/src/server/routes/instance/httpapi/server.ts",
+
+  # Feature 054 — Surface subagent provider/model/effort/tokens in the completed
+  #   task line. Seams ALREADY in scope and NOT re-added (traceability only):
+  #   packages/opencode/src/tool/task.ts + test/tool/task.test.ts (Feature
+  #   044/049/053) — the spawn/completion metadata envelope stamps.
+  # Genuinely new path — the TUI session route (renderer + colocated tests); no
+  # existing glob covers the TUI package:
+  "packages/tui/src/routes/session/**",
 ]
 
 # Waivers for intentional near-empty files (warnings only; errors are never
