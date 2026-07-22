@@ -142,7 +142,7 @@
   `SessionTools.resolve` and `sys.skills` both read the identical
   `NarrowedSets` on both round trips and the fake retrieval facade is invoked
   exactly once for the turn.
-- [ ] T022 Live smoke — differing prompts
+- [x] T022 Live smoke — differing prompts
   (`OPENCODE_CONFIG_DIR=~/.opencodedev`): two semantically different prompts
   in separate sessions with all three gates enabled produce different
   narrowed agent/skill/tool sets, each a subset of that turn's
@@ -155,16 +155,16 @@
   `task` description, skill listing, and native+MCP tool set before and after
   this feature's changes, with all three `semantic_narrowing` gates off
   (AC7/FR6); reuses Feature 050's snapshot-harness pattern.
-- [ ] T024 Live/fault smoke — Milvus down: stop (or point at an unreachable)
+- [x] T024 Live/fault smoke — Milvus down: stop (or point at an unreachable)
   Milvus mid-session; a turn with gates enabled completes with full
   catalogs on every surface, exactly one content-free warning logged, and no
   hang (AC4, FR7).
-- [ ] T025 Live/fault smoke — stale specialist revalidation: seed the index
+- [x] T025 Live/fault smoke — stale specialist revalidation: seed the index
   with an agent whose Markdown file is then deleted without a reindex; a
   turn's agent narrowing revalidates against the live registry and drops the
   stale entry before rendering (AC5, mirrors Feature 050's own-agent
   revalidation contract).
-- [ ] T026 Live/fault smoke — no retry on flaky Milvus: a Milvus that fails
+- [x] T026 Live/fault smoke — no retry on flaky Milvus: a Milvus that fails
   once and would succeed on a second attempt produces exactly one failed
   call and an immediate passthrough for that surface — no second attempt
   within the turn (AC6, FR7).
