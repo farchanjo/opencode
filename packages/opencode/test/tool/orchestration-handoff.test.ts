@@ -76,8 +76,8 @@ const run = <A>(effect: Effect.Effect<A>): Promise<A> => Effect.runPromise(effec
 // =============================================================================
 
 describe("interceptionEligible", () => {
-  test("true only for a manager child under force_manager that is not synthetic", () => {
-    expect(OrchestrationHandoff.interceptionEligible("manager", true, false)).toBe(true)
+  test("Feature 056 — always false (no Manager-child handoff)", () => {
+    expect(OrchestrationHandoff.interceptionEligible("manager", true, false)).toBe(false)
     expect(OrchestrationHandoff.interceptionEligible("manager", true, true)).toBe(false)
     expect(OrchestrationHandoff.interceptionEligible("manager", false, false)).toBe(false)
     expect(OrchestrationHandoff.interceptionEligible("worker", true, false)).toBe(false)

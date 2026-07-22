@@ -93,16 +93,15 @@ import "routing/ids"
 
 	// Hierarchy constraints for the routing model.
 	hierarchy: {
-		// Maximum delegation depth (2 = Architect → Manager → Worker).
-		max_depth: uint & >=1 & <=2
+		// Maximum delegation depth (Feature 056: 1 = main Architect/Manager → Worker).
+		max_depth: uint & >=1 & <=1
 
-		// If true, Architect and Manager MUST NOT execute project mutations.
+		// If true, Architect/Manager main MUST NOT execute project mutations.
 		orchestration_only: bool
 
-		// Feature 048 — orchestration behavior selector. "heuristic" (default) is
-		// the byte-identical shipped single-hop heuristic; "force_manager" is the
-		// opt-in always-on Architect → Manager → Worker three-tier flow. Optional;
-		// an absent field resolves to "heuristic".
+		// Feature 048 literals; Feature 056 supersession: both values resolve to
+		// the collapsed main→Worker path (force_manager no longer creates Manager
+		// children). Optional; absent resolves to "heuristic".
 		orchestration_mode?: "heuristic" | "force_manager"
 
 		// Feature 053 — optional role-to-agent bindings (see

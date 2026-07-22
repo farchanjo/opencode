@@ -1,21 +1,20 @@
 /**
- * Feature 001 / T023 — Hierarchy dispatcher.
+ * Feature 001 / T023 — Hierarchy dispatcher (Feature 056 collapse).
  *
- * Produces the Architect -> Manager -> Worker dispatch envelopes of the
- * confirmed hierarchical adaptive routing model (ADR-0002,
- * hierarchy-flow.md "Hierarchy Roles and Depth" + "Budget Flow"). Pure domain:
- * no I/O, no Effect runtime, no model call. Composes the real budget-policy
- * admission export (`admitFanout`) with cost/token headroom, and emits the
+ * Produces main (Architect = Architect+Manager) -> Worker dispatch envelopes
+ * (ADR-0056 supersedes ADR-0002 three-tier depth). Pure domain: no I/O, no
+ * Effect runtime, no model call. Composes the real budget-policy admission
+ * export (`admitFanout`) with cost/token headroom, and emits the
  * `Events.RoutingEvent` hierarchy members (hierarchy.dispatch, hierarchy.escalation,
  * hierarchy.validation) as plain typed values.
  *
  * Invariants enforced here (a model, plugin or nested instruction can never
  * relax them):
- *   - Max delegation depth 2: Architect(edge0) -> Manager(edge1) -> Worker(edge2).
- *   - Orchestration-only Architect/Manager: only a Worker child carries
- *     execution authority; Architect/Manager dispatches are orchestration.
- *   - Legal edges only: architect->{manager,worker}, manager->worker.
- *     Manager MUST NOT create Manager; Worker MUST NOT create anything.
+ *   - Max delegation depth 1: Architect(edge0) -> Worker(edge1). No Manager child.
+ *   - Orchestration-only main (architect): only a Worker child carries
+ *     execution authority; main dispatches are orchestration.
+ *   - Legal edges only: architect->worker. Manager parent has no children
+ *     (obsolete middle tier). Worker MUST NOT create anything.
  *   - Admission-controlled fanout: granted =
  *     min(requested, max_workers, cost_budget headroom, token_budget headroom).
  *   - Reused evidence / OutputRefs / lineage on escalation (no re-derivation).
@@ -31,16 +30,17 @@ import { admitFanout, type Outcome } from "./budget-policy"
 // Roles, depth and legal transitions
 // =============================================================================
 
-/** Architect -> Manager -> Worker: two delegation edges maximum (ADR-0002). */
-export const MAX_DELEGATION_DEPTH = 2
+/** Main (architect) -> Worker: one delegation edge maximum (ADR-0056 / Feature 056). */
+export const MAX_DELEGATION_DEPTH = 1
 
 const ORCHESTRATOR_ROLES: ReadonlySet<Enums.HierarchyRole> = new Set(["architect", "manager"])
 
-// Legal child roles per parent role. Encodes: Manager MUST NOT create Manager,
-// Worker MUST NOT create anything, nobody dispatches an Architect.
+// Legal child roles per parent role (Feature 056): architect -> worker only.
+// Manager parent has no children (middle tier collapsed into main). Worker is a leaf.
+// Nobody dispatches an Architect.
 const LEGAL_CHILDREN: Readonly<Record<Enums.HierarchyRole, ReadonlyArray<Enums.HierarchyRole>>> = {
-  architect: ["manager", "worker"],
-  manager: ["worker"],
+  architect: ["worker"],
+  manager: [],
   worker: [],
 }
 
@@ -183,7 +183,7 @@ function reject(reason: DispatchRejectionReason, detail: string): DispatchOutcom
 
 /**
  * Plan one dispatch edge. Rejects (never throws) when a hard invariant is
- * violated — illegal role transition, delegation depth over 2, an
+ * violated — illegal role transition, delegation depth over 1, an
  * orchestration-only violation, or a fully-denied fanout admission — otherwise
  * returns the envelope with the `hierarchy.dispatch` event, lineage, fanout
  * counters and the child's execution authority flag.
@@ -260,11 +260,11 @@ export interface EscalationPlan {
 }
 
 /**
- * Plan an escalation from a direct Worker to the Manager path
- * (`reclassified_to: "manager"`, hierarchy-flow.md Fallback / escalation).
- * Evidence, OutputRefs and the originating lineage are carried forward
- * unchanged so the reclassified Manager dispatch reuses the Worker's work
- * instead of recomputing it.
+ * Plan an escalation from a Worker back to main's orchestrator duties
+ * (Feature 056: main absorbs Manager; no Manager child session).
+ * Wire field `reclassified_to: "manager"` is protocol-frozen and means
+ * "replan / more Workers under main's manager responsibilities", not a
+ * middle-tier Manager spawn. Evidence, OutputRefs and lineage are reused.
  */
 export function planEscalation(request: EscalationRequest): EscalationPlan {
   const event: Events.HierarchyEscalationEvent = {
@@ -283,7 +283,7 @@ export function planEscalation(request: EscalationRequest): EscalationPlan {
 }
 
 // =============================================================================
-// Validation event helper (Worker -> Manager -> Architect validation chain)
+// Validation event helper (Worker -> main Architect/Manager validation chain)
 // =============================================================================
 
 export interface ValidationInput {

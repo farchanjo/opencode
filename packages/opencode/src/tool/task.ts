@@ -101,32 +101,23 @@ export const LEGACY_DEPTH_CEILING = 1
  *
  *   - Off the hierarchy path (`hierarchyMaxDepth === undefined`): the legacy
  *     ceiling — the configured value or the default `1`. Unchanged, byte-identical.
- *   - Heuristic hierarchy path (`forceManager === false`): the MIN of the legacy
- *     ceiling and `hierarchyMaxDepth`, so a config can never widen delegation
- *     beyond the engine invariant. With `subagent_depth` unset this is
- *     `min(1, max_depth) = 1` — the heuristic Manager -> Worker hop stays blocked,
- *     exactly as today.
- *   - Force-manager path (`forceManager === true`): when `subagent_depth` is UNSET
- *     the ceiling HONORS `hierarchyMaxDepth` (so Architect(0) -> Manager(1) ->
- *     Worker(2) passes); an explicitly configured `subagent_depth` still reconciles
- *     to the MIN of the two (explicit config keeps restricting).
+ *   - Hierarchy path (Feature 056): always MIN(legacy ceiling, hierarchyMaxDepth).
+ *     Engine max depth is 1 (main → Worker); forceManager no longer widens depth
+ *     for a Manager middle tier.
  */
 export function reconcileDepthCeiling(
   subagentDepth: number | undefined,
   hierarchyMaxDepth?: number,
   forceManager = false,
 ): number {
+  void forceManager
   if (hierarchyMaxDepth === undefined) return subagentDepth ?? LEGACY_DEPTH_CEILING
-  if (forceManager && subagentDepth === undefined) return hierarchyMaxDepth
   return Math.min(subagentDepth ?? LEGACY_DEPTH_CEILING, hierarchyMaxDepth)
 }
 
 /**
- * Feature 048 (FR8) — the Manager persona prelude, prepended to a manager-role
- * spawn's task prompt under `force_manager`. It instructs the Manager tier to
- * decompose the Architect's task, delegate to Workers via `task`, critically
- * aggregate their results, and return a consolidated analysis to the Architect.
- * It is injected ONLY in force_manager mode; heuristic spawns are byte-identical.
+ * Feature 048 Manager persona — RETIRED by Feature 056 (no Manager child session).
+ * Kept as an exported string for test/import stability; never prepended live.
  */
 export const MANAGER_PERSONA_PRELUDE = [
   "You are the MANAGER tier of a three-tier Architect -> Manager -> Worker orchestration.",
@@ -141,23 +132,16 @@ export const MANAGER_PERSONA_PRELUDE = [
   "--- Architect task ---",
 ].join("\n")
 
-/** Prepend the Manager persona prelude to a manager-role spawn's prompt under
- * force_manager; return the prompt unchanged for every other role/mode. Pure and
- * unit-testable so the injection boundary is verifiable in isolation. */
+/** Feature 056 — Manager persona is never injected (no manager children). */
 export function applyManagerPersona(prompt: string, childRole: string, forceManager: boolean): string {
-  if (!forceManager || childRole !== "manager") return prompt
-  return `${MANAGER_PERSONA_PRELUDE}\n${prompt}`
+  void childRole
+  void forceManager
+  return prompt
 }
 
 /**
- * Feature 053 (FR1, FR7) — resolve the operator-configured `hierarchy.manager_agent`
- * binding for a manager-role spawn. Returns the bound agent ONLY when the spawn
- * classifies as `manager` under `force_manager`, the binding is set, it resolves via
- * `Agent.Service.get` (NOT `resolveSpecialist` — the realistic targets are hidden
- * internal agents), and it carries no `Agent.Info.model` pin (a pin would silently
- * override the hierarchy-routed Manager-tier model). Any miss degrades to `undefined`
- * (the LLM-chosen `subagent_type` spawns unchanged) plus exactly one content-free warn —
- * never a blocked spawn.
+ * Feature 053 manager_agent binding — RETIRED by Feature 056 (no Manager child
+ * sessions). Always returns undefined; parameters retained for call-site stability.
  */
 export const resolveManagerAgentBinding = Effect.fn("TaskTool.resolveManagerAgentBinding")(function* (
   childRole: string,
@@ -165,17 +149,11 @@ export const resolveManagerAgentBinding = Effect.fn("TaskTool.resolveManagerAgen
   managerAgent: string | undefined,
   agentGet: (name: string) => Effect.Effect<Agent.Info | undefined>,
 ) {
-  if (childRole !== "manager" || !forceManager || !managerAgent) return undefined
-  const bound = yield* agentGet(managerAgent)
-  if (!bound) {
-    yield* Effect.logWarning("manager_agent binding did not resolve; degrading to the requested subagent_type")
-    return undefined
-  }
-  if (bound.model) {
-    yield* Effect.logWarning("manager_agent binding is model-pinned; degrading to the requested subagent_type")
-    return undefined
-  }
-  return bound
+  void childRole
+  void forceManager
+  void managerAgent
+  void agentGet
+  return undefined
 })
 const BACKGROUND_DESCRIPTION = [
   "Background mode: background=true launches the subagent asynchronously and returns immediately.",

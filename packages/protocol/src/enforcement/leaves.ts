@@ -70,10 +70,9 @@ const BUDGET_LEAVES: readonly EnforcementLeaf[] = [
 ]
 
 const HIERARCHY_LEAVES: readonly EnforcementLeaf[] = [
-  { domain: "hierarchy", key: "maxDepth", path: ["hierarchy", "max_depth"], label: "Max depth", type: { kind: "int", min: 1, max: 2 } },
+  { domain: "hierarchy", key: "maxDepth", path: ["hierarchy", "max_depth"], label: "Max depth", type: { kind: "int", min: 1, max: 1 } },
   { domain: "hierarchy", key: "orchestrationOnly", path: ["hierarchy", "orchestration_only"], label: "Orchestration only", type: { kind: "bool" } },
-  // Feature 048 — the opt-in orchestration selector; `heuristic` is the byte-identical
-  // shipped default, `force_manager` is the always-on Architect -> Manager -> Worker flow.
+  // Feature 056 — both values resolve to main→Worker only (force_manager is inert).
   { domain: "hierarchy", key: "orchestrationMode", path: ["hierarchy", "orchestration_mode"], label: "Orchestration mode", type: { kind: "enum", members: ["heuristic", "force_manager"] } },
   // Feature 053 — optional role-to-agent bindings (FR1). Each names an agent in the
   // live registry; an absent leaf is byte-identical to Feature 048's shipped behavior.

@@ -76,7 +76,7 @@ export const DEFAULT_ROUTING_CONFIG: RoutingConfig.Info = {
   enforcement: {
     capability: { metadata_source: "catalog", unknown_policy: "deny", probing_enabled: false },
     budget: DEFAULT_ROUTING_BUDGET,
-    hierarchy: { max_depth: 2, orchestration_only: true },
+    hierarchy: { max_depth: 1, orchestration_only: true },
   },
 }
 

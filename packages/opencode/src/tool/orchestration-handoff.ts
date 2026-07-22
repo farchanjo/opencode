@@ -103,11 +103,13 @@ export interface InterceptionResult {
 // Re-entrancy guard (FR5) — pure predicate
 // =============================================================================
 
-/** FR5 — the interception fires ONLY for a `manager`-classified child under
- * `force_manager` whose spawning session is not itself a synthetic Data/Composer
- * sub-session. Evaluated BEFORE any interception work begins. */
+/** Feature 056 — manager-child Data/Composer handoff is retired (no Manager
+ * child sessions). Parameters retained for call-site compatibility. */
 export function interceptionEligible(childRole: string, forceManager: boolean, synthetic: boolean): boolean {
-  return childRole === "manager" && forceManager && !synthetic
+  void childRole
+  void forceManager
+  void synthetic
+  return false
 }
 
 // =============================================================================

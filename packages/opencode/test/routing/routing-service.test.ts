@@ -46,7 +46,7 @@ const CONFIG: RoutingConfig.Info = {
   enforcement: {
     capability: { metadata_source: "catalog", unknown_policy: "deny", probing_enabled: false },
     budget: POLICY,
-    hierarchy: { max_depth: 2, orchestration_only: true },
+    hierarchy: { max_depth: 1, orchestration_only: true },
   },
 }
 

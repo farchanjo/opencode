@@ -1000,21 +1000,21 @@ describe("tool.task", () => {
   // blocked decision fails the spawn.
   // ===========================================================================
 
-  const managerRef = {
+  const workerRef = {
     providerID: ProviderV2.ID.make("anthropic"),
-    modelID: ModelV2.ID.make("manager-model"),
+    modelID: ModelV2.ID.make("worker-model"),
   }
 
   const routeResolve = (store: ReturnType<typeof createRoutingSessionStateStore>, parentSessionId: string) =>
     ((_input) =>
       Effect.succeed({
         kind: "route",
-        model: managerRef,
+        model: workerRef,
         dispatch: {
           store,
-          lineageStub: { parent_session_id: parentSessionId, parent_role: "architect", child_role: "manager" },
-          denyExecutionTools: true,
-          maxDepth: 2,
+          lineageStub: { parent_session_id: parentSessionId, parent_role: "architect", child_role: "worker" },
+          denyExecutionTools: false,
+          maxDepth: 1,
           forceManager: true,
         },
       })) satisfies RoutingHierarchy.LiveHierarchyResolve
@@ -1052,14 +1052,14 @@ describe("tool.task", () => {
         },
       )
 
-      // The child ran on the ROUTED manager model, not the parent's model (ref).
-      expect(seen?.model).toEqual(managerRef)
-      expect(result.metadata.model).toEqual(managerRef)
-      // The dispatch lineage was recorded on the shared store as a manager child.
-      expect(roleAtRun).toBe("manager")
-      // The manager child is created under orchestration-only tool denies.
+      // The child ran on the ROUTED worker model, not the parent's model (ref).
+      expect(seen?.model).toEqual(workerRef)
+      expect(result.metadata.model).toEqual(workerRef)
+      // The dispatch lineage was recorded on the shared store as a worker child.
+      expect(roleAtRun).toBe("worker")
+      // Worker children are not under orchestration-only deny.
       const kid = yield* sessions.get(SessionID.make(result.metadata.sessionId))
-      expect(kid.permission?.some((r) => r.permission === "*" && r.action === "deny")).toBe(true)
+      expect(kid.permission?.some((r) => r.permission === "*" && r.action === "deny")).toBe(false)
     }),
   )
 
@@ -1157,14 +1157,9 @@ describe("tool.task", () => {
   )
 
   // ===========================================================================
-  // Feature 053 — deterministic orchestration handoff: role-to-agent binding +
-  // the always-on synchronous Data -> Composer interception. These drive
-  // `TaskTool.execute` with a `hierarchyResolve` closure carrying the three
-  // optional bindings and assert: the bound manager agent overrides the
-  // LLM-chosen `subagent_type` (or degrades on an invalid/pinned binding); the
-  // composed brief (not the raw prompt) reaches `applyManagerPersona`; a
-  // synthetic spawning session never re-triggers the interception; and an
-  // unbound config is byte-identical to Feature 048.
+  // Feature 053 paths retired by Feature 056 — manager_agent binding and
+  // Data/Composer handoff never fire; spawns keep LLM-chosen subagent_type and
+  // raw prompt (no Manager persona).
   // ===========================================================================
 
   const managerRoute = (
@@ -1175,12 +1170,12 @@ describe("tool.task", () => {
     ((_input) =>
       Effect.succeed({
         kind: "route",
-        model: managerRef,
+        model: workerRef,
         dispatch: {
           store,
-          lineageStub: { parent_session_id: parentSessionId, parent_role: "architect", child_role: "manager" },
-          denyExecutionTools: true,
-          maxDepth: 2,
+          lineageStub: { parent_session_id: parentSessionId, parent_role: "architect", child_role: "worker" },
+          denyExecutionTools: false,
+          maxDepth: 1,
           forceManager: true,
           bindings,
         },
@@ -1222,7 +1217,7 @@ describe("tool.task", () => {
     })
 
   it.instance(
-    "Feature 053 — a resolved manager_agent binding overrides the LLM-chosen subagent_type",
+    "Feature 056 — manager_agent binding is ignored (LLM subagent_type wins)",
     () =>
       Effect.gen(function* () {
         const sessions = yield* Session.Service
@@ -1230,13 +1225,13 @@ describe("tool.task", () => {
         const store = createRoutingSessionStateStore()
         const result = yield* execManager(store, chat, assistant, stubOps(), { manager: "manager-router" })
         const kid = yield* sessions.get(SessionID.make(result.metadata.sessionId))
-        expect(kid.agent).toBe("manager-router")
+        expect(kid.agent).toBe("general")
       }),
     handoffConfig,
   )
 
   it.instance(
-    "Feature 053 — an unknown manager_agent binding degrades to the requested subagent_type",
+    "Feature 056 — unknown manager_agent still spawns requested subagent_type",
     () =>
       Effect.gen(function* () {
         const sessions = yield* Session.Service
@@ -1250,80 +1245,12 @@ describe("tool.task", () => {
   )
 
   it.instance(
-    "Feature 053 — a model-pinned manager_agent binding degrades to the requested subagent_type",
+    "Feature 056 — Data/Composer interception never runs; raw prompt only",
     () =>
       Effect.gen(function* () {
         const sessions = yield* Session.Service
         const { chat, assistant } = yield* seed()
         const store = createRoutingSessionStateStore()
-        const result = yield* execManager(store, chat, assistant, stubOps(), { manager: "pinned-manager" })
-        const kid = yield* sessions.get(SessionID.make(result.metadata.sessionId))
-        expect(kid.agent).toBe("general")
-      }),
-    handoffConfig,
-  )
-
-  it.instance(
-    "Feature 053 — Data -> Composer interception feeds the composed brief to applyManagerPersona",
-    () =>
-      Effect.gen(function* () {
-        const sessions = yield* Session.Service
-        const { chat, assistant } = yield* seed()
-        const store = createRoutingSessionStateStore()
-        const seen: SessionPrompt.PromptInput[] = []
-        const promptOps: TaskPromptOps = {
-          cancel: () => Effect.void,
-          resolvePromptParts: (template) => Effect.succeed([{ type: "text" as const, text: template }]),
-          prompt: (input) =>
-            Effect.sync(() => {
-              seen.push(input)
-              const text =
-                input.agent === "explore"
-                  ? "recon facts"
-                  : input.agent === "manager-composer"
-                    ? "SUBTASK PLAN: parser work"
-                    : "manager done"
-              return reply(input, text)
-            }),
-        }
-
-        const result = yield* execManager(store, chat, assistant, promptOps, {
-          manager: "manager-router",
-          data: "explore",
-          composer: "manager-composer",
-        })
-
-        // Data then Composer ran before the Manager's own turn.
-        const agents = seen.map((s) => s.agent)
-        expect(agents).toEqual(["explore", "manager-composer", "manager-router"])
-
-        // The Manager received the COMPOSED brief (not the raw Architect prompt), wrapped
-        // by the UNCHANGED persona prelude.
-        const managerTurn = seen.find((s) => s.agent === "manager-router")
-        const managerText = managerTurn?.parts[0]?.type === "text" ? managerTurn.parts[0].text : ""
-        expect(managerText).toContain("You are the MANAGER tier")
-        expect(managerText).toContain("SUBTASK PLAN: parser work")
-        expect(managerText).not.toContain("look into the cache key path")
-
-        // Data + Composer sub-sessions are parented under the Manager's own session and
-        // consume NO delegation budget (the manager aggregate rosters no worker for them).
-        const managerSession = SessionID.make(result.metadata.sessionId)
-        const subs = yield* sessions.children(managerSession)
-        expect(subs).toHaveLength(2)
-        expect(store.get(managerSession).aggregate).toBeNull()
-      }),
-    handoffConfig,
-  )
-
-  it.instance(
-    "Feature 053 — a synthetic spawning session never re-triggers the interception",
-    () =>
-      Effect.gen(function* () {
-        const sessions = yield* Session.Service
-        const { chat, assistant } = yield* seed()
-        const store = createRoutingSessionStateStore()
-        // Pretend the spawning session is itself a Data/Composer sub-session.
-        store.markSynthetic(chat.id)
         const seen: SessionPrompt.PromptInput[] = []
         const promptOps = stubOps({ onPrompt: (input) => seen.push(input) })
 
@@ -1333,32 +1260,10 @@ describe("tool.task", () => {
           composer: "manager-composer",
         })
 
-        // Zero nested interceptions: only the Manager's own turn ran, no Data/Composer.
-        expect(seen.map((s) => s.agent)).toEqual(["manager-router"])
-        const managerText = seen[0]?.parts[0]?.type === "text" ? seen[0].parts[0].text : ""
-        expect(managerText).toContain("look into the cache key path")
-        expect(yield* sessions.children(SessionID.make(result.metadata.sessionId))).toHaveLength(0)
-      }),
-    handoffConfig,
-  )
-
-  it.instance(
-    "Feature 053 — an unbound composer_agent renders byte-identical to Feature 048 (raw prompt)",
-    () =>
-      Effect.gen(function* () {
-        const sessions = yield* Session.Service
-        const { chat, assistant } = yield* seed()
-        const store = createRoutingSessionStateStore()
-        const seen: SessionPrompt.PromptInput[] = []
-        const promptOps = stubOps({ onPrompt: (input) => seen.push(input) })
-
-        // Only a manager binding, no data/composer — the interception never runs.
-        const result = yield* execManager(store, chat, assistant, promptOps, { manager: "manager-router" })
-
-        expect(seen.map((s) => s.agent)).toEqual(["manager-router"])
-        const managerText = seen[0]?.parts[0]?.type === "text" ? seen[0].parts[0].text : ""
-        expect(managerText).toContain("You are the MANAGER tier")
-        expect(managerText).toContain("look into the cache key path")
+        expect(seen.map((s) => s.agent)).toEqual(["general"])
+        const text = seen[0]?.parts[0]?.type === "text" ? seen[0].parts[0].text : ""
+        expect(text).toContain("look into the cache key path")
+        expect(text).not.toContain("You are the MANAGER tier")
         expect(yield* sessions.children(SessionID.make(result.metadata.sessionId))).toHaveLength(0)
       }),
     handoffConfig,

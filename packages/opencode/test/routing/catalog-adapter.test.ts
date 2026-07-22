@@ -242,7 +242,7 @@ const CONFIG: RoutingConfig.Info = {
       cost: { time_budget_ms: 1000, cost_budget_usd: 1, token_budget: 1000 },
       resilience: { retry_depth: 1, validation_depth: 1, escalation_threshold: "manual_review" },
     },
-    hierarchy: { max_depth: 2, orchestration_only: true },
+    hierarchy: { max_depth: 1, orchestration_only: true },
   },
 }
 

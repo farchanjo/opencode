@@ -59,7 +59,7 @@ const validConfig = {
     },
     budget: validPolicy,
     hierarchy: {
-      max_depth: 2,
+      max_depth: 1,
       orchestration_only: true,
     },
   },
@@ -81,7 +81,7 @@ describe("RoutingConfig.Info", () => {
     ).toThrow()
   })
 
-  test("rejects a hierarchy.max_depth outside the 1-2 Architect->Manager->Worker range", () => {
+  test("rejects a hierarchy.max_depth outside the Feature 056 max of 1", () => {
     expect(() =>
       Schema.decodeUnknownSync(RoutingConfig.Info)({
         ...validConfig,

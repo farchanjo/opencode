@@ -62,7 +62,7 @@ function routingConfig(overrides: {
         cost: { time_budget_ms: 60_000, cost_budget_usd: 10, token_budget: 1_000_000 },
         resilience: { retry_depth: 2, validation_depth: 1, escalation_threshold: "manual_review" },
       },
-      hierarchy: { max_depth: 2, orchestration_only: true },
+      hierarchy: { max_depth: 1, orchestration_only: true },
     },
   }
 }

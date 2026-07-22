@@ -21,7 +21,7 @@ function policy(overrides?: { maxWorkers?: number }): Budget.Policy {
       max_output_tokens: 8_000,
       max_output_bytes: 32_000,
     },
-    concurrency: { max_workers: overrides?.maxWorkers ?? 4, max_delegation_depth: 2 },
+    concurrency: { max_workers: overrides?.maxWorkers ?? 4, max_delegation_depth: 1 },
     retrieval: { retrieval_top_k: 10, rerank_top_k: 5, max_skill_chunks: 8, max_skill_tokens: 4_000 },
     cost: { time_budget_ms: 60_000, cost_budget_usd: 10, token_budget: 1_000_000 },
     resilience: { retry_depth: 2, validation_depth: 2, escalation_threshold: "confidence_floor" },
@@ -54,49 +54,49 @@ function request(overrides: {
   }
 }
 
-describe("T023 hierarchy — role and depth invariants", () => {
+describe("T023 hierarchy — role and depth invariants (Feature 056 collapse)", () => {
   test("only architect and manager are orchestration-only roles", () => {
     expect(isOrchestrationOnly("architect")).toBe(true)
     expect(isOrchestrationOnly("manager")).toBe(true)
     expect(isOrchestrationOnly("worker")).toBe(false)
   })
 
-  test("architect -> manager -> worker chain reaches exactly depth 2", () => {
-    const toManager = planDispatch(request({ parentRole: "architect", childRole: "manager", parentDepth: 0 }))
-    expect(toManager.ok).toBe(true)
-    if (toManager.ok) expect(toManager.envelope.childDepth).toBe(1)
-
-    const toWorker = planDispatch(request({ parentRole: "manager", childRole: "worker", parentDepth: 1 }))
+  test("architect -> worker reaches exactly depth 1 (MAX_DELEGATION_DEPTH)", () => {
+    const toWorker = planDispatch(request({ parentRole: "architect", childRole: "worker", parentDepth: 0 }))
     expect(toWorker.ok).toBe(true)
     if (toWorker.ok) {
       expect(toWorker.envelope.childDepth).toBe(MAX_DELEGATION_DEPTH)
-      expect(toWorker.envelope.fanout.delegation_depth).toBe(2)
+      expect(toWorker.envelope.fanout.delegation_depth).toBe(1)
     }
   })
 
-  test("a third delegation edge (depth 3) is rejected", () => {
-    const out = planDispatch(request({ parentRole: "manager", childRole: "worker", parentDepth: 2 }))
+  test("architect -> manager is illegal (no middle tier)", () => {
+    const out = planDispatch(request({ parentRole: "architect", childRole: "manager", parentDepth: 0 }))
+    expect(out.ok).toBe(false)
+    if (!out.ok) expect(out.rejection.reason).toBe("illegal_transition")
+  })
+
+  test("a second delegation edge (parent depth 1) is rejected", () => {
+    const out = planDispatch(request({ parentRole: "architect", childRole: "worker", parentDepth: 1 }))
     expect(out.ok).toBe(false)
     if (!out.ok) expect(out.rejection.reason).toBe("depth_exceeded")
   })
 
-  test("Manager MUST NOT create Manager", () => {
-    const out = planDispatch(request({ parentRole: "manager", childRole: "manager", parentDepth: 1 }))
+  test("Manager parent has no legal children (middle tier collapsed)", () => {
+    const out = planDispatch(request({ parentRole: "manager", childRole: "worker", parentDepth: 0 }))
     expect(out.ok).toBe(false)
     if (!out.ok) expect(out.rejection.reason).toBe("illegal_transition")
   })
 
   test("Worker cannot dispatch anything (orchestration-only violation)", () => {
-    const out = planDispatch(request({ parentRole: "worker", childRole: "worker", parentDepth: 2 }))
+    const out = planDispatch(request({ parentRole: "worker", childRole: "worker", parentDepth: 0 }))
     expect(out.ok).toBe(false)
     if (!out.ok) expect(out.rejection.reason).toBe("parent_not_orchestrator")
   })
 
   test("only a Worker child carries execution authority", () => {
     const worker = planDispatch(request({ parentRole: "architect", childRole: "worker" }))
-    const manager = planDispatch(request({ parentRole: "architect", childRole: "manager" }))
     expect(worker.ok && worker.envelope.executionAllowed).toBe(true)
-    expect(manager.ok && manager.envelope.executionAllowed).toBe(false)
   })
 })
 
@@ -104,9 +104,9 @@ describe("T023 hierarchy — admission-controlled fanout", () => {
   test("granted = min(requested, max_workers, cost, token)", () => {
     const result = admitDispatchFanout(
       policy({ maxWorkers: 5 }),
-      8, // requested
-      { costUsd: 3, tokens: 1_000 }, // headroom
-      { costUsd: 1, tokens: 100 }, // per worker -> byCost 3, byToken 10
+      8,
+      { costUsd: 3, tokens: 1_000 },
+      { costUsd: 1, tokens: 100 },
     )
     expect(result.factors).toEqual({ requested: 8, byMaxWorkers: 5, byCostBudget: 3, byTokenBudget: 10 })
     expect(result.granted).toBe(3)
@@ -142,9 +142,9 @@ describe("T023 hierarchy — admission-controlled fanout", () => {
   test("envelope carries lineage, fanout counters and the dispatch event", () => {
     const out = planDispatch(
       request({
-        parentRole: "manager",
+        parentRole: "architect",
         childRole: "worker",
-        parentDepth: 1,
+        parentDepth: 0,
         requestedFanout: 10,
         maxWorkers: 3,
       }),
@@ -155,10 +155,10 @@ describe("T023 hierarchy — admission-controlled fanout", () => {
     expect(out.envelope.lineage).toEqual({
       parent_session_id: "parent-sess",
       child_session_id: "child-sess",
-      parent_role: "manager",
+      parent_role: "architect",
       child_role: "worker",
     })
-    expect(out.envelope.fanout).toEqual({ delegation_depth: 2, fanout_requested: 10, fanout_granted: 3 })
+    expect(out.envelope.fanout).toEqual({ delegation_depth: 1, fanout_requested: 10, fanout_granted: 3 })
     expect(out.envelope.event.todo).toEqual(TODO)
   })
 })
@@ -171,7 +171,7 @@ describe("T023 hierarchy — escalation reuses evidence / OutputRefs / lineage",
     child_role: "worker",
   }
 
-  test("escalation reclassifies to manager and carries the Worker's work forward unchanged", () => {
+  test("escalation reuses Worker work; reclassified_to manager means main orchestrator (protocol-frozen)", () => {
     const evidence = ["ev-1", "ev-2"]
     const outputs = ["spool-1"]
     const plan = planEscalation({
@@ -192,11 +192,11 @@ describe("T023 hierarchy — escalation reuses evidence / OutputRefs / lineage",
 
 describe("T023 hierarchy — validation events", () => {
   test("builds a hierarchy.validation event for a chain link", () => {
-    const event = validationEvent({ sessionId: "mgr-1", role: "manager", outcome: "passed", reason: "synthesis ok" })
+    const event = validationEvent({ sessionId: "arch-1", role: "architect", outcome: "passed", reason: "synthesis ok" })
     expect(event).toEqual({
       type: "hierarchy.validation",
-      session_id: "mgr-1",
-      role: "manager",
+      session_id: "arch-1",
+      role: "architect",
       outcome: "passed",
       validation_reason: "synthesis ok",
     })

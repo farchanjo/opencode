@@ -72,13 +72,13 @@ function routingConfig(overrides: {
           max_output_tokens: 8_000,
           max_output_bytes: 32_000,
         },
-        concurrency: { max_workers: 4, max_delegation_depth: 2 },
+        concurrency: { max_workers: 4, max_delegation_depth: 1 },
         retrieval: { retrieval_top_k: 8, rerank_top_k: 4, max_skill_chunks: 8, max_skill_tokens: 4_000 },
         cost: { time_budget_ms: 60_000, cost_budget_usd: 10, token_budget: 1_000_000 },
         resilience: { retry_depth: 2, validation_depth: 1, escalation_threshold: "manual_review" },
       },
       hierarchy: {
-        max_depth: overrides.maxDepth ?? 2,
+        max_depth: overrides.maxDepth ?? 1,
         orchestration_only: overrides.orchestrationOnly ?? true,
         ...(overrides.orchestrationMode ? { orchestration_mode: overrides.orchestrationMode } : {}),
       },
@@ -191,18 +191,18 @@ describe("createHierarchyDispatchResolver — fresh per-spawn decision", () => {
     expect(out.lineageStub).toEqual({ parent_session_id: "ses_parent", parent_role: "architect", child_role: "worker" })
   })
 
-  test("cross-domain fan-out → Manager child from role_pools.manager (orchestration-only)", async () => {
+  test("cross-domain fan-out still yields Worker child from role_pools.worker (Feature 056)", async () => {
     const resolve = createHierarchyDispatchResolver(
       deps(routingConfig({ enabled: true, mode: "auto", rolePools: { worker: ["worker-model"], manager: ["manager-model"] } })),
     )
     const out = await Effect.runPromise(resolve(input({ taskText: CROSS_DOMAIN })))
     if (out?.kind !== "route") throw new Error("expected route")
-    expect(out.childRole).toBe("manager")
-    expect(out.model).toEqual({ providerID: "anthropic", modelID: "manager-model" } as never)
-    expect(out.executionAllowed).toBe(false) // orchestration_only: a Manager child cannot mutate
+    expect(out.childRole).toBe("worker")
+    expect(out.model).toEqual({ providerID: "anthropic", modelID: "worker-model" } as never)
+    expect(out.executionAllowed).toBe(true)
   })
 
-  test("orchestration_only=false → a Manager child still carries execution authority", async () => {
+  test("orchestration_only=false → Worker child still carries execution authority", async () => {
     const resolve = createHierarchyDispatchResolver(
       deps(
         routingConfig({
@@ -215,23 +215,22 @@ describe("createHierarchyDispatchResolver — fresh per-spawn decision", () => {
     )
     const out = await Effect.runPromise(resolve(input({ taskText: CROSS_DOMAIN })))
     if (out?.kind !== "route") throw new Error("expected route")
-    expect(out.childRole).toBe("manager")
+    expect(out.childRole).toBe("worker")
     expect(out.executionAllowed).toBe(true)
   })
 
-  test("a Manager parent forces a Worker child (never Manager→Manager) and is a legal edge", async () => {
+  test("a Manager parent has no legal children (middle tier collapsed) → blocked", async () => {
     const resolve = createHierarchyDispatchResolver(
       deps(routingConfig({ enabled: true, mode: "auto", rolePools: { worker: ["worker-model"] } })),
     )
-    const out = await Effect.runPromise(resolve(input({ parentRole: "manager", parentDepth: 1, taskText: CROSS_DOMAIN })))
-    if (out?.kind !== "route") throw new Error("expected route")
-    expect(out.childRole).toBe("worker")
-    expect(out.childDepth).toBe(2)
+    const out = await Effect.runPromise(resolve(input({ parentRole: "manager", parentDepth: 0, taskText: CROSS_DOMAIN })))
+    if (out?.kind !== "blocked") throw new Error("expected blocked")
+    expect(out.rejection.reason).toBe("illegal_transition")
   })
 })
 
 describe("createHierarchyDispatchResolver — consumption-bound fan-out (Feature 043 FR-C1)", () => {
-  // A cross-domain task fans out to a Manager child with requestedFanout > 1, so the
+  // A cross-domain task keeps Worker children with requestedFanout > 1, so the
   // real cost/token headroom (budget − recorded parent consumption) can bind the
   // granted worker count below max_workers.
   const cfg = routingConfig({ enabled: true, mode: "auto", rolePools: { worker: ["worker-model"], manager: ["manager-model"] } })
@@ -240,7 +239,7 @@ describe("createHierarchyDispatchResolver — consumption-bound fan-out (Feature
     const resolve = createHierarchyDispatchResolver(deps(cfg))
     const out = await Effect.runPromise(resolve(input({ taskText: CROSS_DOMAIN })))
     if (out?.kind !== "route") throw new Error("expected route")
-    expect(out.childRole).toBe("manager")
+    expect(out.childRole).toBe("worker")
     expect(out.fanoutGranted).toBeGreaterThan(0)
   })
 
@@ -286,11 +285,11 @@ describe("createHierarchyDispatchResolver — legality + depth blocks (typed out
     expect(shouldConsultHierarchy(false, true)).toBe(false)
   })
 
-  test("depth over the engine invariant → depth_exceeded block (Manager at depth 2 → child depth 3)", async () => {
+  test("depth over the engine invariant → depth_exceeded block (Architect at depth 1 → child depth 2)", async () => {
     const resolve = createHierarchyDispatchResolver(
       deps(routingConfig({ enabled: true, mode: "auto", rolePools: { worker: ["worker-model"] } })),
     )
-    const out = await Effect.runPromise(resolve(input({ parentRole: "manager", parentDepth: 2 })))
+    const out = await Effect.runPromise(resolve(input({ parentRole: "architect", parentDepth: 1 })))
     if (out?.kind !== "blocked") throw new Error("expected blocked")
     expect(out.rejection.reason).toBe("depth_exceeded")
   })
@@ -345,16 +344,16 @@ describe("createHierarchyDispatchResolver — hang-proofing", () => {
   }, 8000)
 })
 
-describe("classifyChildRole — the Architect classifier boundary", () => {
-  test("single-domain, low-parallelism task → direct Worker", () => {
+describe("classifyChildRole — always Worker (Feature 056)", () => {
+  test("single-domain, low-parallelism task → Worker", () => {
     expect(classifyChildRole("architect", "add a small helper function", "session").childRole).toBe("worker")
   })
 
-  test("≥2 work-units across ≥2 domains → Manager", () => {
-    expect(classifyChildRole("architect", CROSS_DOMAIN, "session").childRole).toBe("manager")
+  test("≥2 work-units across ≥2 domains still → Worker (no Manager child)", () => {
+    expect(classifyChildRole("architect", CROSS_DOMAIN, "session").childRole).toBe("worker")
   })
 
-  test("a non-architect (manager) parent always forces a Worker child", () => {
+  test("a non-architect (manager) parent always classifies Worker", () => {
     expect(classifyChildRole("manager", CROSS_DOMAIN, "session").childRole).toBe("worker")
   })
 })
@@ -626,45 +625,43 @@ describe("reconcileDepthCeiling — legacy backstop ⋀ hierarchy max_depth (FR-
   })
 
   test("hierarchy active → the MIN of the two (a config can never widen delegation)", () => {
-    expect(reconcileDepthCeiling(5, 2)).toBe(2)
-    expect(reconcileDepthCeiling(1, 2)).toBe(1)
-    expect(reconcileDepthCeiling(2, 2)).toBe(2)
+    expect(reconcileDepthCeiling(5, 1)).toBe(1)
+    expect(reconcileDepthCeiling(1, 1)).toBe(1)
   })
 })
 
 // =============================================================================
-// Feature 048 — the opt-in force_manager three-tier orchestration mode.
+// Feature 056 — collapse three-tier; force_manager inert for Manager children.
 // =============================================================================
 
-describe("Feature 048 — classifyChildRole under force_manager", () => {
-  test("architect edge → Manager even for a simple single-clause task (byte-different from heuristic)", () => {
-    // The SAME simple task the heuristic classifies as a direct Worker...
+describe("Feature 056 — classifyChildRole under force_manager (no Manager child)", () => {
+  test("architect edge stays Worker for a simple task even under force_manager", () => {
     expect(classifyChildRole("architect", "add a small helper function", "session").childRole).toBe("worker")
-    // ...becomes a Manager under force_manager, unconditionally.
     expect(classifyChildRole("architect", "add a small helper function", "session", "force_manager").childRole).toBe(
-      "manager",
+      "worker",
     )
   })
 
   test("architect edge preserves the analyzer requestedFanout for F043 admission (>= 1)", () => {
     const simple = classifyChildRole("architect", "add a small helper function", "session", "force_manager")
-    expect(simple.childRole).toBe("manager")
+    expect(simple.childRole).toBe("worker")
     expect(simple.requestedFanout).toBeGreaterThanOrEqual(1)
   })
 
-  test("a non-architect (manager) parent stays a Worker leaf even under force_manager", () => {
+  test("a non-architect (manager) parent classifies Worker under force_manager", () => {
     expect(classifyChildRole("manager", CROSS_DOMAIN, "session", "force_manager").childRole).toBe("worker")
   })
 
-  test("heuristic (default arg) is unchanged — byte-identical classification", () => {
+  test("heuristic and force_manager both yield Worker on cross-domain tasks", () => {
     expect(classifyChildRole("architect", "add a small helper function", "session", "heuristic").childRole).toBe(
       "worker",
     )
-    expect(classifyChildRole("architect", CROSS_DOMAIN, "session", "heuristic").childRole).toBe("manager")
+    expect(classifyChildRole("architect", CROSS_DOMAIN, "session", "heuristic").childRole).toBe("worker")
+    expect(classifyChildRole("architect", CROSS_DOMAIN, "session", "force_manager").childRole).toBe("worker")
   })
 })
 
-describe("Feature 048 — resolver force_manager end-to-end", () => {
+describe("Feature 056 — resolver force_manager end-to-end (Worker only)", () => {
   const fmDeps = (extra: Fakes = {}) =>
     deps(
       routingConfig({
@@ -676,17 +673,17 @@ describe("Feature 048 — resolver force_manager end-to-end", () => {
       extra,
     )
 
-  test("architect edge on a SIMPLE task → Manager on the manager pool, forceManager flag set", async () => {
+  test("architect edge on a SIMPLE task → Worker on the worker pool; forceManager flag still set", async () => {
     const resolve = createHierarchyDispatchResolver(fmDeps())
     const out = await Effect.runPromise(resolve(input({ taskText: "add a small helper function" })))
     if (out?.kind !== "route") throw new Error("expected route")
-    expect(out.childRole).toBe("manager")
-    expect(out.model).toEqual({ providerID: "anthropic", modelID: "manager-model" } as never)
+    expect(out.childRole).toBe("worker")
+    expect(out.model).toEqual({ providerID: "anthropic", modelID: "worker-model" } as never)
     expect(out.forceManager).toBe(true)
-    expect(out.maxDepth).toBe(2)
+    expect(out.maxDepth).toBe(1)
   })
 
-  test("heuristic mode on the SAME simple task → direct Worker, forceManager false (byte-identical)", async () => {
+  test("heuristic mode on the SAME simple task → Worker, forceManager false", async () => {
     const resolve = createHierarchyDispatchResolver(
       deps(routingConfig({ enabled: true, mode: "auto", rolePools: { worker: ["worker-model"], manager: ["manager-model"] } })),
     )
@@ -696,76 +693,66 @@ describe("Feature 048 — resolver force_manager end-to-end", () => {
     expect(out.forceManager).toBe(false)
   })
 
-  test("a Worker leaf never re-opens the tree under force_manager (undefined, no Manager)", async () => {
+  test("a Worker leaf never re-opens the tree under force_manager", async () => {
     const resolve = createHierarchyDispatchResolver(fmDeps())
-    const out = await Effect.runPromise(resolve(input({ parentRole: "worker", parentDepth: 2 })))
+    const out = await Effect.runPromise(resolve(input({ parentRole: "worker", parentDepth: 1 })))
     expect(out).toBeUndefined()
   })
 
-  test("FR7 — an unresolvable manager pool SURFACES a degraded decision (not a silent undefined)", async () => {
-    // The manager pool model has no authenticated provider → force_manager surfaces.
+  test("FR7 — an unresolvable worker pool SURFACES a degraded decision under force_manager", async () => {
     const resolve = createHierarchyDispatchResolver(fmDeps({ authProviders: [] }))
     const out = await Effect.runPromise(resolve(input({ taskText: "add a small helper function" })))
     if (out?.kind !== "degraded") throw new Error("expected degraded")
     expect(out.reason).toBe("model_unresolved")
-    expect(out.childRole).toBe("manager")
+    expect(out.childRole).toBe("worker")
   })
 
-  test("FR7 — heuristic keeps the SILENT undefined fallback on an unresolved model (unchanged)", async () => {
+  test("heuristic keeps the SILENT undefined fallback on an unresolved model", async () => {
     const resolve = createHierarchyDispatchResolver(
       deps(routingConfig({ enabled: true, mode: "auto", rolePools: { worker: ["worker-model"] } }), { authProviders: [] }),
     )
     expect(await Effect.runPromise(resolve(input()))).toBeUndefined()
   })
 
-  test("an explicit/agent-pinned model short-circuits the resolver in force_manager too (explicit wins)", () => {
+  test("an explicit/agent-pinned model short-circuits the resolver (explicit wins)", () => {
     expect(shouldConsultHierarchy(true, false)).toBe(false)
     expect(shouldConsultHierarchy(false, true)).toBe(false)
   })
 })
 
-describe("Feature 048 — reconcileDepthCeiling force_manager (FR5): the Manager -> Worker hop", () => {
-  test("force_manager + UNSET subagent_depth HONORS hierarchy.max_depth (the hop passes)", () => {
-    // The bug: reconcile(1, 2) collapsed to 1, so a Manager at depth 1 (>= 1) was blocked.
-    // The fix: an unset subagent_depth under force_manager yields the hierarchy ceiling (2),
-    // so Architect(0) -> Manager(1) -> Worker(2) all pass `depth < ceiling`.
-    const ceiling = reconcileDepthCeiling(undefined, 2, true)
-    expect(ceiling).toBe(2)
-    expect(1).toBeLessThan(ceiling) // the Manager at depth 1 is admitted
+describe("Feature 056 — reconcileDepthCeiling (depth 1 only)", () => {
+  test("force_manager does not widen depth beyond hierarchy max 1", () => {
+    expect(reconcileDepthCeiling(undefined, 1, true)).toBe(1)
+    expect(reconcileDepthCeiling(undefined, 1, false)).toBe(1)
   })
 
-  test("force_manager + EXPLICIT subagent_depth still reconciles to the MIN (explicit restricts)", () => {
-    expect(reconcileDepthCeiling(1, 2, true)).toBe(1)
-    expect(reconcileDepthCeiling(2, 2, true)).toBe(2)
+  test("explicit subagent_depth still reconciles to the MIN", () => {
+    expect(reconcileDepthCeiling(1, 1, true)).toBe(1)
   })
 
-  test("heuristic hierarchy path (forceManager false) + unset subagent_depth stays 1 (byte-identical)", () => {
-    // The heuristic Manager -> Worker hop remains blocked exactly as it ships today.
-    expect(reconcileDepthCeiling(undefined, 2, false)).toBe(1)
-    expect(reconcileDepthCeiling(undefined, 2)).toBe(1)
+  test("hierarchy path with max 1 + unset subagent_depth stays 1", () => {
+    expect(reconcileDepthCeiling(undefined, 1, false)).toBe(1)
+    expect(reconcileDepthCeiling(undefined, 1)).toBe(1)
   })
 
   test("the plain non-hierarchy path keeps the legacy default of 1 (unset) or the configured value", () => {
     expect(reconcileDepthCeiling(undefined, undefined)).toBe(1)
     expect(reconcileDepthCeiling(3, undefined)).toBe(3)
-    // A Worker leaf that tries to spawn (no hierarchyDispatch) → ceiling 1, depth 2 >= 1 blocked.
     expect(reconcileDepthCeiling(undefined, undefined, false)).toBe(1)
   })
 })
 
-describe("Feature 048 — applyManagerPersona (FR8)", () => {
-  test("a manager-role spawn under force_manager gets the persona prelude prepended", () => {
-    const out = applyManagerPersona("do the thing", "manager", true)
-    expect(out.startsWith(MANAGER_PERSONA_PRELUDE)).toBe(true)
-    expect(out.endsWith("do the thing")).toBe(true)
+describe("Feature 056 — applyManagerPersona never injects", () => {
+  test("manager-role + force_manager does not prepend persona", () => {
+    expect(applyManagerPersona("do the thing", "manager", true)).toBe("do the thing")
   })
 
-  test("a worker-role spawn is unchanged even under force_manager", () => {
+  test("worker-role spawn is unchanged", () => {
     expect(applyManagerPersona("do the thing", "worker", true)).toBe("do the thing")
   })
 
-  test("a manager-role spawn in heuristic mode is unchanged (no persona, byte-identical)", () => {
-    expect(applyManagerPersona("do the thing", "manager", false)).toBe("do the thing")
+  test("MANAGER_PERSONA_PRELUDE remains exported for import stability", () => {
+    expect(MANAGER_PERSONA_PRELUDE.length).toBeGreaterThan(0)
   })
 })
 
@@ -775,9 +762,8 @@ describe("Feature 048 — applyManagerPersona (FR8)", () => {
 // The per-invocation resolver injected into `ctx.extra`. It reuses the SAME engine
 // resolver + consult guard as `handleSubtask`, reshaping the decision into the
 // `{ route | blocked | degraded }` contract `tool/task.ts` consumes. These tests
-// prove the wiring the bug lacked: an LLM-path spawn under force_manager routes the
-// child to `role_pools.manager` (not parent inheritance); a pinned agent still
-// wins; off/no-route yields `undefined`; and a blocked edge surfaces.
+// Feature 056: LLM-path spawn under force_manager routes to role_pools.worker;
+// a pinned agent still wins; off/no-route yields undefined; blocked edges surface.
 // =============================================================================
 
 const FM_CFG = routingConfig({
@@ -808,20 +794,19 @@ function liveSeam(
   return { store, run }
 }
 
-describe("Feature 049 — createLiveHierarchyResolve (live LLM task-tool seam)", () => {
-  test("force_manager routes an LLM task child to role_pools.manager with a ready dispatch payload", async () => {
+describe("Feature 049 — createLiveHierarchyResolve (live LLM task-tool seam, F056)", () => {
+  test("force_manager routes an LLM task child to role_pools.worker with a ready dispatch payload", async () => {
     const { run } = liveSeam(FM_CFG)
     const out = await Effect.runPromise(
       run({ taskText: "add a small helper function", spawnKey: "spawn_live_1", hasAgentPinnedModel: false }),
     )
     if (out?.kind !== "route") throw new Error("expected route")
-    // The child model is the MANAGER pool model — NOT the parent's main-context model.
-    expect(out.model).toEqual({ providerID: "anthropic", modelID: "manager-model" } as never)
+    expect(out.model).toEqual({ providerID: "anthropic", modelID: "worker-model" } as never)
     expect(out.model.modelID).not.toBe(MAIN_CTX.modelID)
     expect(out.dispatch.forceManager).toBe(true)
-    expect(out.dispatch.denyExecutionTools).toBe(true) // orchestration_only: manager child cannot mutate
-    expect(out.dispatch.maxDepth).toBe(2)
-    expect(out.dispatch.lineageStub.child_role).toBe("manager")
+    expect(out.dispatch.denyExecutionTools).toBe(false) // worker may execute under orchestration_only
+    expect(out.dispatch.maxDepth).toBe(1)
+    expect(out.dispatch.lineageStub.child_role).toBe("worker")
   })
 
   test("an agent-pinned child model short-circuits the resolver (pinned wins, no route)", async () => {
@@ -849,45 +834,45 @@ describe("Feature 049 — createLiveHierarchyResolve (live LLM task-tool seam)",
   })
 
   test("an over-depth edge surfaces as a blocked decision (never a silent inheritance)", async () => {
-    // A Manager parent at depth 2 → Worker child depth 3 > engine max (2).
-    const { run } = liveSeam(FM_CFG, {}, { parentRole: "manager", parentDepth: 2 })
+    // Architect parent already at depth 1 → Worker child depth 2 > engine max (1).
+    const { run } = liveSeam(FM_CFG, {}, { parentRole: "architect", parentDepth: 1 })
     const out = await Effect.runPromise(run({ taskText: "x", spawnKey: "spawn_live_5", hasAgentPinnedModel: false }))
     if (out?.kind !== "blocked") throw new Error("expected blocked")
     expect(out.rejection.reason).toBe("depth_exceeded")
   })
 
-  test("force_manager with an unresolvable manager pool → degraded (surfaced), not undefined", async () => {
+  test("force_manager with an unresolvable worker pool → degraded (surfaced), not undefined", async () => {
     const { run } = liveSeam(FM_CFG, { authProviders: [] })
     const out = await Effect.runPromise(
       run({ taskText: "add a small helper function", spawnKey: "spawn_live_6", hasAgentPinnedModel: false }),
     )
     if (out?.kind !== "degraded") throw new Error("expected degraded")
     expect(out.reason).toBe("model_unresolved")
-    expect(out.childRole).toBe("manager")
+    expect(out.childRole).toBe("worker")
   })
 })
 
 describe("Feature 049 — toHierarchyDispatchExtra (shared route→dispatch mapping)", () => {
-  test("maps a route decision to the F042/F048 dispatch payload one way", () => {
+  test("maps a route decision to the F042/F056 dispatch payload one way", () => {
     const store = createRoutingSessionStateStore()
     const extra = toHierarchyDispatchExtra(
       {
         kind: "route",
-        model: { providerID: "anthropic", modelID: "manager-model" } as never,
-        childRole: "manager",
+        model: { providerID: "anthropic", modelID: "worker-model" } as never,
+        childRole: "worker",
         childDepth: 1,
-        executionAllowed: false,
-        maxDepth: 2,
+        executionAllowed: true,
+        maxDepth: 1,
         fanoutGranted: 1,
         forceManager: true,
-        lineageStub: { parent_session_id: "ses_parent", parent_role: "architect", child_role: "manager" },
+        lineageStub: { parent_session_id: "ses_parent", parent_role: "architect", child_role: "worker" },
       },
       store,
     )
-    expect(extra.denyExecutionTools).toBe(true) // !executionAllowed
+    expect(extra.denyExecutionTools).toBe(false)
     expect(extra.forceManager).toBe(true)
-    expect(extra.maxDepth).toBe(2)
-    expect(extra.lineageStub.child_role).toBe("manager")
+    expect(extra.maxDepth).toBe(1)
+    expect(extra.lineageStub.child_role).toBe("worker")
     expect(extra.store).toBe(store)
   })
 })

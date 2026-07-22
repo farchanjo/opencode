@@ -52,15 +52,14 @@ export type SmartRoutingEnabled = typeof SmartRoutingEnabled.Type
 export const StrictGates = Schema.Boolean
 export type StrictGates = typeof StrictGates.Type
 
-// HierarchyDepth bounds the routing hierarchy (1-2; 2 = Architect -> Manager
-// -> Worker, ADR-0002). Mirrors config.cue #RoutingEnforcement.hierarchy.max_depth.
-const HierarchyDepth = Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 2 }))
+// HierarchyDepth bounds the routing hierarchy after Feature 056 / ADR-0056:
+// max 1 = main (architect) -> Worker only. Legacy persisted 2 MUST clamp at
+// resolve if still present outside this schema. Mirrors config.cue.
+const HierarchyDepth = Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 1 }))
 
-// OrchestrationMode (Feature 048) selects the hierarchy orchestration behavior.
-// `heuristic` (default) is the byte-identical shipped single-hop heuristic;
-// `force_manager` is the opt-in always-on Architect -> Manager -> Worker three-tier
-// flow. The field is OPTIONAL on the persisted config; an absent value resolves to
-// `heuristic`, so every already-persisted config stays valid.
+// OrchestrationMode (Feature 048 literals; Feature 056 supersession): both
+// values resolve to the collapsed main→Worker path — `force_manager` no longer
+// creates a Manager child. Field remains OPTIONAL for dual-read of old configs.
 // Mirrors config.cue #RoutingEnforcement.hierarchy.orchestration_mode.
 export const OrchestrationMode = Schema.Literals(["heuristic", "force_manager"]).annotate({
   identifier: "RoutingConfig.OrchestrationMode",

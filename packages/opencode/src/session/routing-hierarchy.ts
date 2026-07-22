@@ -321,7 +321,7 @@ export function parentRoleForSpawn(recordedRole: Enums.HierarchyRole | null, isR
 }
 
 // =============================================================================
-// Classifier — direct Worker by default; Manager on genuine fan-out (C1/C2).
+// Classifier — always Worker children (Feature 056); fan-out count only.
 // =============================================================================
 
 interface Classification {
@@ -330,36 +330,30 @@ interface Classification {
 }
 
 /** Deterministic, zero-LLM classification of a spawn's CHILD role from the
- * Feature 001 analyzer signals. A Manager parent forces a Worker child (engine
- * legality); the thresholds govern only the Architect edge. Exported as a small
- * pure function so the boundary is unit-testable and tunable in one place.
+ * Feature 001 analyzer signals. Exported as a pure function for unit tests.
  *
- * Feature 048 — under `force_manager` the Architect edge ALWAYS yields a Manager,
- * regardless of the analyzer signals; the analyzer-derived `requestedFanout` is
- * preserved for F043 budget admission (the mode changes the ROLE, never the budget
- * math). Non-architect edges stay Worker leaves in both modes. `heuristic`
- * (default) skips the force branch entirely, so it is byte-identical to today. */
+ * Feature 056 (ADR-0056) — hierarchy is collapsed to main (architect =
+ * Architect+Manager) → Worker only. The child role is ALWAYS `worker`; the
+ * analyzer only drives `requestedFanout` for F043 budget admission. The
+ * `mode` argument is retained for call-site compatibility but is inert for
+ * role selection (`force_manager` no longer creates a Manager child). */
 export function classifyChildRole(
   parentRole: Enums.HierarchyRole,
   taskText: string,
   scope: Budget.Scope,
   mode: RoutingConfig.OrchestrationMode = "heuristic",
 ): Classification {
+  void mode
   const analysis = createTaskAnalyzer().analyze({ taskDescription: taskText, scope })
   const workUnits = analysis.inputs.structure.independent_units
-  const domains = analysis.inputs.structure.domain_count
   const parallel = analysis.inputs.concurrency.parallelism >= PARALLEL_THRESHOLD
   const requestedFanout = parallel ? Math.max(workUnits, WORK_UNIT_THRESHOLD) : 1
 
-  // A Manager parent may only ever create a Worker (LEGAL_CHILDREN); only the
-  // Architect edge consults the fan-out heuristic / force-manager rule.
+  // Non-architect parents cannot open a multi-worker fanout from this classifier
+  // (Workers are leaves; obsolete manager parents have no legal children).
   if (parentRole !== "architect") return { childRole: "worker", requestedFanout: 1 }
 
-  // Feature 048 — force_manager makes the Architect edge unconditionally a Manager.
-  if (mode === "force_manager") return { childRole: "manager", requestedFanout: Math.max(requestedFanout, 1) }
-
-  const managerWarranted = (workUnits >= WORK_UNIT_THRESHOLD && domains >= DOMAIN_THRESHOLD) || requestedFanout > FANOUT_FLOOR
-  return { childRole: managerWarranted ? "manager" : "worker", requestedFanout: managerWarranted ? requestedFanout : 1 }
+  return { childRole: "worker", requestedFanout: Math.max(requestedFanout, 1) }
 }
 
 // =============================================================================
@@ -531,13 +525,12 @@ export function createHierarchyDispatchResolver(deps: HierarchyResolveDeps): Res
 
     const hierarchy = cfg.enforcement.hierarchy
     const budget = cfg.enforcement.budget
-    // Feature 048 — the opt-in orchestration mode (absent → `heuristic`). Gated by
-    // the same activation check above, so `force_manager` engages ONLY when Smart
-    // Routing is enabled AND the operator selected it; otherwise `heuristic`.
+    // Feature 056 — orchestration_mode is inert for role selection (both
+    // heuristic and force_manager collapse to main→Worker). forceManager is
+    // retained on the dispatch payload for call-site/compat only.
     const forceManager = orchestrationModeOf(hierarchy) === "force_manager"
 
-    // 2) Classify the child role (zero-LLM, deterministic analyzer signals). Under
-    // `force_manager` the Architect edge is unconditionally a Manager.
+    // 2) Classify the child role (always Worker; analyzer drives fan-out only).
     const { childRole, requestedFanout } = classifyChildRole(
       input.parentRole,
       input.taskText,
