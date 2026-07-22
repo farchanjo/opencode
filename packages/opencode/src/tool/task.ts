@@ -24,6 +24,7 @@ import { Cause, Effect, Exit, Option, Schema, Scope } from "effect"
 import { EffectBridge } from "@/effect/bridge"
 import { RuntimeFlags } from "@/effect/runtime-flags"
 import { Database } from "@opencode-ai/core/database/database"
+import { recordTurn, validationDelta } from "@/session/budget-consume"
 
 export interface TaskPromptOps {
   cancel(sessionID: SessionID): Effect.Effect<void>
@@ -670,6 +671,13 @@ export const TaskTool = Tool.define(
                   domain: { snapshot, validationPerformed: true },
                 })
               : undefined
+          // Feature 055 — domain validation ran: increment parent-session
+          // validation_count (hang/crash-safe; never fails the fold path).
+          if (chain && status === "completed" && snapshot) {
+            yield* Effect.sync(() => {
+              recordTurn(dispatch.store, ctx.sessionID, validationDelta(1))
+            }).pipe(Effect.catchCause(() => Effect.void))
+          }
           const outcome = OrchestrationAggregate.foldTerminalOutcome({
             childSessionId: nextSession.id,
             // Preserve whether this Worker was recorded foreground (gate-enforced) or

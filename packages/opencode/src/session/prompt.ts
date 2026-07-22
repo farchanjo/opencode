@@ -65,6 +65,7 @@ import { SessionTable } from "@opencode-ai/core/session/sql"
 import { SessionReminders } from "./reminders"
 import { SessionTools } from "./tools"
 import { LLMEvent } from "@opencode-ai/llm"
+import { recordTurn, retrievalDeltaFromNarrowed } from "./budget-consume"
 
 // @ts-ignore
 globalThis.AI_SDK_LOG_WARNINGS = false
@@ -1664,6 +1665,21 @@ const layer = Layer.effect(
               agent: agent.name,
               isOrchestrationChild,
             })
+
+            // Feature 055 — record live retrieval spend from this turn's narrowing
+            // (agents/skills/tools kept + auto-skill chunks). Hang/crash-safe no-op
+            // on defect; a zero/passthrough set records nothing. Processor re-eval
+            // still gates hard-stop on Smart Routing activation (FR5).
+            yield* Effect.sync(() => {
+              const delta = retrievalDeltaFromNarrowed(narrowed)
+              const spend =
+                (delta.retrievalChunks ?? 0) +
+                (delta.rerankChunks ?? 0) +
+                (delta.skillChunks ?? 0) +
+                (delta.skillTokens ?? 0)
+              if (spend <= 0) return
+              recordTurn(routingSessionState, sessionID, delta)
+            }).pipe(Effect.catchCause(() => Effect.void))
 
             const tools = yield* SessionTools.resolve({
               agent,

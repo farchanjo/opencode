@@ -77,6 +77,16 @@ export interface ConsumptionDelta {
    * into `resilience.retry_count`. Optional; a delta without it (the pre-050
    * shape) is equivalent to `0`, so old call sites accumulate byte-identically. */
   readonly retries?: number
+  /** Feature 055 — ranked retrieval candidates considered this turn (agents+skills+tools). */
+  readonly retrievalChunks?: number
+  /** Feature 055 — tools (or equivalent) rerank surface size this turn. */
+  readonly rerankChunks?: number
+  /** Feature 055 — auto-skill chunks admitted this turn. */
+  readonly skillChunks?: number
+  /** Feature 055 — estimated skill-body tokens for injected auto-skill chunks. */
+  readonly skillTokens?: number
+  /** Feature 055 — orchestration domain validations performed this event. */
+  readonly validations?: number
 }
 
 /** Live `Session.getUsage` shape this module reads (the numeric spend only). */
@@ -119,15 +129,60 @@ export function retryDelta(count: number): ConsumptionDelta {
   return { turns: 0, contextTokens: 0, outputTokens: 0, costUsd: 0, timeMs: 0, retries: safe(count) }
 }
 
+/** Feature 055 — retrieval-only delta (throughput/cost zeroed). */
+export function retrievalDelta(input: {
+  retrievalChunks?: number
+  rerankChunks?: number
+  skillChunks?: number
+  skillTokens?: number
+}): ConsumptionDelta {
+  return {
+    turns: 0,
+    contextTokens: 0,
+    outputTokens: 0,
+    costUsd: 0,
+    timeMs: 0,
+    retrievalChunks: input.retrievalChunks === undefined ? undefined : safe(input.retrievalChunks),
+    rerankChunks: input.rerankChunks === undefined ? undefined : safe(input.rerankChunks),
+    skillChunks: input.skillChunks === undefined ? undefined : safe(input.skillChunks),
+    skillTokens: input.skillTokens === undefined ? undefined : safe(input.skillTokens),
+  }
+}
+
+/** Feature 055 — validation-only delta (increments resilience.validation_count). */
+export function validationDelta(count: number): ConsumptionDelta {
+  return { turns: 0, contextTokens: 0, outputTokens: 0, costUsd: 0, timeMs: 0, validations: safe(count) }
+}
+
+/** Optional non-negative field; missing/undefined folds to 0. */
+function optionalCount(value: number | undefined): number {
+  return value === undefined ? 0 : safe(value)
+}
+
 /**
  * Fold a per-response delta onto the session's prior `Budget.Consumption` — the
  * running total across the session's turns (FR-A2). Throughput and cost update
  * from a live response; `resilience.retry_count` accumulates `delta.retries`
- * (Feature 050 FR12 — fed by semantic data-plane retries, no longer inert);
- * `validation_count`/`escalation_count` and concurrency/retrieval still carry
- * the prior values unchanged (future phases fill them).
+ * (Feature 050 FR12); Feature 055 folds retrieval + `validation_count` the same
+ * way. Omitted optional fields mean zero (byte-identical pre-055 call sites).
  */
 export function accumulateConsumption(prior: Budget.Consumption, delta: ConsumptionDelta): Budget.Consumption {
+  const retrievalChunks = optionalCount(delta.retrievalChunks)
+  const rerankChunks = optionalCount(delta.rerankChunks)
+  const skillChunks = optionalCount(delta.skillChunks)
+  const skillTokens = optionalCount(delta.skillTokens)
+  const validations = optionalCount(delta.validations)
+  // Preserve optional retrieval leaves as absent until first non-zero spend so
+  // pre-055 golden identity (no `rerank_chunks_used` / `skill_chunks_used` keys)
+  // stays byte-identical when no retrieval delta is supplied.
+  const nextRerank =
+    prior.retrieval.rerank_chunks_used === undefined && rerankChunks === 0
+      ? undefined
+      : (prior.retrieval.rerank_chunks_used ?? 0) + rerankChunks
+  const nextSkillChunks =
+    prior.retrieval.skill_chunks_used === undefined && skillChunks === 0
+      ? undefined
+      : (prior.retrieval.skill_chunks_used ?? 0) + skillChunks
   return {
     throughput: {
       ...prior.throughput,
@@ -136,7 +191,12 @@ export function accumulateConsumption(prior: Budget.Consumption, delta: Consumpt
       output_tokens_used: prior.throughput.output_tokens_used + delta.outputTokens,
     },
     concurrency: prior.concurrency,
-    retrieval: prior.retrieval,
+    retrieval: {
+      retrieval_chunks_used: prior.retrieval.retrieval_chunks_used + retrievalChunks,
+      ...(nextRerank === undefined ? {} : { rerank_chunks_used: nextRerank }),
+      ...(nextSkillChunks === undefined ? {} : { skill_chunks_used: nextSkillChunks }),
+      skill_tokens_used: prior.retrieval.skill_tokens_used + skillTokens,
+    },
     cost: {
       time_ms_used: prior.cost.time_ms_used + delta.timeMs,
       cost_usd_used: prior.cost.cost_usd_used + delta.costUsd,
@@ -144,6 +204,7 @@ export function accumulateConsumption(prior: Budget.Consumption, delta: Consumpt
     resilience: {
       ...prior.resilience,
       retry_count: prior.resilience.retry_count + safeRetries(delta),
+      validation_count: prior.resilience.validation_count + validations,
     },
   }
 }
@@ -165,10 +226,8 @@ export interface BudgetEnforcement {
 
 /** A hard-stop outcome halts the turn (`ctx.blocked`). `escalation` is deliberately
  * excluded: a resilience threshold asks the caller to reclassify/escalate, not to
- * halt. `resilience.retry_count` is now live (Feature 050 FR12 — accumulated from
- * semantic data-plane retries via `accumulateConsumption`); `validation_count` /
- * `escalation_count` are still unfed, so an `escalation` outcome can only fire on
- * retry_depth today. Only `blocked`/`error` set `ctx.blocked`. */
+ * halt. `retry_count` (Feature 050) and `validation_count` (Feature 055) are live;
+ * only `blocked`/`error` set `ctx.blocked`. */
 export function isHardStop(outcome: Outcome): boolean {
   return outcome === "blocked" || outcome === "error"
 }
@@ -194,16 +253,33 @@ function perResponseView(cumulative: Budget.Consumption, delta: ConsumptionDelta
 }
 
 /**
+ * Feature 055 — per-turn VIEW of retrieval spend. Policy leaves
+ * (`retrieval_top_k` / `rerank_top_k` / `max_skill_chunks` / `max_skill_tokens`)
+ * are per-turn ceilings (like max_context_tokens), NOT session-cumulative
+ * budgets. Evaluating the running total against them would spuriously breach
+ * after a few narrowings. Accounting still records the cumulative sum.
+ */
+function perTurnRetrievalView(cumulative: Budget.Consumption, delta: ConsumptionDelta): Budget.Consumption {
+  return {
+    ...cumulative,
+    retrieval: {
+      retrieval_chunks_used: optionalCount(delta.retrievalChunks),
+      rerank_chunks_used: optionalCount(delta.rerankChunks),
+      skill_chunks_used: optionalCount(delta.skillChunks),
+      skill_tokens_used: optionalCount(delta.skillTokens),
+    },
+  }
+}
+
+/**
  * Evaluate the budget with each dimension compared against a value of the right
  * shape (fixing the per-response-vs-cumulative confusion):
  *   - `checkLimits` runs over the PER-RESPONSE view (`max_context_tokens` /
  *     `max_output_tokens` are per-response ceilings; `max_turns` stays cumulative).
  *   - `checkCost` runs over the CUMULATIVE total (`token_budget` = context+output
- *     summed across turns; `cost_usd`/`time_ms` cumulative) — the genuinely
- *     cumulative dimensions.
- *   - retrieval / resilience run over the cumulative total; `retry_count` is a
- *     real accumulated count (Feature 050 FR12), `validation_count`/
- *     `escalation_count` remain unfed (future phases).
+ *     summed across turns; `cost_usd`/`time_ms` cumulative).
+ *   - `checkRetrievalConsumption` runs over the PER-TURN retrieval view (Feature 055).
+ *   - `checkResilience` runs over the CUMULATIVE total (`retry_count` / `validation_count` live).
  * A breach is the engine's explicit typed outcome — never a truncated or reduced
  * value (FR-B2, FR-B3).
  */
@@ -213,12 +289,38 @@ export function evaluateLiveBudget(
   delta: ConsumptionDelta,
 ): Decision {
   const perResponse = perResponseView(cumulative, delta)
+  const perTurnRetrieval = perTurnRetrievalView(cumulative, delta)
   return aggregate([
     ...checkLimits(budget, perResponse).violations,
     ...checkCost(budget, cumulative).violations,
-    ...checkRetrievalConsumption(budget, cumulative).violations,
+    ...checkRetrievalConsumption(budget, perTurnRetrieval).violations,
     ...checkResilience(budget, cumulative).violations,
   ])
+}
+
+/** Conservative tokens per auto-skill chunk body when exact counts are unavailable. */
+export const SKILL_CHUNK_TOKEN_ESTIMATE = 400
+
+/**
+ * Build a retrieval delta from a live `NarrowedSets`-like shape (Feature 055).
+ * Surfaces absent from the memo (passthrough / gates-off) contribute zero.
+ */
+export function retrievalDeltaFromNarrowed(sets: {
+  agents?: readonly string[]
+  skills?: readonly string[]
+  tools?: readonly string[]
+  chunks?: readonly unknown[]
+}): ConsumptionDelta {
+  const agents = sets.agents?.length ?? 0
+  const skills = sets.skills?.length ?? 0
+  const tools = sets.tools?.length ?? 0
+  const skillChunks = sets.chunks?.length ?? 0
+  return retrievalDelta({
+    retrievalChunks: agents + skills + tools,
+    rerankChunks: tools,
+    skillChunks,
+    skillTokens: skillChunks * SKILL_CHUNK_TOKEN_ESTIMATE,
+  })
 }
 
 /**

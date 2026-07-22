@@ -21,11 +21,16 @@ import {
   recordTurn,
   recordTurnAndEvaluate,
   retryDelta,
+  retrievalDelta,
+  retrievalDeltaFromNarrowed,
+  validationDelta,
   evaluateLiveBudget,
   exceedsTurnLimit,
   headroomFor,
   perWorkerReserve,
+  isHardStop,
   PER_WORKER_TOKEN_RATE_USD_PER_1K,
+  SKILL_CHUNK_TOKEN_ESTIMATE,
   type ConsumptionDelta,
 } from "@/session/budget-consume"
 import { createRoutingSessionStateStore } from "@/session/routing-state"
@@ -452,5 +457,88 @@ describe("hang/crash-safety (FR-F1, FR-F3-g)", () => {
   test("accumulate / headroom never throw on malformed magnitudes (defensive arithmetic)", () => {
     expect(() => accumulateConsumption(ZERO_CONSUMPTION, deltaFromUsage({ tokens: { input: -1, output: -1 }, cost: -1 }))).not.toThrow()
     expect(() => headroomFor(policy(), ZERO_CONSUMPTION)).not.toThrow()
+  })
+})
+
+// =============================================================================
+// Feature 055 — Phase 3 retrieval + validation consumption
+// =============================================================================
+
+describe("Feature 055 retrieval and validation consumption", () => {
+  test("omitted optional fields leave pre-055 accumulation byte-identical", () => {
+    const base = accumulateConsumption(ZERO_CONSUMPTION, delta())
+    const withExplicitUndefined = accumulateConsumption(ZERO_CONSUMPTION, {
+      ...delta(),
+      retrievalChunks: undefined,
+      validations: undefined,
+    })
+    expect(withExplicitUndefined).toEqual(base)
+    expect(base.retrieval.retrieval_chunks_used).toBe(0)
+    expect(base.resilience.validation_count).toBe(0)
+  })
+
+  test("retrievalDelta folds retrieval fields into the running total", () => {
+    const next = accumulateConsumption(
+      ZERO_CONSUMPTION,
+      retrievalDelta({ retrievalChunks: 5, rerankChunks: 3, skillChunks: 2, skillTokens: 800 }),
+    )
+    expect(next.retrieval).toEqual({
+      retrieval_chunks_used: 5,
+      rerank_chunks_used: 3,
+      skill_chunks_used: 2,
+      skill_tokens_used: 800,
+    })
+    expect(next.throughput.turns_used).toBe(0)
+  })
+
+  test("retrievalDeltaFromNarrowed maps kept surfaces and skill chunks", () => {
+    const d = retrievalDeltaFromNarrowed({
+      agents: ["a", "b"],
+      skills: ["s"],
+      tools: ["t1", "t2", "t3"],
+      chunks: [{}, {}],
+    })
+    expect(d.retrievalChunks).toBe(2 + 1 + 3)
+    expect(d.rerankChunks).toBe(3)
+    expect(d.skillChunks).toBe(2)
+    expect(d.skillTokens).toBe(2 * SKILL_CHUNK_TOKEN_ESTIMATE)
+  })
+
+  test("multi-turn does not spuriously breach retrieval_top_k on cumulative sum (AC2)", () => {
+    const p = policy()
+    // retrieval_top_k = 8; each turn spends 6 kept candidates — cumulative 12 after 2 turns.
+    const turn = retrievalDelta({ retrievalChunks: 6, rerankChunks: 4 })
+    const first = accumulateConsumption(ZERO_CONSUMPTION, turn)
+    const second = accumulateConsumption(first, turn)
+    expect(second.retrieval.retrieval_chunks_used).toBe(12)
+    // Per-turn evaluation must stay ok (6 <= 8), not blocked on cumulative 12.
+    const decision = evaluateLiveBudget(p, second, turn)
+    expect(decision.outcome).toBe("ok")
+  })
+
+  test("a single turn above retrieval_top_k is blocked with the dimension preserved", () => {
+    const p = policy()
+    const turn = retrievalDelta({ retrievalChunks: 20 })
+    const consumption = accumulateConsumption(ZERO_CONSUMPTION, turn)
+    const decision = evaluateLiveBudget(p, consumption, turn)
+    expect(decision.outcome).toBe("blocked")
+    expect(decision.violations.some((v) => v.dimension === "retrieval_top_k")).toBe(true)
+    expect(consumption.retrieval.retrieval_chunks_used).toBe(20)
+  })
+
+  test("validationDelta increments validation_count on the parent session (AC3)", () => {
+    const store = createRoutingSessionStateStore()
+    recordTurn(store, SESSION, validationDelta(1))
+    recordTurn(store, SESSION, validationDelta(1))
+    expect(store.get(SESSION).consumption?.resilience.validation_count).toBe(2)
+  })
+
+  test("validation_depth breach is escalation (advisory, not hard-stop)", () => {
+    const p = policy() // validation_depth: 1
+    const first = accumulateConsumption(ZERO_CONSUMPTION, validationDelta(1))
+    const second = accumulateConsumption(first, validationDelta(1))
+    const decision = evaluateLiveBudget(p, second, validationDelta(1))
+    expect(decision.outcome).toBe("escalation")
+    expect(isHardStop(decision.outcome)).toBe(false)
   })
 })
