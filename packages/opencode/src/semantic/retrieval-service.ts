@@ -81,6 +81,11 @@ export interface LiveRetrievalInput {
   readonly rerankStructuredHttp?: StructuredChatHttpPort
   readonly projectId: string
   readonly latencyBudgetMs: number
+  /** Feature 051 (FR2) — live agent-registry revalidation; ranked ids are stamped
+   * `revalidated:true` for free when absent, so the composition root SHOULD wire it. */
+  readonly agents?: PipelineRunner.EntityRevalidator
+  /** Live skill-registry revalidation; identity when absent. */
+  readonly skills?: PipelineRunner.EntityRevalidator
 }
 
 export function composeLiveRetrievalPort(input: LiveRetrievalInput): Interface {
@@ -103,6 +108,8 @@ export function composeLiveRetrievalPort(input: LiveRetrievalInput): Interface {
     embedHttp: input.embedHttp,
     bindings: reranker ? { embedding, reranker } : { embedding },
     ...rerankHttp,
+    ...(input.agents ? { agents: input.agents } : {}),
+    ...(input.skills ? { skills: input.skills } : {}),
     latencyBudgetMs: input.latencyBudgetMs,
     filters: { projectId: input.projectId, scope: "project", visibility: "project" },
   })

@@ -1,7 +1,10 @@
 export * as RetrievalLive from "./retrieval-live"
 
-import { Effect, Layer } from "effect"
+import { Effect, Layer, Option } from "effect"
 import { Config } from "@/config/config"
+import { Agent } from "@/agent/agent"
+import { Skill } from "@/skill"
+import type { PipelineRunner } from "@/semantic/pipeline-runner"
 import { SemanticRetrieval } from "@/semantic/retrieval-service"
 import { MilvusComposition } from "@/semantic/milvus-composition"
 import type { BindingRuntime } from "@/semantic/binding-runtime"
@@ -34,7 +37,10 @@ function readSemanticRegistryDocument(info: ConfigV1.Info): BindingRuntime.Regis
  * Provider auth is intentionally absent (`secretRef: null`) — the solaris P0 profile runs no-secret
  * local embedding/rerank providers.
  */
-function composeSemanticRetrieval(info: ConfigV1.Info): SemanticRetrieval.Interface {
+function composeSemanticRetrieval(
+  info: ConfigV1.Info,
+  revalidators?: { agents?: PipelineRunner.EntityRevalidator; skills?: PipelineRunner.EntityRevalidator },
+): SemanticRetrieval.Interface {
   const milvus = MilvusComposition.composeMilvusPort({
     address: process.env["OPENCODE_SEMANTIC_MILVUS_ADDRESS"]?.trim(),
     insecure: process.env["OPENCODE_SEMANTIC_MILVUS_INSECURE"] === "1",
@@ -49,7 +55,42 @@ function composeSemanticRetrieval(info: ConfigV1.Info): SemanticRetrieval.Interf
     rerankStructuredHttp: RerankProbe.createStructuredRerankHttpPort(),
     projectId: process.env["OPENCODE_SEMANTIC_PROJECT_ID"] ?? "opencodedev",
     latencyBudgetMs: narrowing.latencyBudgetMs,
+    ...(revalidators?.agents ? { agents: revalidators.agents } : {}),
+    ...(revalidators?.skills ? { skills: revalidators.skills } : {}),
   })
+}
+
+/**
+ * Feature 051 (FR2) — build the live-registry revalidators for the agents/skills surfaces
+ * from the CALLER's fiber (the captured context carries `InstanceRef` + the app services).
+ * One `list()` per surface per retrieval call, memoized behind a lazy promise so each ranked
+ * candidate checks a Set instead of re-reading the registry. A registry read failure marks
+ * every id missing — the runner then drops it (fail-safe: stale never surfaces, FR2/AC5).
+ */
+function buildRevalidators(input: {
+  readonly runWith: <A>(effect: Effect.Effect<A>) => Promise<A>
+  readonly agents: Option.Option<Agent.Interface>
+  readonly skills: Option.Option<Skill.Interface>
+}): { agents?: PipelineRunner.EntityRevalidator; skills?: PipelineRunner.EntityRevalidator } {
+  const lazySet = (load: () => Promise<ReadonlySet<string>>): PipelineRunner.EntityRevalidator => {
+    let cache: Promise<ReadonlySet<string>> | undefined
+    return {
+      get: (id) => {
+        cache ??= load().catch(() => new Set<string>())
+        return cache.then((names) => ({ exists: names.has(id), permitted: names.has(id) }))
+      },
+    }
+  }
+  const agentService = Option.isSome(input.agents) ? input.agents.value : undefined
+  const skillService = Option.isSome(input.skills) ? input.skills.value : undefined
+  return {
+    ...(agentService
+      ? { agents: lazySet(() => input.runWith(agentService.list()).then((list) => new Set(list.map((item) => item.name)))) }
+      : {}),
+    ...(skillService
+      ? { skills: lazySet(() => input.runWith(skillService.all()).then((list) => new Set(list.map((item) => item.name)))) }
+      : {}),
+  }
 }
 
 /**
@@ -74,7 +115,18 @@ export const node = LayerNode.make({
     Effect.gen(function* () {
       const config = yield* Config.Service
       const withPort = <A, E>(use: (port: SemanticRetrieval.Interface) => Effect.Effect<A, E>) =>
-        Effect.flatMap(config.get(), (info) => use(composeSemanticRetrieval(info)))
+        Effect.gen(function* () {
+          const info = yield* config.get()
+          // Capture the caller's context so the promise-land revalidators can run
+          // registry reads bound to the SAME instance (routing-hierarchy idiom).
+          const context = yield* Effect.context<never>()
+          const revalidators = buildRevalidators({
+            runWith: (effect) => Effect.runPromiseWith(context)(effect),
+            agents: yield* Effect.serviceOption(Agent.Service),
+            skills: yield* Effect.serviceOption(Skill.Service),
+          })
+          return yield* use(composeSemanticRetrieval(info, revalidators))
+        })
       return SemanticRetrieval.Service.of({
         retrieveAgents: (input) => withPort((port) => port.retrieveAgents(input)),
         retrieveSkills: (input) => withPort((port) => port.retrieveSkills(input)),
