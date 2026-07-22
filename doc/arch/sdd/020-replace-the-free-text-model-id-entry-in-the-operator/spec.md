@@ -2,7 +2,7 @@
 id: 019f7e65-4ef9-74a3-b7c5-68ab663cb1a7
 number: 020
 slug: replace-the-free-text-model-id-entry-in-the-operator
-status: analyzed
+status: implemented
 created_at: 2026-07-20T07:19:56.410288Z
 ---
 # Feature Specification: Replace The Free Text Model Id Entry In The Operator
