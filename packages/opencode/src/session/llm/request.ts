@@ -14,6 +14,9 @@ import { Effect, Record } from "effect"
 import { jsonSchema, tool as aiTool, type ModelMessage, type Tool } from "ai"
 import type { Plugin } from "@/plugin"
 import { mergeDeep } from "remeda"
+import { Config } from "@/config/config"
+import { LangLockInjection } from "@/langlock/injection-service"
+import { resolveSessionLangLockEffective } from "@/langlock/session-effective"
 
 const USER_AGENT = `opencode/${InstallationVersion}`
 
@@ -55,27 +58,39 @@ const mergeOptions = (target: Record<string, any>, source: Record<string, any> |
 
 export const prepare = Effect.fn("LLMRequestPrep.prepare")(function* (input: PrepareInput) {
   const isOpenaiOauth = input.provider.id === "openai" && input.auth?.type === "oauth"
-  const system = [
-    [
-      ...(input.agent.prompt ? [input.agent.prompt] : SystemPrompt.provider(input.model)),
-      ...input.system,
-      ...(input.user.system ? [input.user.system] : []),
-    ]
-      .filter((x) => x)
-      .join("\n"),
+  const header = [
+    ...(input.agent.prompt ? [input.agent.prompt] : SystemPrompt.provider(input.model)),
+    ...input.system,
+    ...(input.user.system ? [input.user.system] : []),
   ]
+    .filter((x) => x)
+    .join("\n")
 
-  const header = system[0]
+  // Feature 004 / T026 — resolve effective artifact language (fail-open to en-US)
+  // and inject the immutable lock block so primary AND subagent (Task) turns honor
+  // Lang Lock. Reapplied after system.transform so plugins cannot strip it (FR17, FR25).
+  // Config.Service is optional so unit tests that drive prepare without Instance still run.
+  const configOption = yield* Effect.serviceOption(Config.Service)
+  const info =
+    configOption._tag === "Some" ? yield* configOption.value.get() : ({} as { operator?: unknown })
+  const langLockEffective = yield* Effect.promise(() => resolveSessionLangLockEffective({ config: info }))
+  const system = LangLockInjection.injectIntoSystemArray([header], langLockEffective)
+
+  const headerBeforeTransform = system[0]
   yield* input.plugin.trigger(
     "experimental.chat.system.transform",
     { sessionID: input.sessionID, model: input.model },
     { system },
   )
-  if (system.length > 2 && system[0] === header) {
+  if (system.length > 2 && system[0] === headerBeforeTransform) {
     const rest = system.slice(1)
     system.length = 0
-    system.push(header, rest.join("\n"))
+    system.push(headerBeforeTransform, rest.join("\n"))
   }
+  // Reapply after transform — strip any plugin-duplicated/stripped lock and append once.
+  const reapplied = LangLockInjection.reapplyAfterTransform(system, langLockEffective)
+  system.length = 0
+  system.push(...reapplied)
 
   const variant =
     !input.small && input.model.variants && input.user.model.variant

@@ -17,6 +17,7 @@
  */
 
 export * as LangLockPersistence from "./persistence"
+export * as LangLockSessionEffective from "./session-effective"
 export * as LangLockInjection from "./injection-service"
 export * as LangLockEnvelopeStamper from "./envelope-stamper"
 export * as LangLockAdvisoryValidator from "./advisory-validator"

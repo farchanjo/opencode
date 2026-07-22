@@ -31,6 +31,8 @@ import { LocationServiceMap, locationServiceMapLayer } from "@opencode-ai/core/l
 import { Reference } from "@opencode-ai/core/reference"
 import { Location } from "@opencode-ai/core/location"
 import { PluginV2 } from "@opencode-ai/core/plugin"
+import { LangLockInjection } from "@/langlock/injection-service"
+import { resolveSessionLangLockEffective } from "@/langlock/session-effective"
 
 export const Info = Schema.Struct({
   name: Schema.String,
@@ -413,7 +415,19 @@ const layer = Layer.effect(
           : undefined
 
         const system = [PROMPT_GENERATE]
+        // Feature 004 / T026 — inject + reapply Lang Lock after system.transform (agent generate path).
+        const langLockEffective = yield* Effect.promise(() => resolveSessionLangLockEffective({ config: cfg }))
+        {
+          const injected = LangLockInjection.injectIntoSystemArray(system, langLockEffective)
+          system.length = 0
+          system.push(...injected)
+        }
         yield* plugin.trigger("experimental.chat.system.transform", { model: resolved }, { system })
+        {
+          const reapplied = LangLockInjection.reapplyAfterTransform(system, langLockEffective)
+          system.length = 0
+          system.push(...reapplied)
+        }
         const existing = yield* InstanceState.useEffect(state, (s) => s.list())
 
         // TODO: clean this up so provider specific logic doesnt bleed over
