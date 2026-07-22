@@ -886,11 +886,15 @@ export const TaskTool = Tool.define(
               return backgroundResult()
             }
             if (result?.status === "error") {
+              // Feature 054 FR1 — stamp tokens on the error path when the child exists,
+              // then fail the tool (same fail semantics as pre-054).
               yield* foldWorkerTerminal("error", undefined, result.error ?? undefined)
+              yield* ctx.metadata({ title: params.description, metadata: completionMetadata })
               return yield* Effect.fail(new Error(result.error ?? "Task failed"))
             }
             if (result?.status === "cancelled") {
               yield* foldWorkerTerminal("cancelled")
+              yield* ctx.metadata({ title: params.description, metadata: completionMetadata })
               return yield* Effect.fail(new Error("Task cancelled"))
             }
             yield* foldWorkerTerminal("completed", result?.output ?? "")

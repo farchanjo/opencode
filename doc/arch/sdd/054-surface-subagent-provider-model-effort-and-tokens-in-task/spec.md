@@ -2,7 +2,7 @@
 id: 019f8750-bef8-7062-986d-a58374f05f72
 number: 054
 slug: surface-subagent-provider-model-effort-and-tokens-in-task
-status: analyzed
+status: implemented
 created_at: 2026-07-22T00:54:03.768339Z
 ---
 # Feature Specification: Surface Subagent Provider Model Effort And Tokens In Task
