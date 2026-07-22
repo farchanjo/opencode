@@ -51,6 +51,7 @@ import { Image } from "@/image/image"
 import { decodeDataUrl } from "@/util/data-url"
 import { Process } from "@/util/process"
 import { Cause, Effect, Exit, Latch, Layer, Option, Scope, Context, Schema, Types } from "effect"
+import { Skill } from "@/skill"
 import { InstanceState } from "@/effect/instance-state"
 import { TaskTool, type TaskPromptOps } from "@/tool/task"
 import { SessionRunState } from "./run-state"
@@ -230,6 +231,30 @@ const layer = Layer.effect(
         const toolsGateOn =
           ConfigExperimental.resolveToolSurfaceConfig(info.experimental?.tool_search, "native").enabled &&
           ConfigExperimental.resolveToolSurfaceConfig(info.experimental?.tool_search, "mcp").enabled
+        // Feature 052 (FR5, FR6) — the chunk->parent-skill provenance join for the fourth
+        // pass: prefetch the live registry ONCE per turn into a sync map, because
+        // `resolveChunkMeta` is consulted from promise-land. An absent map (service not
+        // mounted, or the read fails) drops every chunk — the pass's own fail-safe skip.
+        const skillServiceOption = yield* Effect.serviceOption(Skill.Service)
+        const chunkMetaByskill =
+          autoSkill.enabled && Option.isSome(skillServiceOption)
+            ? yield* skillServiceOption.value.all().pipe(
+                Effect.map(
+                  (list) =>
+                    new Map<string, LiveNarrowing.AutoSkillChunkMeta>(
+                      list.map((item) => [
+                        item.name,
+                        {
+                          skillName: item.name,
+                          source: item.provenance.source,
+                          autoprimeOptIn: item.provenance.autoprime_opt_in === true,
+                        },
+                      ]),
+                    ),
+                ),
+                Effect.catchCause(() => Effect.succeed(new Map<string, LiveNarrowing.AutoSkillChunkMeta>())),
+              )
+            : new Map<string, LiveNarrowing.AutoSkillChunkMeta>()
         const warnings: string[] = []
         const debugRows: Array<{ surface: string; kept: readonly string[]; dropped: readonly string[] }> = []
         const sets = yield* Effect.promise(() =>
@@ -251,6 +276,7 @@ const layer = Layer.effect(
                 : undefined,
               projectId: process.env["OPENCODE_SEMANTIC_PROJECT_ID"] ?? "opencodedev",
               autoSkill,
+              resolveChunkMeta: (skillId) => chunkMetaByskill.get(skillId),
             },
             input,
           ),
