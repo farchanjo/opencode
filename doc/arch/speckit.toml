@@ -685,6 +685,12 @@ specScopeGlobs = [
   # `packages/opencode/{src,test}/tool/**` glob covers these files):
   "packages/opencode/src/tool/orchestration-handoff.ts",
   "packages/opencode/test/tool/orchestration-handoff.test.ts",
+  # Residual (T022 live-smoke finding) — the server-route layer graph that serves
+  # `opencode run`/TUI sessions builds its own `LayerNode.group` WITHOUT the
+  # `SemanticRetrieval` mount, so every soft `serviceOption` seam (051 narrowing,
+  # 052 auto-skill, 053 composer catalog retrieval) silently resolved absent in the
+  # serving path. Mount-parity fix; no existing glob covers this file:
+  "packages/opencode/src/server/routes/instance/httpapi/server.ts",
 ]
 
 # Waivers for intentional near-empty files (warnings only; errors are never

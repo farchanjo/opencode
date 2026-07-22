@@ -110,6 +110,8 @@ import { instanceContextLayer } from "./middleware/instance-context"
 import { workspaceRoutingLayer } from "./middleware/workspace-routing"
 import { disposeMiddleware } from "./lifecycle"
 import { memoMap } from "@opencode-ai/core/effect/memo-map"
+import { SemanticRetrieval } from "@/semantic/retrieval-service"
+import { RetrievalLive } from "@/semantic/retrieval-live"
 import { compressionLayer } from "./middleware/compression"
 import { corsVaryFix } from "./middleware/cors-vary"
 import { errorLayer } from "./middleware/error"
@@ -266,6 +268,7 @@ const app = LayerNode.group([
   ProjectV2.node,
   ProjectCopy.node,
   PtyTicket.node,
+  SemanticRetrieval.node,
 ])
 
 export function createRoutes(
@@ -303,7 +306,10 @@ export function createRoutes(
     ),
     Layer.provide(locationServiceMapV2),
 
-    Layer.provide(AppNodeBuilderV1.build(app)),
+    // Feature 051 (FR9) — mount the LIVE retrieval facade in the serving graph too: the
+    // narrowing/auto-skill/handoff seams resolve `SemanticRetrieval.Service` softly, so a
+    // graph without this replacement silently degrades to gates-off passthrough.
+    Layer.provide(AppNodeBuilderV1.build(app, [[SemanticRetrieval.node, RetrievalLive.node]])),
     // Must stay last: layers provided later in this pipe build beneath earlier ones,
     // so Observability must come after every service graph. Otherwise eagerly forked
     // fibers (e.g. the ModelsDev background refresh) capture Effect's default stdout
