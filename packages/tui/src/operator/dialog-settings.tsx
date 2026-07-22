@@ -62,7 +62,7 @@ import { McpPanel } from "./mcp"
 import { projectJobsSignal } from "./jobs/state"
 import { projectOutputSignal } from "./output/state"
 import { projectLangLockSignal } from "./langlock/state"
-import { projectSemanticSignal } from "./semantic/state"
+import { mergeSemanticEffective, projectSemanticSignal } from "./semantic/state"
 import { projectMcpSignal } from "./mcp/state"
 
 export function DialogOperatorSettingsHome() {
@@ -106,20 +106,29 @@ type StatusRead = { readonly value: unknown; readonly loaded: boolean; readonly 
  * the dispatch's structured `effective` payload through that domain's total
  * projection (T004–T008) and feeds the resulting `*PanelSignal` into the panel's
  * `signal` prop. An absent/unavailable/mismatched effective degrades to the
- * panel's honest `EMPTY_*_SIGNAL` baseline (FR8). `langlock`/`jobs` reads return
- * effective and populate today; `output`/`semantic`/`mcp` stay honest-unavailable
- * until their backends land.
+ * panel's honest `EMPTY_*_SIGNAL` baseline (FR8). Semantic dual-reads
+ * `model.list` + `binding.status` so bindings and descriptors co-project;
+ * `statusRender` keeps the domain-screen strip compact (bindings only).
  */
 type ReadPanelSpec = {
   readonly read: string
+  /** Secondary silent reads shallow-merged into the primary effective (semantic dual-read). */
+  readonly alsoRead?: readonly string[]
   readonly render: (effective: () => unknown) => JSX.Element
+  /** Optional compact status-strip renderer; defaults to `render`. */
+  readonly statusRender?: (effective: () => unknown) => JSX.Element
 }
 
 const READ_PANEL_BY_DOMAIN: Readonly<Record<string, ReadPanelSpec>> = {
   jobs: { read: "jobs.list", render: (eff) => <JobsPanel signal={() => projectJobsSignal(eff()).signal} /> },
   output: { read: "output.stat", render: (eff) => <OutputPanel signal={() => projectOutputSignal(eff()).signal} /> },
   langlock: { read: "langlock.status", render: (eff) => <LangLockPanel signal={() => projectLangLockSignal(eff()).signal} /> },
-  semantic: { read: "semantic.model.list", render: (eff) => <SemanticPanel signal={() => projectSemanticSignal(eff()).signal} /> },
+  semantic: {
+    read: "semantic.model.list",
+    alsoRead: ["semantic.binding.status"],
+    render: (eff) => <SemanticPanel signal={() => projectSemanticSignal(eff()).signal} />,
+    statusRender: (eff) => <SemanticPanel variant="compact" signal={() => projectSemanticSignal(eff()).signal} />,
+  },
   mcp: { read: "mcp.server.list", render: (eff) => <McpPanel signal={() => projectMcpSignal(eff()).signal} /> },
 }
 
@@ -172,13 +181,19 @@ function OperatorStatusSection(props: { rich: ReadPanelSpec | undefined; status:
   const { theme } = useTheme()
   // Rendered inside the DialogSelect header slot below the title (FR1); the header
   // box already pads horizontally, so this adds none — the status aligns under the
-  // `Operator · <Domain>` header and above the search/action list.
+  // `Operator · <Domain>` header and above the search/action list. Prefer the
+  // compact status renderer when present so a rich panel never overflows the header.
+  const statusBody = () => {
+    if (!props.rich) return <StatusKeyValue status={props.status} />
+    const render = props.rich.statusRender ?? props.rich.render
+    return render(() => props.status().value)
+  }
   return (
     <box flexShrink={0}>
       <text fg={theme.textMuted} attributes={TextAttributes.DIM}>
         Status
       </text>
-      {props.rich ? props.rich.render(() => props.status().value) : <StatusKeyValue status={props.status} />}
+      {statusBody()}
     </box>
   )
 }
@@ -191,6 +206,43 @@ function OperatorStatusSection(props: { rich: ReadPanelSpec | undefined; status:
  * leaves the honest `EMPTY_*_SIGNAL` baseline. A view selection dispatches no
  * mutation. Escape pops this pushed level back to the domain panel (T013).
  */
+/** Silent primary (+ optional secondary) domain reads; merges secondaries left-to-right. */
+async function loadPanelEffective(input: {
+  readonly domain: string
+  readonly spec: ReadPanelSpec
+  readonly entriesById: Map<string, OperatorPaletteEntry>
+  readonly port: ReturnType<typeof useOperatorSlash>["port"]
+  readonly projectId: string | null | undefined
+  readonly sessionId: string | undefined
+  readonly dialog: ReturnType<typeof useDialog>
+  readonly toast: ReturnType<typeof useToast>
+}): Promise<{ readonly value: unknown; readonly available: boolean }> {
+  const entry = input.entriesById.get(input.spec.read)
+  if (!entry) return { value: undefined, available: false }
+  const base = {
+    port: input.port,
+    projectId: input.projectId,
+    sessionId: input.sessionId,
+    dialog: input.dialog,
+    toast: input.toast,
+    // Auto-issued panel/status read (Feature 012 P1 / FR4): honesty is the empty
+    // state, never a toast flash on open.
+    silent: true as const,
+  }
+  const primary = await executeOperatorCommand({ ...base, entry })
+  let value: unknown = primary.result?.effective
+  let available = primary.outcome !== "unavailable"
+  for (const id of input.spec.alsoRead ?? []) {
+    const secondary = input.entriesById.get(id)
+    if (!secondary) continue
+    const next = await executeOperatorCommand({ ...base, entry: secondary })
+    if (next.outcome === "unavailable") continue
+    value = mergeSemanticEffective(value, next.result?.effective)
+    available = true
+  }
+  return { value, available }
+}
+
 function DialogOperatorReadPanel(props: { domain: string; label: string }) {
   const { theme } = useTheme()
   const dialog = useDialog()
@@ -200,23 +252,23 @@ function DialogOperatorReadPanel(props: { domain: string; label: string }) {
   const route = useRoute()
   const spec = READ_PANEL_BY_DOMAIN[props.domain]
   const [effective, setEffective] = createSignal<{ readonly value: unknown }>({ value: undefined })
+  const entriesById = createMemo(
+    () => new Map(listOperatorSettingsEntries(props.domain).map((entry) => [entry.id, entry])),
+  )
 
   onMount(() => {
     if (!spec) return
-    const entry = listOperatorSettingsEntries(props.domain).find((item) => item.id === spec.read)
-    if (!entry) return
     const sessionId = route.data.type === "session" ? route.data.sessionID : undefined
-    void executeOperatorCommand({
-      entry,
+    void loadPanelEffective({
+      domain: props.domain,
+      spec,
+      entriesById: entriesById(),
       port: operator.port,
       projectId: project.project(),
       sessionId,
       dialog,
       toast,
-      // Auto-issued panel read (Feature 012 P1): no toast on open — the panel's
-      // honesty is its empty state, not a toast flash.
-      silent: true,
-    }).then((result) => setEffective({ value: result.result?.effective }))
+    }).then((result) => setEffective({ value: result.value }))
   })
 
   return (
@@ -260,7 +312,21 @@ export function DialogOperatorDomainPanel(props: { domain: string }) {
 
   /** Silent domain status read backing both the inline section and the control badges (FR4, FR7, FR8). */
   async function loadStatus() {
-    const readId = rich ? rich.read : plainStatusReadId(props.domain)
+    if (rich) {
+      const result = await loadPanelEffective({
+        domain: props.domain,
+        spec: rich,
+        entriesById: entriesById(),
+        port: operator.port,
+        projectId: project.project(),
+        sessionId: sessionId(),
+        dialog,
+        toast,
+      })
+      setStatus({ value: result.value, loaded: true, available: result.available })
+      return
+    }
+    const readId = plainStatusReadId(props.domain)
     const entry = entriesById().get(readId)
     if (!entry) {
       setStatus({ value: undefined, loaded: true, available: false })
@@ -469,7 +535,7 @@ export function DialogOperatorDomainPanel(props: { domain: string }) {
       // The inline status renders inside the header slot, below the title and above
       // the search — so the panel reads header → status → search → action list (FR1).
       titleView={
-        <box flexDirection="column" gap={1} flexGrow={1}>
+        <box flexDirection="column" gap={1} flexShrink={0}>
           <text fg={theme.text} attributes={TextAttributes.BOLD}>
             {`Operator · ${panel().label}`}
           </text>

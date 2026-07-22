@@ -4,6 +4,51 @@
 
 spec-first: doc/arch is the source of truth — run `speckit status` then `speckit next` and read the spec before writing any code.
 
+Contract terms: exit code, `--json`, guard, validate. Config families: project,
+git, guard, context, dedupe, adr, stats, semantic, gitlab, hygiene, compliance,
+workflow, privacy.
+
+## Speckit CLI surface
+
+- `speckit init` · `speckit constitution` · `speckit specify` · `speckit clarify`
+- `speckit plan` · `speckit plan setup` · `speckit tasks` · `speckit tasks setup`
+- `speckit analyze` · `speckit implement`
+- `speckit feature` · `speckit feature new` · `speckit feature list` · `speckit feature select`
+- `speckit feature renumber` · `speckit feature reorder` · `speckit feature insert`
+- `speckit feature compact` · `speckit feature archive` · `speckit feature restore`
+- `speckit status` · `speckit next` · `speckit validate` · `speckit explain` · `speckit verify`
+- `speckit search` · `speckit diagram` · `speckit diagram render`
+- `speckit workflow` · `speckit workflow render`
+- `speckit guard` · `speckit guard check` · `speckit guard hook`
+- `speckit hook` · `speckit hook session-start` · `speckit hook user-prompt`
+- `speckit hook post-edit` · `speckit hook pre-commit`
+- `speckit config` · `speckit config list` · `speckit config get` · `speckit config set`
+- `speckit config unset` · `speckit config drift`
+- `speckit on` · `speckit off` · `speckit check` · `speckit reindex` · `speckit migrate`
+- `speckit version` · `speckit completions` · `speckit guide` · `speckit generate` · `speckit manual`
+- `speckit context` · `speckit context score` · `speckit context pack`
+- `speckit spec` · `speckit spec score` · `speckit dedupe`
+- `speckit stats` · `speckit stats findings` · `speckit stats guard` · `speckit stats profile`
+- `speckit stats attributes` · `speckit stats compliance` · `speckit stats corpus`
+- `speckit stats recommendations`
+- `speckit semantic` · `speckit semantic enable` · `speckit semantic off`
+- `speckit semantic status` · `speckit semantic deep-status` · `speckit semantic eval`
+- `speckit model` · `speckit model list` · `speckit model add` · `speckit model fetch`
+- `speckit model check` · `speckit model select` · `speckit model remove` · `speckit model api`
+- `speckit pack` · `speckit pack add` · `speckit pack list` · `speckit pack update`
+- `speckit pack remove` · `speckit pack export` · `speckit pack import`
+- `speckit library` · `speckit library add` · `speckit library list` · `speckit library show`
+- `speckit library validate` · `speckit library update` · `speckit library remove`
+- `speckit library ask` · `speckit library search` · `speckit library open`
+- `speckit library extract` · `speckit library export` · `speckit library import`
+- `speckit library serve` · `speckit library browse`
+- `speckit mermaid` · `speckit mermaid render`
+- `speckit gitlab` · `speckit gitlab sync` · `speckit gitlab status`
+- `speckit missing` · `speckit brief` · `speckit ask`
+- `speckit commit` · `speckit commit check` · `speckit commit suggest` · `speckit dismiss`
+- `speckit license` · `speckit license list` · `speckit license show`
+- `speckit license set` · `speckit license check`
+
 ## Documentation
 
 - [Agent context](AGENTS.md): dense LLM context

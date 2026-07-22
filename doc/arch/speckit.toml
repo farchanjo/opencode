@@ -705,20 +705,5 @@ specScopeGlobs = [
 # waivable). Each keeps a written justification per the waiver validator.
 [[validate.waivers]]
 rule = "hygiene.empty-file"
-path = "packages/desktop/src/renderer/styles.css"
-reason = "Intentionally empty stylesheet imported by packages/desktop/src/renderer/index.tsx; deleting it breaks the renderer build."
-
-[[validate.waivers]]
-rule = "hygiene.empty-file"
 path = "packages/opencode/test/config/fixtures/no-frontmatter.md"
 reason = "Deliberately minimal test fixture exercised by markdown.test.ts and skill.test.ts to cover the no-front-matter parsing path."
-
-[[validate.waivers]]
-rule = "hygiene.empty-file"
-path = "packages/plugin/.gitignore"
-reason = "Legitimate short .gitignore; its few bytes are the entire intended content."
-
-[[validate.waivers]]
-rule = "hygiene.empty-file"
-path = "sdks/vscode/.gitignore"
-reason = "Legitimate short .gitignore; its few bytes are the entire intended content."

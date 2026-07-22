@@ -15,18 +15,12 @@
 // conventions. Secret material (a provider's `secretRef`) is never part of
 // this panel's signal, so it can never be rendered here (FR35, C19).
 //
-// Wiring point (deliberately not done here): render `<SemanticPanel signal=
-// {...} />` from the Operator Settings surface (packages/tui/src/operator/
-// dialog-settings.tsx) once a structured `semantic.model.list`/
-// `semantic.binding.status` query result — or a live `semantic.*` watch over
-// the observation seam — is threaded through `OperatorSlashPort`
-// (packages/tui/src/context/operator-slash.tsx). Today that port only
-// returns an `OperatorSlashDisplay` (title/message/variant/outcome strings)
-// from `tryHandle`, so there is no structured, redacted `SemanticPanelSignal`
-// source reachable from the TUI yet. With `signal` omitted the component
-// renders `EMPTY_SEMANTIC_PANEL_SIGNAL` (no badges, no binding cards) — a
-// real, honest empty state, not a stub — exactly mirroring
-// `EMPTY_LANGLOCK_PANEL_SIGNAL` (../langlock/state.ts).
+// Live signal: `dialog-settings.tsx` dual-reads `semantic.model.list` +
+// `semantic.binding.status`, merges via `mergeSemanticEffective`, and
+// projects through `projectSemanticSignal`. The domain-screen status strip
+// uses `compact` (binding cards only) so the full models/selectors view
+// does not overflow the DialogSelect header. With `signal` omitted the
+// component renders `EMPTY_SEMANTIC_PANEL_SIGNAL` — an honest empty state.
 import { createMemo, For, Show } from "solid-js"
 import { useTheme } from "../../context/theme"
 import { SplitBorder } from "../../ui/border"
@@ -54,6 +48,8 @@ export {
   isEmbeddingEligible,
   isRerankerEligible,
   MAX_VISIBLE_MODELS,
+  mergeSemanticEffective,
+  projectSemanticSignal,
   type SemanticPanelSignal,
 } from "./state"
 export { deriveBindingCardView, type BindingCardView } from "./card"
@@ -128,8 +124,14 @@ function SelectorList(props: { title: string; candidates: readonly ModelBadgeRow
 }
 
 export function SemanticPanel(props: {
-  /** Honest-empty-baseline until a live `semantic.model.list`/`semantic.binding.status` source exists; see ./state.ts. */
+  /** Live dual-read projection (`model.list` ∪ `binding.status`); omit → honest empty baseline. */
   signal?: () => SemanticPanelSignal
+  /**
+   * `compact` — domain-screen status strip: binding cards only (no models /
+   * selectors), so the DialogSelect header stays bounded. Default `full` is
+   * the View panel with badges + selector candidates.
+   */
+  variant?: "compact" | "full"
 }) {
   const { theme } = useTheme()
   const signal = createMemo<SemanticPanelSignal>(() => props.signal?.() ?? EMPTY_SEMANTIC_PANEL_SIGNAL)
@@ -138,28 +140,31 @@ export function SemanticPanel(props: {
   const rerankerBinding = createMemo(() => deriveRerankerBindingView(signal()))
   const embeddingCandidates = createMemo(() => deriveEmbeddingSelectorCandidates(signal()))
   const rerankerCandidates = createMemo(() => deriveRerankerSelectorCandidates(signal()))
+  const compact = () => props.variant === "compact"
 
   return (
     <box flexDirection="column" flexShrink={0}>
       <BindingCard title="embedding binding" view={embeddingBinding()} />
       <BindingCard title="reranker binding" view={rerankerBinding()} />
-      <Show
-        when={badges().length > 0}
-        fallback={
-          <text fg={theme.textMuted} wrapMode="none">
-            {"  "}no model descriptors
-          </text>
-        }
-      >
-        <box flexDirection="column" {...SplitBorder} border={["left"]} borderColor={theme.border}>
-          <text fg={theme.text} paddingLeft={1}>
-            <b>models</b>
-          </text>
-          <For each={badges()}>{(view) => <ModelBadgeRow view={view} />}</For>
-        </box>
+      <Show when={!compact()}>
+        <Show
+          when={badges().length > 0}
+          fallback={
+            <text fg={theme.textMuted} wrapMode="none">
+              {"  "}no model descriptors
+            </text>
+          }
+        >
+          <box flexDirection="column" {...SplitBorder} border={["left"]} borderColor={theme.border}>
+            <text fg={theme.text} paddingLeft={1}>
+              <b>models</b>
+            </text>
+            <For each={badges()}>{(view) => <ModelBadgeRow view={view} />}</For>
+          </box>
+        </Show>
+        <SelectorList title="embedding selector" candidates={embeddingCandidates()} />
+        <SelectorList title="reranker selector" candidates={rerankerCandidates()} />
       </Show>
-      <SelectorList title="embedding selector" candidates={embeddingCandidates()} />
-      <SelectorList title="reranker selector" candidates={rerankerCandidates()} />
     </box>
   )
 }

@@ -30,6 +30,7 @@ const RERANKER_UNCONDITIONAL = ["semantic.reranker.cutover", "semantic.reranker.
 
 // The Milvus-conditional embedding + index maintenance verbs (composed truth needs `milvusConfigured`).
 const MILVUS_CONDITIONAL = [
+  "semantic.embedding.validate",
   "semantic.embedding.reindex",
   "semantic.embedding.cutover",
   "semantic.embedding.rollback",

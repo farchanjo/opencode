@@ -23,17 +23,11 @@ export interface SemanticPanelSignal {
 }
 
 /**
- * Safe default: no model descriptors, no pinned bindings. Used until a live
- * `semantic.model.list` / `semantic.binding.status` source is wired into this
- * component; the panel renders nothing rather than inventing a binding or a
- * capability. See ../langlock/state.ts's `EMPTY_LANGLOCK_PANEL_SIGNAL` wiring
- * point for the identical precedent this mirrors: the TUI operator surface
- * (`packages/tui/src/context/operator-slash.tsx`) currently exposes only a
- * request/response `tryHandle` returning an `OperatorSlashDisplay`, not a
- * structured `SemanticPanelSignal` source, so there is no live signal source
- * to wire yet. Once that seam exists, thread it through
- * `<SemanticPanel signal={...} />` (see ./index.tsx) without changing this
- * module's shape.
+ * Safe default: no model descriptors, no pinned bindings. Used when the dual
+ * `semantic.model.list` / `semantic.binding.status` read is absent or
+ * mismatched; the panel renders nothing rather than inventing a binding or a
+ * capability. Live wiring is in `dialog-settings.tsx` via
+ * `mergeSemanticEffective` + `projectSemanticSignal`.
  */
 export const EMPTY_SEMANTIC_PANEL_SIGNAL: SemanticPanelSignal = { models: [] }
 
@@ -113,13 +107,28 @@ function collectDescriptors(value: unknown): readonly SemanticModelDescriptor[] 
 }
 
 /**
+ * Shallow-merge two opaque semantic read effectives into one projection input
+ * (`semantic.model.list` `{ descriptors }` ∪ `semantic.binding.status`
+ * `{ embedding?, reranker?, degradation }`). Absent sides are skipped; a
+ * present-but-non-record side is ignored so a single healthy read still
+ * projects. Never invents bindings or descriptors.
+ */
+export function mergeSemanticEffective(primary: unknown, secondary: unknown): unknown {
+  if (!isPresent(primary) && !isPresent(secondary)) return undefined
+  if (!isPresent(primary)) return secondary
+  if (!isPresent(secondary)) return primary
+  if (!isRecord(primary) || !isRecord(secondary)) return isRecord(primary) ? primary : secondary
+  return { ...primary, ...secondary }
+}
+
+/**
  * Total projection of a `semantic.model.list`/`binding.status` structured-result
- * `effective` payload onto the `SemanticPanelSignal` (FR4, FR8). `semantic` reads
- * are honest-unavailable today (FR8) → runtime `empty_fallback` until a later
- * backend feature; the projection is written total. Absent → `empty_fallback`; a
- * payload that names neither read (no `descriptors`/`embedding`/`reranker`/
- * `degradation`) or a malformed one → `shape_mismatch`; both degrade to
- * `EMPTY_SEMANTIC_PANEL_SIGNAL`. Never re-embeds, never substitutes a binding.
+ * `effective` payload onto the `SemanticPanelSignal` (FR4, FR8). Accepts either
+ * read alone or a merged dual-read (`mergeSemanticEffective`). Absent →
+ * `empty_fallback`; a payload that names neither read (no `descriptors`/
+ * `embedding`/`reranker`/`degradation`) or a malformed one → `shape_mismatch`;
+ * both degrade to `EMPTY_SEMANTIC_PANEL_SIGNAL`. Never re-embeds, never
+ * substitutes a binding.
  */
 export function projectSemanticSignal(effective: unknown): PanelProjection<SemanticPanelSignal> {
   if (!isPresent(effective)) return emptyFallback(EMPTY_SEMANTIC_PANEL_SIGNAL)

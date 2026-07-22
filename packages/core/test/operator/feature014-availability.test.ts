@@ -42,6 +42,7 @@ const SEMANTIC_REGISTRY = [
 // this set — they route through the config-backed registry with no Milvus dependency,
 // so they flip to persists_today unconditionally (see feature019-availability.test.ts).
 const SEMANTIC_GATED = [
+  "semantic.embedding.validate",
   "semantic.embedding.reindex",
   "semantic.embedding.cutover",
   "semantic.embedding.rollback",
@@ -86,7 +87,7 @@ describe("T019 — semantic per-verb truthfulness (FR12)", () => {
       const item = verb(panel.configure, id)
       expect(item.persistence).toBe("honest_unavailable")
       expect(item.availability).toBe("unavailable")
-      expect(item.subtitle).toContain("not implemented yet")
+      expect(item.subtitle).toContain("requires Milvus")
     }
   })
 

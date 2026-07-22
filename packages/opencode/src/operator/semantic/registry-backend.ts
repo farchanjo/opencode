@@ -421,6 +421,27 @@ function toProfile(p: RegistryProvider): SemanticProviderProfile {
 }
 
 /**
+ * Vector-space dimension for a model when a matching embedding generation is known
+ * (live alias, or a generation pinned to the active/staged embedding binding version).
+ * Honest-absent when no generation applies — never a fabricated default.
+ */
+function dimensionForModel(doc: RegistryDocument, modelId: string): number | undefined {
+  const gens = doc.embeddingGenerations ?? []
+  if (gens.length === 0) return undefined
+  const match = (binding: RegistryBinding | null): number | undefined => {
+    if (binding === null || binding.modelDescriptorId !== modelId) return undefined
+    const byVersion = gens.find((g) => g.bindingVersion === binding.version)
+    if (byVersion !== undefined) return byVersion.dimension
+    return undefined
+  }
+  const liveId = doc.embeddingLiveGeneration
+  const liveGen = liveId ? gens.find((g) => g.generationId === liveId) : undefined
+  const emb = currentOf(doc, "embedding")
+  if (emb?.modelDescriptorId === modelId && liveGen !== undefined) return liveGen.dimension
+  return match(emb) ?? match(stagedOf(doc, "embedding"))
+}
+
+/**
  * Project a persisted model onto the FLAT operator-facing descriptor (Feature 026 FR3).
  * The protocol `SemanticModelDescriptor` (packages/protocol/src/semantic/commands.ts) and the
  * TUI `isModelDescriptor` guard require a FLAT `{ displayName, capabilityKinds, probeState,
@@ -428,9 +449,12 @@ function toProfile(p: RegistryProvider): SemanticProviderProfile {
  * validation.status }` cast projected a shape the guard rejected as `shape_mismatch`, so the
  * panel rendered "no model descriptors". This emits the flat protocol shape directly (no
  * `as unknown` shape cast; only closed-enum string narrowings), so the panel renders every
- * registered model and the reranker selector can find its validated candidates.
+ * registered model and the reranker selector can find its validated candidates. When a
+ * matching embedding generation is known, `dimensions` is projected so the TUI no longer
+ * shows an unconditional `dims: -`.
  */
-function toDescriptor(m: RegistryModel): SemanticModelDescriptor {
+function toDescriptor(m: RegistryModel, doc?: RegistryDocument): SemanticModelDescriptor {
+  const dimensions = doc === undefined ? undefined : dimensionForModel(doc, m.id)
   return {
     id: m.id,
     providerProfileId: m.providerProfileId,
@@ -442,6 +466,7 @@ function toDescriptor(m: RegistryModel): SemanticModelDescriptor {
     languageSupport: [],
     probeState: m.validationStatus as ProbeState,
     enabled: m.enabled,
+    ...(dimensions !== undefined ? { dimensions } : {}),
   }
 }
 
@@ -590,7 +615,7 @@ export function createConfigBackedRegistry(deps: ConfigBackedRegistryDeps): Sema
         Effect.map((doc) => ({
           descriptors: doc.models
             .filter((m) => input.providerProfileId === undefined || m.providerProfileId === input.providerProfileId)
-            .map(toDescriptor),
+            .map((m) => toDescriptor(m, doc)),
         })),
       ),
 

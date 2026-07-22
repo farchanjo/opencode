@@ -66,7 +66,7 @@ describe("T001 — parity: no new catalog id, no version bump, real dispatch id 
     expect(listOperatorPaletteEntries()).toHaveLength(RESERVED_CATALOG.entries.length)
   })
 
-  test("embedding.validate and the Milvus-conditional verbs are NOT added (out of scope)", () => {
+  test("embedding.validate stays OUT of the static persisting set (Milvus-conditional, not unconditional)", () => {
     const persisting = new Set<string>(OPERATOR_PERSISTING_VERBS)
     for (const id of [
       "semantic.embedding.validate",
@@ -78,5 +78,10 @@ describe("T001 — parity: no new catalog id, no version bump, real dispatch id 
     ]) {
       expect(persisting.has(id)).toBe(false)
     }
+    // With milvusConfigured readiness it flips; without it the subtitle names Milvus.
+    const bare = byId().get("semantic.embedding.validate")!
+    expect(bare.availability).toBe("unavailable")
+    expect(operatorRowSubtitle({ commandId: bare.id, availability: bare.availability })).toContain("requires Milvus")
+    expect(byId({ milvusConfigured: true }).get("semantic.embedding.validate")!.persistence).toBe("persists_today")
   })
 })

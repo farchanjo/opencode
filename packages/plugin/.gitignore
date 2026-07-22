@@ -1,1 +1,13 @@
-dist
+# Build output
+dist/
+*.tsbuildinfo
+
+# Dependencies and local env
+node_modules/
+.env
+.env.*
+
+# Editor / OS
+.DS_Store
+*.swp
+*.log

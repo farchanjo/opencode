@@ -129,11 +129,11 @@ describe("T014 domain panel — View/Configure split + normative subtitles (FR3,
     expect(del.confirmRequired).toBe(true)
   })
 
-  test("honest-unavailable copy keeps the `Unavailable · not implemented yet` marker (FR3)", () => {
+  test("honest-unavailable Milvus-gated copy names the dependency (FR3, FR14)", () => {
     const panel = buildOperatorDomainPanel("semantic")
     // Feature 014 T012: the Milvus-gated index verbs remain honest-unavailable.
     const reindex = verb(panel.configure, "semantic.index.reindex")
-    expect(reindex.subtitle).toBe("Unavailable · not implemented yet · semantic.index.reindex")
+    expect(reindex.subtitle).toBe("Unavailable · requires Milvus · semantic.index.reindex")
     expect(reindex.availability).toBe("unavailable")
     expect(reindex.persistence).toBe("honest_unavailable")
   })
@@ -154,7 +154,7 @@ describe("T014 domain panel — View/Configure split + normative subtitles (FR3,
   test("secret rows carry the `secret` marker (ordered before the id, FR3)", () => {
     const panel = buildOperatorDomainPanel("mcp")
     const start = verb(panel.configure, "mcp.auth.start")
-    expect(start.subtitle).toBe("Unavailable · not implemented yet · secret · mcp.auth.start")
+    expect(start.subtitle).toBe("Unavailable · requires interactive surface · secret · mcp.auth.start")
     expect(start.secretRelated).toBe(true)
   })
 
@@ -280,7 +280,7 @@ describe("Feature 016 T005 — the `operatorRowSubtitle` copy contract (FR3)", (
 
   test("a secret marker is ordered before the id and combines with unavailable", () => {
     expect(operatorRowSubtitle({ commandId: "mcp.auth.start", availability: "unavailable", secretRelated: true })).toBe(
-      "Unavailable · not implemented yet · secret · mcp.auth.start",
+      "Unavailable · requires interactive surface · secret · mcp.auth.start",
     )
   })
 

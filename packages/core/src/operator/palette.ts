@@ -238,6 +238,11 @@ const PERSISTING_VERB_SET: ReadonlySet<string> = new Set(OPERATOR_PERSISTING_VER
  *   fail-closed `capability_absent` (T011, `subscriptionCapable`).
  */
 const CONDITIONAL_PERSISTING_VERBS: Readonly<Record<string, keyof OperatorBackendReadiness>> = {
+  // Feature 019 FR3/FR32 — embedding validate is config-backed but reindex-first
+  // (requires a validated Milvus generation for the staged candidate). Same readiness
+  // flag as cutover/rollback/reindex so the TUI no longer labels a real command
+  // "not implemented yet" when Milvus is composed.
+  "semantic.embedding.validate": "milvusConfigured",
   "semantic.embedding.reindex": "milvusConfigured",
   "semantic.embedding.cutover": "milvusConfigured",
   "semantic.embedding.rollback": "milvusConfigured",
@@ -407,8 +412,17 @@ export function operatorRowSubtitle(input: {
 }): string {
   const { commandId, availability, secretRelated } = input
   const parts: string[] = []
-  if (availability === "unavailable") parts.push("Unavailable · not implemented yet")
-  else if (availability === "confirm_required") parts.push("confirm required")
+  if (availability === "unavailable") {
+    // Conditional composed backends (Feature 019 FR14): name the missing
+    // dependency instead of the generic "not implemented yet" floor so a real
+    // command like `semantic.embedding.validate` is not mislabeled when Milvus
+    // (or another readiness flag) is simply unconfigured.
+    const flag = CONDITIONAL_PERSISTING_VERBS[commandId]
+    if (flag === "milvusConfigured") parts.push("Unavailable · requires Milvus")
+    else if (flag === "interactiveSurface") parts.push("Unavailable · requires interactive surface")
+    else if (flag === "subscriptionCapable") parts.push("Unavailable · requires subscription capability")
+    else parts.push("Unavailable · not implemented yet")
+  } else if (availability === "confirm_required") parts.push("confirm required")
   if (secretRelated) parts.push("secret")
   if (commandId.length <= MAX_ROW_COMMAND_ID) parts.push(commandId)
   return parts.join(" · ")

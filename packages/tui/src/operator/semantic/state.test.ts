@@ -10,6 +10,7 @@ import {
   isEmbeddingEligible,
   isRerankerEligible,
   MAX_VISIBLE_MODELS,
+  mergeSemanticEffective,
   projectSemanticSignal,
   type SemanticPanelSignal,
 } from "./state"
@@ -103,7 +104,20 @@ describe("projectSemanticSignal — total structured-result projection (Feature 
     expect(result.signal.degradation?.rung).toBe("full_semantic")
   })
 
-  test("an absent effective degrades to the honest empty baseline (empty_fallback) — semantic is unavailable today", () => {
+  test("a dual-read merge of model.list + binding.status projects models and pinned bindings", () => {
+    const merged = mergeSemanticEffective(
+      { descriptors: [descriptor("model_a")] },
+      { embedding: binding("embedding"), reranker: binding("reranker"), degradation: { rung: "full_semantic" } },
+    )
+    const result = projectSemanticSignal(merged)
+    expect(result.outcome).toBe("projected")
+    expect(result.signal.models.map((m) => m.id)).toEqual(["model_a"])
+    expect(result.signal.embeddingBinding?.slot).toBe("embedding")
+    expect(result.signal.rerankerBinding?.slot).toBe("reranker")
+    expect(deriveEmbeddingBindingView(result.signal)?.modelDescriptorIdText).toBe("model_1")
+  })
+
+  test("an absent effective degrades to the honest empty baseline (empty_fallback)", () => {
     for (const absent of [undefined, null]) {
       const result = projectSemanticSignal(absent)
       expect(result.outcome).toBe("empty_fallback")
