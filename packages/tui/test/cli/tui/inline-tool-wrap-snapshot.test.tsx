@@ -4,6 +4,10 @@ import type { BoxRenderable, ScrollBoxRenderable } from "@opentui/core"
 import { testRender, type JSX } from "@opentui/solid"
 import {
   formatCompletedSubagentDetail,
+  formatTokenUsageSegment,
+  deriveAssistantTokenUsage,
+  sumAssistantTokens,
+  tokensPerSecondFrom,
   formatSubagentRetry,
   formatSubagentTitle,
   formatSubagentToolcalls,
@@ -278,6 +282,64 @@ describe("TUI inline tool wrapping", () => {
     expect(formatCompletedSubagentDetail(1, "501ms")).toBe("1 toolcall · 501ms")
     expect(formatCompletedSubagentDetail(2, "501ms")).toBe("2 toolcalls · 501ms")
     expect(formatSubagentToolcalls(0)).toBe("0 toolcalls")
+  })
+
+  test("running and completed share the same detail formatter shape", () => {
+    // Live Task lines reuse formatCompletedSubagentDetail so wall-clock /
+    // streaming usage paint before completion stamps arrive.
+    expect(
+      formatCompletedSubagentDetail(0, "1.2s", {
+        providerID: "openai",
+        modelID: "gpt-5.6-terra-fast",
+        effort: "medium",
+      }),
+    ).toBe("1.2s · openai/gpt-5.6-terra-fast (medium)")
+    expect(
+      formatCompletedSubagentDetail(3, "4.5s", {
+        providerID: "openai",
+        modelID: "gpt-5.6-terra-fast",
+        tokens: { input: 2600, output: 773 },
+      }),
+    ).toBe("3 toolcalls · 4.5s · openai/gpt-5.6-terra-fast · 2.6k in/773 out")
+  })
+
+  test("live detail paints partial tokens and out tok/s (generation only)", () => {
+    expect(formatTokenUsageSegment({ input: 2600 })).toBe("2.6k in")
+    expect(formatTokenUsageSegment({ output: 773 })).toBe("773 out")
+    expect(formatTokenUsageSegment({ input: 2600, output: 773 })).toBe("2.6k in/773 out")
+    // Rate is generation tokens only — 1100 out over 75s ≈ 14.7 out tok/s (not 320).
+    expect(tokensPerSecondFrom(1100, 75_000)?.toFixed(1)).toBe("14.7")
+    expect(tokensPerSecondFrom(100, 50)).toBeUndefined()
+    // Multi-turn: last input wins; outputs and reasoning sum.
+    expect(
+      deriveAssistantTokenUsage([
+        { role: "user" },
+        { role: "assistant", tokens: { input: 10_000, output: 500, reasoning: 0, cache: { read: 0, write: 0 } } },
+        { role: "assistant", tokens: { input: 11_000, output: 600, reasoning: 5, cache: { read: 0, write: 0 } } },
+      ]),
+    ).toEqual({ input: 11_000, output: 1100, reasoning: 5 })
+    expect(sumAssistantTokens([
+      { role: "assistant", tokens: { input: 100, output: 10, reasoning: 0, cache: { read: 0, write: 0 } } },
+      { role: "assistant", tokens: { input: 200, output: 20, reasoning: 0, cache: { read: 0, write: 0 } } },
+    ])).toEqual({ input: 200, output: 30, reasoning: undefined })
+    expect(
+      formatCompletedSubagentDetail(1, "1m 15s", {
+        providerID: "openai",
+        modelID: "gpt-5.6-terra-fast",
+        effort: "medium",
+        tokens: { input: 22_100, output: 1100 },
+        tokensPerSecond: 14.7,
+      }),
+    ).toBe("1 toolcall · 1m 15s · openai/gpt-5.6-terra-fast (medium) · 22.1k in/1.1k out · 14.7 out tok/s")
+    // Partial streaming: output only + rate.
+    expect(
+      formatCompletedSubagentDetail(1, "12.0s", {
+        providerID: "openai",
+        modelID: "gpt-5.6-terra-fast",
+        tokens: { output: 400 },
+        tokensPerSecond: 33.3,
+      }),
+    ).toBe("1 toolcall · 12.0s · openai/gpt-5.6-terra-fast · 400 out · 33.3 out tok/s")
   })
 
   test("Feature 054 — completed detail appends model/effort/tokens with per-segment degradation", () => {

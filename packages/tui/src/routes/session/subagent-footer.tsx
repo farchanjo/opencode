@@ -1,4 +1,4 @@
-import { createMemo, createSignal, Show } from "solid-js"
+import { createEffect, createMemo, createSignal, onCleanup, Show } from "solid-js"
 import { useRouteData } from "../../context/route"
 import { useSync } from "../../context/sync"
 import { useTheme } from "../../context/theme"
@@ -7,6 +7,7 @@ import type { AssistantMessage } from "@opencode-ai/sdk/v2"
 import { Locale } from "../../util/locale"
 import { useTerminalDimensions } from "@opentui/solid"
 import { useCommandShortcut, useOpencodeKeymap } from "../../keymap"
+import { deriveAssistantTokenUsage, tokensPerSecondFrom } from "./subagent-usage"
 
 export function SubagentFooter() {
   const route = useRouteData("session")
@@ -18,7 +19,9 @@ export function SubagentFooter() {
     const s = session()
     if (!s) return { label: "Subagent", index: 0, total: 0 }
     const agentMatch = s.title.match(/@(\w+) subagent/)
-    const label = agentMatch ? Locale.titlecase(agentMatch[1]) : "Subagent"
+    const last = messages().findLast((item): item is AssistantMessage => item.role === "assistant")
+    const fromAgent = last?.agent ? Locale.titlecase(last.agent) : undefined
+    const label = agentMatch ? Locale.titlecase(agentMatch[1]) : (fromAgent ?? "Subagent")
 
     if (!s.parentID) return { label, index: 0, total: 0 }
 
@@ -30,17 +33,33 @@ export function SubagentFooter() {
     return { label, index: index + 1, total: siblings.length }
   })
 
+  const isRunning = createMemo(() => {
+    const status = sync.data.session_status[route.sessionID]
+    return status !== undefined && status.type !== "idle"
+  })
+
+  // Live wall-clock so out tok/s updates while the child session is active.
+  const [now, setNow] = createSignal(Date.now())
+  createEffect(() => {
+    if (!isRunning()) return
+    setNow(Date.now())
+    const timer = setInterval(() => setNow(Date.now()), 500)
+    onCleanup(() => clearInterval(timer))
+  })
+
   const usage = createMemo(() => {
     const msg = messages()
-    const last = msg.findLast((item): item is AssistantMessage => item.role === "assistant" && item.tokens.output > 0)
+    const last = msg.findLast((item): item is AssistantMessage => item.role === "assistant")
     if (!last) return
 
-    const tokens =
+    const derived = deriveAssistantTokenUsage(msg)
+    // Context window fill: last turn's full token footprint (includes cache).
+    const contextTokens =
       last.tokens.input + last.tokens.output + last.tokens.reasoning + last.tokens.cache.read + last.tokens.cache.write
-    if (tokens <= 0) return
+    if (contextTokens <= 0 && !derived.output && !last.providerID) return
 
-    const model = sync.data.provider.find((item) => item.id === last.providerID)?.models[last.modelID]
-    const pct = model?.limit.context ? `${Math.round((tokens / model.limit.context) * 100)}%` : undefined
+    const modelInfo = sync.data.provider.find((item) => item.id === last.providerID)?.models[last.modelID]
+    const pct = modelInfo?.limit.context ? `${Math.round((contextTokens / modelInfo.limit.context) * 100)}%` : undefined
     const cost = session()?.cost ?? 0
 
     const money = new Intl.NumberFormat("en-US", {
@@ -48,8 +67,30 @@ export function SubagentFooter() {
       currency: "USD",
     })
 
+    const firstUser = msg.find((item) => item.role === "user")?.time.created
+    const end = last.time.completed ?? (isRunning() ? now() : last.time.created)
+    const elapsedMs = firstUser ? Math.max(0, end - firstUser) : 0
+    const generated = (derived.output ?? 0) + (derived.reasoning ?? 0)
+    const rate = tokensPerSecondFrom(generated, elapsedMs)
+
+    const effort =
+      last.variant && last.variant !== "default" ? last.variant : undefined
+    const modelLabel =
+      last.providerID && last.modelID
+        ? effort
+          ? `${last.providerID}/${last.modelID} (${effort})`
+          : `${last.providerID}/${last.modelID}`
+        : undefined
+
     return {
-      context: pct ? `${Locale.number(tokens)} (${pct})` : Locale.number(tokens),
+      model: modelLabel,
+      context:
+        contextTokens > 0
+          ? pct
+            ? `${Locale.number(contextTokens)} (${pct})`
+            : Locale.number(contextTokens)
+          : undefined,
+      rate: rate !== undefined ? `${rate.toFixed(1)} out tok/s` : undefined,
       cost: cost > 0 ? money.format(cost) : undefined,
     }
   })
@@ -88,7 +129,7 @@ export function SubagentFooter() {
             <Show when={usage()}>
               {(item) => (
                 <text fg={theme.textMuted} wrapMode="none">
-                  {[item().context, item().cost].filter(Boolean).join(" · ")}
+                  {[item().model, item().context, item().rate, item().cost].filter(Boolean).join(" · ")}
                 </text>
               )}
             </Show>
