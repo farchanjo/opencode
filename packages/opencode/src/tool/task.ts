@@ -232,6 +232,44 @@ function renderOutput(input: {
   ].join("\n")
 }
 
+/** Feature 054 (FR2) — model options win over provider options; absent → undefined. */
+export function resolveReasoningEffort(
+  cfg: { provider?: Record<string, { models?: Record<string, { options?: Record<string, unknown> }>; options?: Record<string, unknown> }> },
+  model: { providerID: string; modelID: string },
+): string | undefined {
+  const provider = cfg.provider?.[model.providerID]
+  if (!provider) return undefined
+  const modelEffort = provider.models?.[model.modelID]?.options?.reasoningEffort
+  if (typeof modelEffort === "string" && modelEffort.length > 0) return modelEffort
+  const providerEffort = provider.options?.reasoningEffort
+  if (typeof providerEffort === "string" && providerEffort.length > 0) return providerEffort
+  return undefined
+}
+
+type TaskTokenUsage = {
+  input: number
+  output: number
+  reasoning: number
+  cache: { read: number; write: number }
+}
+
+/** Feature 054 (FR1/AC4) — spread tokens into spawn metadata; undefined leaves it unchanged. */
+export function stampCompletionTokens<M extends Record<string, unknown>>(
+  base: M,
+  tokens: TaskTokenUsage | undefined,
+): M & { tokens?: TaskTokenUsage } {
+  if (!tokens) return base
+  return {
+    ...base,
+    tokens: {
+      input: tokens.input,
+      output: tokens.output,
+      reasoning: tokens.reasoning,
+      cache: { read: tokens.cache.read, write: tokens.cache.write },
+    },
+  }
+}
+
 export const TaskTool = Tool.define(
   id,
   Effect.gen(function* () {
@@ -444,10 +482,23 @@ export const TaskTool = Tool.define(
           modelID: msg.info.modelID,
           providerID: msg.info.providerID,
         }
-      const metadata = {
+      // Feature 054 — stamp config-derived reasoning effort beside the routed model
+      // (FR2). Omitted when neither model- nor provider-level options declare it.
+      // `tokens` is filled on foreground completion (FR1); declared optional so the
+      // envelope type covers both spawn and completion without a union collapse.
+      const effort = resolveReasoningEffort(cfg, model)
+      const metadata: {
+        parentSessionId: SessionID
+        sessionId: SessionID
+        model: { modelID: string; providerID: string }
+        effort?: string
+        background?: boolean
+        tokens?: TaskTokenUsage
+      } = {
         parentSessionId: ctx.sessionID,
         sessionId: nextSession.id,
         model,
+        ...(effort ? { effort } : {}),
         ...(runInBackground ? { background: true } : {}),
       }
 
@@ -795,12 +846,18 @@ export const TaskTool = Tool.define(
             const settled = hierarchyDispatch
               ? yield* awaited.pipe(Effect.timeoutOption(OrchestrationAggregate.WORKER_MAX_WAIT_MS))
               : Option.some(yield* awaited)
+            // Feature 054 (FR1/AC4) — read child session token counters at completion;
+            // a stats miss leaves the spawn-time envelope unchanged (never fails the task).
+            const completionMetadata = yield* sessions.get(nextSession.id).pipe(
+              Effect.map((child) => stampCompletionTokens(metadata, child.tokens)),
+              Effect.catch(() => Effect.succeed(metadata)),
+            )
             if (Option.isNone(settled)) {
               yield* foldWorkerTerminal("timeout")
               yield* Effect.all([cancel, background.cancel(nextSession.id)], { discard: true }).pipe(Effect.ignore)
               return {
                 title: params.description,
-                metadata,
+                metadata: completionMetadata,
                 output: renderOutput({
                   sessionID: nextSession.id,
                   state: "error",
@@ -839,7 +896,7 @@ export const TaskTool = Tool.define(
             yield* foldWorkerTerminal("completed", result?.output ?? "")
             return {
               title: params.description,
-              metadata,
+              metadata: completionMetadata,
               output: renderOutput({ sessionID: nextSession.id, state: "completed", text: result?.output ?? "" }),
             }
           }),

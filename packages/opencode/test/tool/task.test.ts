@@ -1,4 +1,4 @@
-import { afterEach, describe, expect } from "bun:test"
+import { afterEach, describe, expect, test } from "bun:test"
 import { SessionV1 } from "@opencode-ai/core/v1/session"
 import { Database } from "@opencode-ai/core/database/database"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
@@ -16,7 +16,7 @@ import { MessageID, PartID, SessionID } from "../../src/session/schema"
 import { SessionRunState } from "@/session/run-state"
 import { SessionStatus } from "@/session/status"
 
-import { TaskTool, type TaskPromptOps } from "../../src/tool/task"
+import { TaskTool, resolveReasoningEffort, stampCompletionTokens, type TaskPromptOps } from "../../src/tool/task"
 import { Truncate } from "@/tool/truncate"
 import { ToolRegistry } from "@/tool/registry"
 import { RuntimeFlags } from "@/effect/runtime-flags"
@@ -1357,4 +1357,164 @@ describe("tool.task", () => {
       }),
     handoffConfig,
   )
+
+  // Feature 054 — completion metadata envelope (effort at spawn, tokens at return).
+  it.instance("Feature 054 — stamps tokens from the child session on foreground completion", () =>
+    Effect.gen(function* () {
+      const sessions = yield* Session.Service
+      const { chat, assistant } = yield* seed()
+      const tool = yield* TaskTool
+      const def = yield* tool.init()
+      const promptOps = stubOps()
+
+      const result = yield* def.execute(
+        { description: "inspect bug", prompt: "look into the cache key path", subagent_type: "general" },
+        {
+          sessionID: chat.id,
+          messageID: assistant.id,
+          agent: "build",
+          abort: new AbortController().signal,
+          extra: { promptOps },
+          messages: [],
+          metadata: () => Effect.void,
+          ask: () => Effect.void,
+        },
+      )
+
+      const child = yield* sessions.get(SessionID.make(result.metadata.sessionId))
+      expect(result.metadata.model).toEqual(ref)
+      expect(result.metadata.effort).toBeUndefined()
+      expect(result.metadata.tokens).toEqual(child.tokens)
+      expect(result.metadata.tokens).toEqual({
+        input: 0,
+        output: 0,
+        reasoning: 0,
+        cache: { read: 0, write: 0 },
+      })
+    }),
+  )
+
+  it.instance(
+    "Feature 054 — stamps effort from merged config model options at spawn",
+    () =>
+      Effect.gen(function* () {
+        const { chat, assistant } = yield* seed()
+        const tool = yield* TaskTool
+        const def = yield* tool.init()
+        const promptOps = stubOps()
+
+        const result = yield* def.execute(
+          { description: "inspect bug", prompt: "look into the cache key path", subagent_type: "general" },
+          {
+            sessionID: chat.id,
+            messageID: assistant.id,
+            agent: "build",
+            abort: new AbortController().signal,
+            extra: { promptOps },
+            messages: [],
+            metadata: () => Effect.void,
+            ask: () => Effect.void,
+          },
+        )
+
+        expect(result.metadata.effort).toBe("xhigh")
+        expect(result.metadata.model).toEqual(ref)
+        expect(result.metadata.tokens).toBeDefined()
+      }),
+    {
+      config: {
+        provider: {
+          test: {
+            models: {
+              "test-model": {
+                options: { reasoningEffort: "xhigh" },
+              },
+            },
+          },
+        },
+      },
+    },
+  )
+
+  it.instance("Feature 054 — session-read failure leaves spawn metadata without tokens (AC4)", () =>
+    Effect.gen(function* () {
+      const sessions = yield* Session.Service
+      const { chat, assistant } = yield* seed()
+      const tool = yield* TaskTool
+      const def = yield* tool.init()
+      // Remove the child as soon as the prompt is admitted so the completion
+      // re-read of the session record fails closed to the spawn envelope.
+      const promptOps = stubOps({
+        onPrompt: (input) => {
+          void Effect.runPromise(sessions.remove(SessionID.make(input.sessionID)))
+        },
+      })
+
+      const result = yield* def.execute(
+        { description: "inspect bug", prompt: "look into the cache key path", subagent_type: "general" },
+        {
+          sessionID: chat.id,
+          messageID: assistant.id,
+          agent: "build",
+          abort: new AbortController().signal,
+          extra: { promptOps },
+          messages: [],
+          metadata: () => Effect.void,
+          ask: () => Effect.void,
+        },
+      )
+
+      expect(result.metadata.model).toEqual(ref)
+      expect(result.metadata.sessionId).toBeDefined()
+      // Spawn-time envelope only — tokens key absent when the completion read fails.
+      expect(result.metadata.tokens).toBeUndefined()
+    }),
+  )
+})
+
+describe("tool.task Feature 054 helpers", () => {
+  test("resolveReasoningEffort prefers model options over provider options", () => {
+    expect(
+      resolveReasoningEffort(
+        {
+          provider: {
+            openai: {
+              options: { reasoningEffort: "medium" },
+              models: { "gpt-x": { options: { reasoningEffort: "xhigh" } } },
+            },
+          },
+        },
+        { providerID: "openai", modelID: "gpt-x" },
+      ),
+    ).toBe("xhigh")
+    expect(
+      resolveReasoningEffort(
+        { provider: { openai: { options: { reasoningEffort: "low" } } } },
+        { providerID: "openai", modelID: "gpt-x" },
+      ),
+    ).toBe("low")
+    expect(resolveReasoningEffort({}, { providerID: "openai", modelID: "gpt-x" })).toBeUndefined()
+    expect(
+      resolveReasoningEffort(
+        { provider: { openai: { models: { "gpt-x": { options: { reasoningEffort: "" } } } } } },
+        { providerID: "openai", modelID: "gpt-x" },
+      ),
+    ).toBeUndefined()
+  })
+
+  test("stampCompletionTokens spreads tokens or leaves the envelope unchanged", () => {
+    const base = { sessionId: "ses_1", model: { providerID: "openai", modelID: "gpt-x" } }
+    expect(stampCompletionTokens(base, undefined)).toBe(base)
+    expect(
+      stampCompletionTokens(base, {
+        input: 10,
+        output: 2,
+        reasoning: 1,
+        cache: { read: 0, write: 0 },
+      }),
+    ).toEqual({
+      ...base,
+      tokens: { input: 10, output: 2, reasoning: 1, cache: { read: 0, write: 0 } },
+    })
+  })
 })
