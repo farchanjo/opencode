@@ -199,7 +199,19 @@ const layer = Layer.effect(
       Effect.gen(function* () {
         const retrievalOption = yield* Effect.serviceOption(SemanticRetrieval.Service)
         if (Option.isNone(retrievalOption)) return {} as LiveNarrowing.NarrowedSets
-        const semanticRetrieval = retrievalOption.value
+        // Capture the request fiber's context — it carries `InstanceRef` plus the app
+        // services — and pre-provide it on every surface Effect: `narrowForTurn` runs
+        // them via `Effect.runPromise` on the DEFAULT runtime, where the live facade's
+        // per-call `config.get()` would otherwise die (`InstanceRef not provided`) and
+        // silently degrade every surface to passthrough.
+        const narrowContext = yield* Effect.context<never>()
+        const raw = retrievalOption.value
+        const semanticRetrieval: SemanticRetrieval.Interface = {
+          retrieveAgents: (request) => raw.retrieveAgents(request).pipe(Effect.provide(narrowContext)),
+          retrieveSkills: (request) => raw.retrieveSkills(request).pipe(Effect.provide(narrowContext)),
+          retrieveTools: (request) => raw.retrieveTools(request).pipe(Effect.provide(narrowContext)),
+          retrieveSkillChunks: (request) => raw.retrieveSkillChunks(request).pipe(Effect.provide(narrowContext)),
+        }
         const info = yield* config.get()
         const narrowing = ConfigExperimental.resolveNarrowingConfig(info.experimental?.semantic_narrowing)
         // Feature 052 (FR1) — the fourth surface's `skill_autoprime` gate, read structurally so
