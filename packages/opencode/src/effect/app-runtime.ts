@@ -56,6 +56,7 @@ import { AppNodeBuilderV1 } from "./app-node-builder-v1"
 import { SessionProjector } from "@opencode-ai/core/session/projector"
 import { SemanticRetrieval } from "@/semantic/retrieval-service"
 import { RetrievalLive } from "@/semantic/retrieval-live"
+import { OutputSpoolLive } from "@/semantic/output-spool-live"
 
 export const AppLayer = AppNodeBuilderV1.build(
   LayerNode.group([
@@ -108,6 +109,7 @@ export const AppLayer = AppNodeBuilderV1.build(
     ShareNext.node,
     SessionShare.node,
     SemanticRetrieval.node,
+    OutputSpoolLive.node,
   ]),
   [[SemanticRetrieval.node, RetrievalLive.node]],
 ).pipe(Layer.provideMerge(AppNodeBuilderV1.build(Ripgrep.node)), Layer.provideMerge(Observability.layer))

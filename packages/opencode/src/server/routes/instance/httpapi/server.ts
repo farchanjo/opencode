@@ -112,6 +112,7 @@ import { disposeMiddleware } from "./lifecycle"
 import { memoMap } from "@opencode-ai/core/effect/memo-map"
 import { SemanticRetrieval } from "@/semantic/retrieval-service"
 import { RetrievalLive } from "@/semantic/retrieval-live"
+import { OutputSpoolLive } from "@/semantic/output-spool-live"
 import { compressionLayer } from "./middleware/compression"
 import { corsVaryFix } from "./middleware/cors-vary"
 import { errorLayer } from "./middleware/error"
@@ -269,6 +270,7 @@ const app = LayerNode.group([
   ProjectCopy.node,
   PtyTicket.node,
   SemanticRetrieval.node,
+  OutputSpoolLive.node,
 ])
 
 export function createRoutes(
