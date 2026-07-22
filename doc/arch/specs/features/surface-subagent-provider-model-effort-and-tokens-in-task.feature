@@ -1,3 +1,9 @@
+# Source: doc/arch/sdd/054-surface-subagent-provider-model-effort-and-tokens-in-task/spec.md
+# (FR1-FR4, AC1-AC4) and ADR-0054. Prose-style scenarios describe intended behavior
+# for humans and unit/integration tests; they do not require concrete step bindings
+# in `speckit verify` (project-wide: no executable step harness yet — same stance as
+# Features 009/010/052/053). Covered by packages/opencode test/tool/task.test.ts and
+# packages/tui test/cli/tui/inline-tool-wrap-snapshot.test.tsx plus live smokes.
 Feature: Surface subagent provider, model, effort, and tokens in the task line
   As an opencode TUI user
   I want each completed subagent task line to show the executor coordinates and token usage
