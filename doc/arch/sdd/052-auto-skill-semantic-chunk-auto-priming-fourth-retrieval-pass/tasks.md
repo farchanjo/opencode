@@ -157,7 +157,7 @@
   system prompt in BOTH sub-cases — `skill_autoprime` off with the skills
   gate off, and `skill_autoprime` off with the skills gate ON — before and
   after this feature's changes (FR1, mirrors Feature 051's AC7 pattern).
-- [ ] T025 Live smoke (`OPENCODE_CONFIG_DIR=~/.opencodedev`): an on-domain
+- [x] T025 Live smoke (`OPENCODE_CONFIG_DIR=~/.opencodedev`): an on-domain
   prompt against a seeded local skill produces an `<auto_skills>` block
   within budget (AC1); an off-domain prompt produces none (AC2); deleting
   a seeded skill's file without a reindex produces a silently-skipped
