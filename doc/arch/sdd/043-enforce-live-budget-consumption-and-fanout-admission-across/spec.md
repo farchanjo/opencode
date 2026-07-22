@@ -2,7 +2,7 @@
 id: 019f8320-243b-7893-a2ba-f0963837a622
 number: 043
 slug: enforce-live-budget-consumption-and-fanout-admission-across
-status: specified
+status: implemented
 created_at: 2026-07-21T05:22:29.563153Z
 ---
 # Feature Specification: Enforce Live Budget Consumption And Fanout Admission Across
