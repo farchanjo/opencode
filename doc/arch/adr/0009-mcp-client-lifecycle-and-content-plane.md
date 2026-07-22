@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 date: 2026-07-18
 deciders: [project maintainers]
 ---
@@ -462,3 +462,7 @@ ADR-0006, ADR-0007, and ADR-0008 are proposed.
 - Related ADR: [0006 — OutputSpool Content Plane and Paged ArtifactStore](0006-output-spool-content-plane-and-paged-artifact-store.md)
 - Related ADR: [0007 — Semantic Tool Search Over the Shared Feature 006 Retrieval Stack](0007-add-semantic-embedding-and-reranker-retrieval-to-all-tool.md)
 - Related ADR: [0008 — Milvus-Backed Multilingual Semantic Retrieval and Reranking Stack](0008-milvus-semantic-retrieval-stack.md)
+
+## Links
+
+- Related: ADR-0041.

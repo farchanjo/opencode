@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 date: 2026-07-19
 deciders: [project maintainers]
 consulted: []
@@ -280,3 +280,7 @@ or version changes.
 - Writer statechart: [output-spool-writer](../statecharts/output-spool-writer.md)
 - Related ADR: [0003 — Operator Control Plane and native command authority](0003-operator-control-plane-and-native-command-authority.md)
 - Related ADR: [0014 — Complete the Operator Control Plane Persistence and Service](0014-complete-the-operator-control-plane-persistence-and-service.md)
+
+## Links
+
+- Related: ADR-0012, ADR-0014, ADR-0015, ADR-0016.

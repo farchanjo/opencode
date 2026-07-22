@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 date: 2026-07-21
 deciders: [your-org]
 consulted: []
@@ -222,3 +222,7 @@ Chosen option: a single per-turn narrowing computation, memoized in
   Agents Skills And](../sdd/051-wire-live-per-turn-semantic-narrowing-of-agents-skills-and/spec.md).
 - Downstream consumers (out of scope here): Feature 052 (auto-skill content
   injection), Feature 053 (orchestration handoff, `manager_agent` binding).
+
+## Links
+
+- Related: ADR-0052, ADR-0026.

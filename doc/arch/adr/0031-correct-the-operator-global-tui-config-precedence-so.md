@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 date: 2026-07-20
 deciders: [project maintainers]
 consulted: []
@@ -149,3 +149,7 @@ Key decisions recorded:
 - The residual this feature closes: [ADR-0030 Correct feature 028 so an opencode config dir profile layers](0030-correct-feature-028-so-an-opencode-config-dir-profile-layers.md)
 - The server-config precedent this feature aligns with: [030 Correct feature 028 so an opencode config dir profile layers](../sdd/030-correct-feature-028-so-an-opencode-config-dir-profile-layers/spec.md)
 - The `configRoot()` resolver origin: [028 Make the global opencode config honor the opencode config](../sdd/028-make-the-global-opencode-config-honor-the-opencode-config/spec.md)
+
+## Links
+
+- Related: ADR-0028.

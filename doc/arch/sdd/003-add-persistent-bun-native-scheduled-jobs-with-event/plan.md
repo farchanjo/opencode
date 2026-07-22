@@ -232,65 +232,23 @@ ten-definition warning bound.
 
 ## Data model and persistence strategy
 
-Entity definitions are finalized in the `data-model.md` companion and the
-`doc/arch/schemas/jobs/*.cue` schemas. Durability is split: **Job Definitions and durable
-intent** persist in the Config.Service authority (a new table), while **occurrences and
-lifecycle/notification events** are EventV2 projections. No shape is a second store of
-record beside these two canonical authorities.
+Entity field definitions, enums, and schema-module mapping are SSOT in
+[data-model.md](data-model.md) and `doc/arch/schemas/jobs/*.cue` — this plan only
+records the durability split and authority boundaries for implementers.
 
-### Job Definition (FR2, C5)
+- **Job Definitions + durable registration intent** → Feature 007 Config.Service
+  (new durable table); Bun registration is an external effect, never the store of
+  record (FR2, FR6, C5).
+- **Occurrences, notifications, and `job.*` lifecycle events** → EventV2
+  projections only; sequence/attempt/generation stay Feature 002 executor
+  authority (FR10, C6, C8).
+- **Occurrence-owned Todo / OutputGroup** → one Todo and one Feature 005 OutputGroup
+  per occurrence; never shared with the Job Definition (FR8, FR8a, C14, C15).
+- **Notification envelope** → bounded summary + opaque OutputRef only; no paths or
+  full content (FR22, C15).
 
-Persisted in Config.Service under the new durable job-definition table: name/description,
-enabled state, cron expression, IANA timezone, target/action type, scope/project/root-session
-policy, redacted payload reference, overlap policy, misfire policy, deadline/timeout,
-retry/fallback budget, priority, permissions, owner, created/updated timestamps, and version.
-Mutations are atomic within Config.Service with version/CAS and idempotency; secrets are
-secure references only (FR6, FR32, C10).
-
-### Registration state (FR6, C5)
-
-Durable intent plus registration state `pending | registered | unregistered | unknown |
-reconciled` model the boundary between the persistent authority and the external Bun/OS
-effect. Persistent transitions are atomic within their authority; the Bun registration is an
-idempotent external effect paired with compensation. No transaction spans Config.Service and
-the scheduler. Startup rehydration replays definitions, re-registers enabled ones, and
-reconciles registration state without claiming past execution (AC2, AC23).
-
-### Occurrence and idempotency (FR10, C6)
-
-The idempotency identity is the tuple `(job_definition_id, schedule_id, nominal_due_time,
-generation)`. Duplicate delivery resolves to a single execution with an observable duplicate
-outcome. Sequence, attempt, and generation authority belongs to the canonical Feature 002
-executor (`SessionRunCoordinator`/`SessionRunner`), never to the scheduler or a projection.
-Projection is idempotent and reuses the Feature 002 posture (dedupe on event id plus durable
-`(aggregateID, seq)`).
-
-### Durable versus live event classes (C8)
-
-Durable `job.*` events (for example `job.definition_created`, `job.registered`,
-`job.triggered`, `job.execution_completed`, `job.execution_failed`, `job.reconciled`) carry
-the EventV2 `durable {version, aggregate}` annotation and replay through `readAggregate`.
-Live events (for example `job.trigger_due`, `job.queued`, `job.coalesced`,
-`job.notification_delivered`) omit `durable`. Terminal and definition-mutation events are
-never coalesced or dropped. Notification lifecycle events
-(`job.notification_enqueued|delivered|acknowledged|expired`) are Feature 003 concerns
-projected on the single authority.
-
-### Occurrence-owned Todo and OutputGroup (FR8, FR8a, C14, C15)
-
-Each executable occurrence owns exactly one Feature 002 session-owned Todo aggregate created
-before goal-bearing work; each admitted occurrence that produces output owns its own
-Feature 005 OutputGroup scoped to process/attempt/generation. A Job Definition never shares a
-live Todo list or a mutable OutputGroup/spool channel. Cancelling one occurrence preserves
-that occurrence's incomplete Todo and outcome without rewriting future definition state.
-Lifecycle terminal status is Feature 002 authority; Feature 005 owns content-plane settlement.
-
-### Notification envelope (FR22, C15)
-
-Notification/event/occurrence/job IDs, target root/session, source, type, priority,
-created/expiry timestamps, correlation/causation, a **bounded summary and an opaque
-Feature 005 OutputRef**, delivery state, and ack state. Never full content, spool filesystem
-paths, or unbounded payloads.
+See [data-model.md](data-model.md) for Job Definition fields, registration-state
+enums, idempotency tuple, durable-vs-live event vocabulary, and envelope shapes.
 
 ---
 
@@ -342,74 +300,11 @@ solely for administration (FR31, AC14).
 
 ## State machines
 
-### Occurrence lifecycle (C6)
-
-`due` is the initial trigger observation; `completed`, `failed`, `cancelled`, `timed_out`,
-`skipped`, `coalesced`, `overlap_rejected`, and `unknown` are absorbing. Any non-terminal
-state transitions to `unknown`/`reconciled` on crash or reconciliation. Sequence/attempt/
-generation belong to the Feature 002 executor.
-
-```mermaid
-stateDiagram-v2
-    [*] --> due
-    due --> claimed
-    due --> misfired
-    due --> skipped
-    due --> coalesced
-    claimed --> admitted
-    claimed --> overlap_rejected
-    claimed --> overlap_replaced
-    claimed --> unknown
-    overlap_replaced --> admitted
-    admitted --> executing
-    admitted --> reconciled
-    executing --> completed
-    executing --> failed
-    executing --> cancelled
-    executing --> timed_out
-    executing --> unknown
-    misfired --> [*]
-    skipped --> [*]
-    coalesced --> [*]
-    overlap_rejected --> [*]
-    reconciled --> [*]
-    completed --> [*]
-    failed --> [*]
-    cancelled --> [*]
-    timed_out --> [*]
-    unknown --> [*]
-```
-
-### Registration state (C5)
-
-`pending` is the initial durable intent before the external effect; `unregistered` and
-`reconciled` are settled outcomes. No cross-system atomic commit is claimed.
-
-```mermaid
-stateDiagram-v2
-    [*] --> pending
-    pending --> registered
-    pending --> unknown
-    registered --> unregistered
-    registered --> unknown
-    unknown --> reconciled
-    reconciled --> registered
-    reconciled --> unregistered
-    unregistered --> [*]
-    registered --> [*]
-```
-
-### Notification delivery (C9)
-
-```
-enqueue (job.notification_enqueued)
-  -> authorize + redact (scope: root/session/project)
-  -> safe active-turn boundary?
-       yes -> deliver (job.notification_delivered) -> await ack or TTL
-       no  -> queue | coalesce | expire per policy (never interrupt unsafe work)
-  -> ack (job.notification_acknowledged) | TTL reached (job.notification_expired)
-  -> default action = operator-only; wake/queue/child only if explicit + authorized + audited
-```
+Occurrence, registration, and notification state machines (including absorbing
+terminals, attempt/generation ownership, and reconcile edges) are SSOT in
+[data-model.md](data-model.md) — Occurrence lifecycle (C6), Registration state
+machine (C5), Notification delivery lifecycle (C9). This plan only sketches the
+implementer-facing trigger path.
 
 ### Trigger flow (C16)
 

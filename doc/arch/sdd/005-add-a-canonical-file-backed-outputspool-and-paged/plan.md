@@ -423,6 +423,11 @@ events, and telemetry (C19).
 
 ## State machines
 
+SSOT diagrams for the OutputGroup channel lifecycle and Feature 002 settlement
+ordering live in
+[doc/arch/statecharts/output-group.md](../../statecharts/output-group.md) —
+do not re-copy those mermaid spans here.
+
 ### OutputGroup channel lifecycle (C20)
 
 A channel opens on `begin`, absorbs bounded-queue appends while `open`, moves to
@@ -430,65 +435,23 @@ A channel opens on `begin`, absorbs bounded-queue appends while `open`, moves to
 bytes; a persistent admission fault or a failed reconciliation reaches `corrupt`;
 recovery of an indeterminate extent reaches `unknown`; a released/expired group
 reaches `expired`. `sealed`, `aborted`, `corrupt`, `expired`, and `unknown` are
-terminal for the generation.
-
-```mermaid
-stateDiagram-v2
-    [*] --> open: begin channel generation
-    open --> open: append at expected offset
-    open --> sealing: seal requested
-    sealing --> sealed: committed bytes finalized
-    open --> aborted: abort or cancel (bytes preserved)
-    sealing --> aborted: abort during seal
-    open --> corrupt: persistent admission fault
-    sealing --> corrupt: seal fails after loss
-    open --> unknown: crash recovery indeterminate
-    sealed --> expired: released or TTL elapsed
-    aborted --> expired: released or TTL elapsed
-    sealed --> [*]
-    aborted --> [*]
-    corrupt --> [*]
-    unknown --> [*]
-    expired --> [*]
-```
+terminal for the generation. See the statechart for transitions.
 
 ### Cursor lifecycle (C14, C18)
 
 A cursor is `active` while bound to the live generation and byte offset. Generation
 supersession, group release/cleanup/expiry, and the absolute idle-TTL after seal
 move it to `invalidated`; a reconnect then returns a stable expired/invalid_cursor
-code. A reconnect within validity resumes without a full re-read.
-
-```mermaid
-stateDiagram-v2
-    [*] --> active: follow issues cursor at offset
-    active --> active: reconnect within validity resumes
-    active --> invalidated: generation superseded (fencing)
-    active --> invalidated: release / cleanup / expiry
-    active --> invalidated: idle-TTL after seal
-    invalidated --> rejected: reconnect returns expired/invalid_cursor
-    rejected --> [*]
-```
+code. A reconnect within validity resumes without a full re-read. (Cursor is plan
+prose only; channel/settlement mermaid SSOT remains the output-group statechart.)
 
 ### Settlement flow with Feature 002 (C13)
 
 Feature 002 owns lifecycle terminal status; Feature 005 owns content-plane
 settlement. A terminal status never precedes settlement without an intermediate
 `settling` reconciliation state; the parent observes sealed/aborted refs or an
-explicit settling/unknown/corrupt condition.
-
-```mermaid
-stateDiagram-v2
-    [*] --> running: producer appends to its OutputGroup
-    running --> settling: producer requests terminal (seal/abort begins)
-    settling --> settled_sealed: channels sealed or aborted; OutputRef committed
-    settling --> settled_unknown: crash reconciliation indeterminate
-    settling --> settled_corrupt: committed-length reconciliation fails
-    settled_sealed --> terminal: Feature 002 records terminal status
-    settled_unknown --> terminal: parent observes unknown condition
-    settled_corrupt --> terminal: parent observes corrupt condition
-    terminal --> [*]
-```
+explicit settling/unknown/corrupt condition. See the statechart settlement
+section for the diagram.
 
 ---
 

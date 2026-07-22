@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 date: 2026-07-21
 deciders: [project maintainers]
 consulted: []
@@ -154,3 +154,7 @@ Key decisions recorded:
 - The per-scope `pools.set` write path whose CAS/scope behavior this validation preserves: [033 Add a global authority scope for the pools (role_pools) operator config](../sdd/033-add-a-global-authority-scope-for-the-pools-role-pools-and/spec.md)
 - The explicit operator scope selector on the same write path: [034 Add an explicit operator scope selector so global-scoped config is reachable](../sdd/034-add-an-explicit-operator-scope-selector-so-global-scoped/spec.md)
 - The consumer this fix unblocks (a provider-qualified role pool now governs the live-session model): [037 Wire the operator Smart Routing engine into the live session](../sdd/037-wire-the-operator-smart-routing-engine-into-the-live-session/spec.md)
+
+## Links
+
+- Related: ADR-0020, ADR-0039.

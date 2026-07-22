@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 date: 2026-07-21
 deciders: [your-org]
 consulted: []
@@ -240,3 +240,7 @@ the two budgets Feature 051 already reserved, with session-scoped dedup.
   Fourth Retrieval Pass](../sdd/052-auto-skill-semantic-chunk-auto-priming-fourth-retrieval-pass/spec.md).
 - Downstream consumer (out of scope here): Feature 053 (orchestration
   handoff), which depends on this feature's memo/seam shape unmodified.
+
+## Links
+
+- Related: ADR-0007.

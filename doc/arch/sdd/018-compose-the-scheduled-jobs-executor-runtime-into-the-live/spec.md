@@ -9,96 +9,28 @@ created_at: 2026-07-20T02:16:32.937261Z
 
 Feature: 018-compose-the-scheduled-jobs-executor-runtime-into-the-live
 Created: 2026-07-20
-Scope: Features 002 and 003 shipped a **complete but never-composed** scheduled
-executor. The scheduler engine + Bun cron adapter
-(`packages/opencode/src/jobs/bun-cron-adapter.ts` — `createBunCronAdapter`,
-`onDue`), the trigger service with its `TaskProcessCoordinator` seam
-(`packages/opencode/src/jobs/trigger-service.ts:122-131` — `admit`/`createProcess`/
-`provisionTodo`/`provisionOutputGroup`), and the occurrence-claim state machine all
-exist, but **nothing outside `jobs/` self-exports and tests ever starts the cron
-loop or wires the coordinator to the real `TaskTool`/`SessionExecution`/
-`SessionRunCoordinator`.** As a consequence `jobs.run-now` stays a typed
-`unavailable` gap (`packages/opencode/src/operator/jobs/backend-live.ts:93`),
-occurrence history is honest-empty (Feature 017 wired the projection plumbing —
-`occurrences?` at `backend-live.ts:48` — but the durable read is keyed by the
-session aggregate while operator history keys by `jobDefinitionId`), and the
-lifecycle forced-abort second-press is a **log-only stub**
-(`packages/opencode/src/operator/lifecycle/stack-wiring.ts:283-289`) because the
-live `SessionRunCoordinator` (`packages/core/src/session/run-coordinator.ts:14`)
-is not reachable from the operator `AppRuntime`. This feature **composes the
-executor into the live runtime**: it arms the scheduler engine + cron + trigger
-service eagerly at server start (the Feature 017 `ensureProcessSpoolWriter` eager
-seam is the precedent), implements the `TaskProcessCoordinator` over the real
-Feature 002 execution seams, converts `jobs.run-now` to an effectful mutation
-plan that enqueues an immediate occurrence, emits **definition-keyed** occurrence
-events so history/show/watch reflect real executions, exposes a **narrow**
-interrupt port so the second-press forced abort actually interrupts, and flips the
-palette availability to truth. Feature 007 remains the sole command-registration
-authority: no catalog id is added, no catalog version is bumped, no new dispatch
-path or flag is introduced. The arming is **fail-open** (a scheduler failure never
-breaks the server), concurrency is **bounded** by the jobs domain's existing
-overlap/misfire policies, and every scheduled session runs under the **same
-permission/config surfaces** as a normal session — no privilege bypass. Where a
-capability is still genuinely absent (`mcp.auth.start`/`finish`), it stays a typed
-capability gap; nothing is fabricated.
+Scope: Compose the Feature 002/003 scheduled executor into the live runtime —
+arm cron + trigger fail-open at server start, implement `TaskProcessCoordinator`,
+convert `jobs.run-now` to an effectful mutation plan, emit definition-keyed
+occurrence events, expose a narrow interrupt port for lifecycle forced-abort, and
+flip palette availability. No new catalog id, catalog version, dispatch path, or
+flag. No privilege bypass; still-absent capabilities stay typed gaps.
+**Context inventory, file:line evidence, and decision drivers are SSOT in
+[ADR-0018](../../adr/0018-compose-the-scheduled-jobs-executor-runtime-into-the-live.md)**
+— not restated in this scope block.
 
 ## Problem
 
-Features 002 and 003 delivered every piece of the scheduled executor except the
-composition that starts it. A gap sweep (2026-07-19, every fact `file:line`
-verified) found the machinery shipped and idle:
-
-- **The cron loop is never started.** The Bun cron adapter
-  (`packages/opencode/src/jobs/bun-cron-adapter.ts`) exposes `createBunCronAdapter`
-  with a `DueDispatcher` seam whose intended wiring is
-  `AppRuntime.runFork(triggerService.onDue(signal))` (`:181-187`) and a
-  `reconcileSource` that rehydrates enabled definitions on a startup sweep
-  (`:189-208`), but a grep confirms **nothing outside `jobs/` self-exports and
-  tests** ever constructs the adapter or arms the loop. The scheduler is dead code
-  in production.
-
-- **The `TaskProcessCoordinator` seam is never implemented.** The trigger service
-  declares the canonical Feature 002 execution seam
-  (`packages/opencode/src/jobs/trigger-service.ts:122-131`) whose doc comment says
-  "the composition root wires each method to the real `TaskTool`/`SessionExecution`/
-  `SessionRunCoordinator`" — but there is no composition root, so `admit`,
-  `createProcess`, `provisionTodo`, and `provisionOutputGroup` have no live
-  implementation. No occurrence can become a real headless session.
-
-- **`jobs.run-now` is a typed gap.** `createLiveJobsBackend`
-  (`packages/opencode/src/operator/jobs/backend-live.ts:93`) returns
-  `planRunNow: () => Effect.fail(unavailable("run-now requires the Feature 002
-  executor seam, not reachable from the operator runtime"))`. The verb the operator
-  surface advertises can never fire an occurrence.
-
-- **Occurrence history is honest-empty.** Feature 017 wired the occurrence
-  projection over the durable `EventV2Bridge` (`backend-live.ts:48`,
-  `occurrence-projection.ts`), but no executor ever emits the `job.*` occurrence
-  events, and — where lifecycle events do exist — the durable read aggregates by
-  `root_session_id` (`doc/arch/schemas/jobs/envelope-parts.cue:37`, `tree`) while
-  the operator history keys by `jobDefinitionId`
-  (`envelope-parts.cue:27`, `occurrence`). So `jobs.history`/`show-occurrences`/
-  `watch` stay honestly empty even though the projection is bound.
-
-- **The lifecycle forced-abort second-press is a log-only stub.** The operator
-  lifecycle stack-wiring (`packages/opencode/src/operator/lifecycle/
-  stack-wiring.ts:283-289`) stubs `rootInterruptor.interrupt` to a
-  `logDebug("lifecycle.cancel.forced_abort_unavailable")` because the live
-  `SessionRunCoordinator` (`packages/core/src/session/run-coordinator.ts:14`, the
-  generic per-key `Coordinator.interrupt` used by
-  `packages/core/src/session/execution/local.ts`) is not exposed to the operator
-  `AppRuntime`. The **first-press** cancel is fully real (publish one
-  `lifecycle.cancel_requested` per active descendant + fence root admission,
-  `stack-wiring.ts:291-295`) and must stay unchanged; only the **second-press**
-  forced abort is a stub.
-
-Leaving these residuals means the scheduled-jobs surface advertises a scheduler
-that never runs, a `run-now` that never fires, a history that is always empty, and
-a forced abort that does nothing. The fix is a **composition** change over
-machinery that already exists — arm the engine, implement the coordinator, convert
-`run-now`, key the events by definition, and expose the interrupt through a narrow
-port — with no new executor, no Smart Routing, and no new catalog id or dispatch
-path.
+Features 002 and 003 delivered a complete scheduled executor that was never
+composed into the live runtime: idle cron loop, unimplemented
+`TaskProcessCoordinator`, gapped `jobs.run-now`, honest-empty occurrence
+history, and a log-only lifecycle forced-abort second-press.
+**Gap inventory, file:line evidence, and decision drivers are SSOT in
+[ADR-0018](../../adr/0018-compose-the-scheduled-jobs-executor-runtime-into-the-live.md)**
+— not restated here. This feature arms and wires that machinery fail-open at
+server start (eager composition, definition-keyed occurrence events, narrow
+interrupt port) with no new executor, catalog id, or dispatch path. Functional
+requirements below are the implementable contract.
 
 ## User Stories
 

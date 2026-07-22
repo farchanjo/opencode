@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 date: 2026-07-19
 deciders: [project maintainers]
 consulted: []
@@ -209,3 +209,7 @@ statechart in `doc/arch/statecharts/config-roundtrip.md`.
 - Related ADR: [0003 — Operator Control Plane and native command authority](0003-operator-control-plane-and-native-command-authority.md)
 - Related ADR: [0013 — Wire the Four Remaining Config-Backed Operator Domains](0013-wire-the-four-remaining-config-backed-operator-domains-so.md)
 </content>
+
+## Links
+
+- Related: ADR-0032, ADR-0024, ADR-0011, ADR-0013.

@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: superseded
 date: 2026-07-20
 deciders: [project maintainers]
 consulted: []
@@ -159,3 +159,9 @@ Key decisions recorded:
 - Feature specification: [028 Make the global opencode config honor the opencode config](../sdd/028-make-the-global-opencode-config-honor-the-opencode-config/spec.md)
 - The per-project relocation that introduced the `configRoot` pattern and documented this residual: [027 Relocate per-project operator persistence out of the working tree](../sdd/027-relocate-per-project-operator-persistence-out-of-the-working/spec.md)
 - The operator namespace write/read seam whose global-scoped authorities travel through the global config file: [Feature 014 Wire the config-backed operator persistence and service](../sdd/014-complete-the-operator-control-plane-persistence-and-service/spec.md)
+
+## Links
+
+- Status: **superseded** by ADR-0030 (layered global READ supersedes 028's replace model).
+- READ path: superseded by ADR-0030. WRITE/`configRoot` pattern remains cited by later ADRs (ADR-0031, ADR-0032).
+- Related: ADR-0027 (configRoot / profiles origin), ADR-0031 (TUI residual), ADR-0030 (successor).

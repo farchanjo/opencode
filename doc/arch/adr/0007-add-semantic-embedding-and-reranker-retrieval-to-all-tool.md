@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 date: 2026-07-18
 deciders: [opencode-core]
 consulted: []
@@ -76,3 +76,7 @@ the degradation ladder, not as the primary design.
   collection adds index lifecycle (content-hash upsert, tombstones, blue/green on
   embedding cutover) that must stay reconciled with ToolRegistry and the Feature 008
   MCP catalog.
+
+## Links
+
+- Related: ADR-0008, ADR-0019, ADR-0026, ADR-0050.

@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 date: 2026-07-21
 deciders: [project maintainers]
 consulted: []
@@ -268,3 +268,7 @@ Key decisions recorded:
 - The hierarchical adaptive routing model (Architect → Manager → Worker, depth ≤ 2) the orchestration contract enforces: [ADR-0002 Core Smart Agent Routing](0002-core-smart-agent-routing.md)
 - Records the hierarchy delegation dispatch this feature orchestrates over: [ADR-0042 Wire per-subagent hierarchy delegation into the Task spawn](0042-wire-per-subagent-hierarchy-delegation-into-the-task-spawn.md)
 - Records the budget consumption + fan-out admission gate whose granted set this feature settles over: [ADR-0043 Enforce live budget consumption and fanout admission across the session](0043-enforce-live-budget-consumption-and-fanout-admission-across.md)
+
+## Links
+
+- Related: ADR-0049, ADR-0053.

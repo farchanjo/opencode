@@ -3,15 +3,9 @@
 Synced with plan.md (isolation harness, Phase 1 slices S0–S11, ports/stubs,
 specScopeGlobs in doc/arch/speckit.toml, ADR-0003 accepted).
 
-Phase 1 only. App/Desktop = Phase 2 (T090–T092 deferred).  
-No code is executed in this documentary pass; tasks are the implement backlog.  
+Phase 1 only. App/Desktop = Phase 2 (T090–T092 deferred).
+No code is executed in this documentary pass; tasks are the implement backlog.
 All OpenCode process executions MUST use the sandbox wrapper after T001–T004.
-
-Legend:
-
-- `[P]` — may run in parallel with other `[P]` tasks that share no overlapping paths
-- `Depends:` — task IDs that must complete first
-- Verification — acceptance checks for the task
 
 ## Task Breakdown
 

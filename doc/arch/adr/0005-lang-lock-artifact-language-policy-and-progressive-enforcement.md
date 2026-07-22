@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 date: 2026-07-18
 deciders: [project maintainers]
 ---
@@ -314,3 +314,7 @@ accepted; ADR-0004 is proposed.
 - Related ADR: [0004 — Scheduled Job Runtime and Async Notification Channel](0004-scheduled-job-runtime-and-async-notification-channel.md)
 </content>
 </invoke>
+
+## Links
+
+- Related: ADR-0006.

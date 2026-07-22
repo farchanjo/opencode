@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 date: 2026-07-18
 deciders: [project maintainers]
 ---
@@ -274,3 +274,7 @@ This ADR is **proposed**; it is the required decision record that unblocks Featu
 - Related ADR: [0003 — Operator Control Plane and native command authority](0003-operator-control-plane-and-native-command-authority.md)
 </content>
 </invoke>
+
+## Links
+
+- Related: ADR-0018.

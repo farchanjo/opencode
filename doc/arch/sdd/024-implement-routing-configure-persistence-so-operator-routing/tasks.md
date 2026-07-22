@@ -13,13 +13,6 @@ guard (FR-D). The fix wires a write-capable configure backend mirroring smart/po
 role_pools + activation (FR-C), and proves the reproduced scenarios over the REAL wired
 dispatcher (FR-E).
 
-Legend:
-
-- `[P]` — may run in parallel with other `[P]` tasks that share no overlapping paths
-- `Depends:` — task IDs that must complete first
-- Verification — acceptance checks for the task
-- Evidence — filled during implement (date + file:line + test result)
-
 ## Task Breakdown
 
 - [x] T001 — Export the routing-module authority SSOT from `config-adapter.ts`

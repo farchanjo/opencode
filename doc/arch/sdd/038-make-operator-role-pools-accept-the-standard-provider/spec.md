@@ -25,23 +25,13 @@ routing time.
 
 ## The confirmed bug
 
-The candidate resolver matches a configured role-pool model id against the catalog
-by the provider-INTERNAL (bare) model id ONLY
-(`catalog-adapter.ts#createCatalogAdapter.resolveCandidates`, keyed on
-`CatalogModelSnapshot.modelId`). A role pool populated with the provider-qualified
-form never matches any catalog model, so the routing candidate set is empty:
-
-- `openai/gpt-5.6-sol-fast` → `routing.evaluate` returns `no_authorized_candidate`;
-  the bare `gpt-5.6-sol-fast` resolves and routes. (Confirmed on the binary.)
-- `openrouter/openai/gpt-oss-120b` → fails; the within-openrouter bare id
-  `openai/gpt-oss-120b` resolves. (Confirmed on the binary.)
-
-The failure is SILENT end-to-end: `pools.set` accepts the id with NO catalog
-validation (`backend-live.ts#planSet` validates only structural shape — non-empty
-role/model — never resolvability); every operator status command reports the config
-present; and the Feature 037 session resolver, finding no authorized candidate,
-degrades to the static default (`undefined`, its designed fallback). A mistyped or
-provider-qualified pool id therefore looks configured but has zero effect.
+Provider-qualified role-pool ids (`provider/model`) never match the catalog's
+bare-only candidate resolution, and `pools.set` never validates resolvability —
+so a standard-form pool silently fails and Feature 037 falls back to the static
+default. **Evidence, options, and chosen resolution order are SSOT in
+[ADR-0038](../../adr/0038-make-operator-role-pools-accept-the-standard-provider.md)**
+— not restated here. Requirements below define bare-first resolution and
+configure-time validation.
 
 ## User Stories
 

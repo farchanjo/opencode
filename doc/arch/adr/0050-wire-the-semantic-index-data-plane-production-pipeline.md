@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 date: 2026-07-21
 deciders: [your-org]
 consulted: []
@@ -229,3 +229,7 @@ contracts.
   Pipeline](../sdd/050-wire-the-semantic-index-data-plane-production-pipeline/spec.md).
 - Query-plane consumer (out of scope here): Feature 051 — Live query wiring
   (`narrowForTurn`, the three retrieval seams, fail-open boundary).
+
+## Links
+
+- Related: ADR-0019, ADR-0026, ADR-0051, ADR-0052.

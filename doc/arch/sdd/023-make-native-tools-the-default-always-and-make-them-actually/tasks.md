@@ -12,13 +12,6 @@ documented follow-up). The escape hatch (explicit `native_tools=false` /
 and the `bash pty` permission-first ordering are all preserved (FR-A3). The DECISIVE
 gate is that native ACTUALLY loads from a `bun build --compile` binary.
 
-Legend:
-
-- `[P]` — may run in parallel with other `[P]` tasks that share no overlapping paths
-- `Depends:` — task IDs that must complete first
-- Verification — acceptance checks for the task
-- Evidence — filled during implement (date + file:line + result)
-
 ## Task Breakdown
 
 - [x] T001 — FR-A1/A2: flip the three wired gates to `!== false` (default ON, explicit false opts out)

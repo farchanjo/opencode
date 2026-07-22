@@ -1,1 +1,1 @@
-Content
+Content without YAML frontmatter.

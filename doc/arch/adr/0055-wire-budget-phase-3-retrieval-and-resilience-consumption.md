@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 date: 2026-07-22
 deciders: [project maintainers]
 consulted: []
@@ -75,3 +75,7 @@ Key decisions:
 - ADR-0043 Phase 3 residual and Feature 043 Phase 2b
 - Features 050 (`retry_count`), 051/052 (live narrowing + auto-skill), 047 (telemetry)
 - Feature 055 specification
+
+## Links
+
+- Related: ADR-0042, ADR-0053.

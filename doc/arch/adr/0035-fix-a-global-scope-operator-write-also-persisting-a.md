@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 date: 2026-07-20
 deciders: [project maintainers]
 consulted: []
@@ -186,3 +186,7 @@ Key decisions recorded:
 - The shared-authority CAS-token / preflight invariants preserved: [021 Operator config-backed saves must persist reliably and never silently zero](../sdd/021-operator-config-backed-saves-must-persist-reliably-and-never/spec.md)
 - The per-project profile relocation that owns the leaked write target: [027 Relocate per-project operator persistence out of the working tree](../sdd/027-relocate-per-project-operator-persistence-out-of-the-working/spec.md)
 </content>
+
+## Links
+
+- Related: ADR-0034, ADR-0032, ADR-0033, ADR-0036.

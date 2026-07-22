@@ -13,13 +13,6 @@ dereference the Bun global / `AppRuntime` at import, the singletons still arm
 eagerly only at `server.listen()` (or lazily for CLI `op`), and fail-open +
 exactly-once are preserved (FR-C). The hard gate is the COMPILE.
 
-Legend:
-
-- `[P]` — may run in parallel with other `[P]` tasks that share no overlapping paths
-- `Depends:` — task IDs that must complete first
-- Verification — acceptance checks for the task
-- Evidence — filled during implement (date + file:line + result)
-
 ## Task Breakdown
 
 Checkbox backlog (details under each group below). Phase A (the dynamic-import

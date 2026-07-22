@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 date: 2026-07-20
 deciders: [project maintainers]
 consulted: []
@@ -147,3 +147,7 @@ Key decisions recorded:
 - The operator namespace write/read seam this feature relocates: [Feature 014 Wire the config-backed operator persistence and service](../sdd/014-complete-the-operator-control-plane-persistence-and-service/spec.md)
 - The operator control plane + secret redaction posture the persisted namespace carries: [Feature 007 Unified native operator control plane](../sdd/007-add-a-unified-native-operator-control-plane-for-all-opencode/spec.md)
 - The operator mutation-plan handler contract + `mutateAuthority` pipeline + the SecretPort: [ADR-0017 Close the implementable operator capability gaps](0017-close-the-implementable-operator-capability-gaps-so-the.md)
+
+## Links
+
+- Related: ADR-0030, ADR-0032, ADR-0028.

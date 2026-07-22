@@ -401,6 +401,11 @@ registers only typed domain impls, index-job lifecycle, and telemetry (C15).
 
 ## State machines
 
+SSOT diagrams for binding lifecycle, index-generation cutover, and the
+degradation ladder live in
+[doc/arch/statecharts/semantic-binding.md](../../statecharts/semantic-binding.md)
+— do not re-copy those mermaid spans here.
+
 ### Binding lifecycle with blue/green cutover (C12, C20)
 
 A binding is `draft` after `select` stages a candidate version; `validate` and — for an
@@ -409,38 +414,11 @@ embedding dimension change — `reindex` into a new collection generation move i
 it to `active`; a provider/model outage moves an active binding to `degraded` and then
 `unavailable`; `rollback` returns a superseded version to `active`.
 
-```mermaid
-stateDiagram-v2
-    [*] --> draft: select stages candidate version
-    draft --> staged: validate and reindex into new generation
-    staged --> active: cutover under CAS and confirmation
-    active --> degraded: provider or model outage
-    degraded --> unavailable: outage persists
-    degraded --> active: provider recovers
-    unavailable --> active: operator re-selects and cutover
-    active --> staged: new candidate selected
-    active --> active: rollback restores prior version
-    active --> [*]
-    unavailable --> [*]
-```
-
 ### Index generation lifecycle (C12)
 
 A generation is `building` during blue/green reindex, `validated` once index checks pass,
 `live` after the atomic alias swap (all collections together), `superseded` when a newer
 generation cuts over, and `retired` after the dual-write window closes.
-
-```mermaid
-stateDiagram-v2
-    [*] --> building: reindex into new collection generation
-    building --> validated: index and metadata checks pass
-    validated --> live: cutover swaps all aliases under CAS
-    live --> superseded: newer generation cuts over
-    live --> validated: rollback reverts alias
-    superseded --> retired: dual-write window closes
-    building --> retired: reindex aborted
-    retired --> [*]
-```
 
 ### Degradation ladder (C14, C20)
 
@@ -449,18 +427,6 @@ embedding/reranker outage, a Milvus/index outage, staleness, or a timeout drops 
 `catalog_lexical` with a typed capability-gap code; an empty/cold index or no pinned
 binding starts at `catalog_lexical`. The system never auto-selects another model; recovery
 returns to `full_semantic`. Fail-closed is operator opt-in.
-
-```mermaid
-stateDiagram-v2
-    [*] --> catalog_lexical: cold index or no binding pinned
-    [*] --> full_semantic: binding and Milvus healthy
-    full_semantic --> catalog_lexical: embedding or reranker or Milvus unavailable, stale, or timeout
-    catalog_lexical --> full_semantic: binding and index recover
-    catalog_lexical --> fail_closed: operator opted into fail-closed
-    fail_closed --> full_semantic: binding and index recover
-    full_semantic --> [*]
-    catalog_lexical --> [*]
-```
 
 ---
 

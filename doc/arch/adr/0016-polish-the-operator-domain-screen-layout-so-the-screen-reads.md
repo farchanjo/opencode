@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 date: 2026-07-19
 deciders: [project maintainers]
 consulted: []
@@ -169,3 +169,7 @@ behavior is unchanged and still governed by the Feature 015 statechart
 - CRUD screen statechart (unchanged, governs behavior): [operator-crud-screen](../statecharts/operator-crud-screen.md)
 - Related ADR: [0015 — Redesign the operator TUI domain screens into true CRUD](0015-redesign-the-operator-tui-domain-screens-into-true-crud.md)
 - Related ADR: [0011 — Grouped Operator TUI Navigation](0011-restructure-the-operator-control-plane-tui-from-a-flat.md)
+
+## Links
+
+- Related: ADR-0015, ADR-0011, ADR-0040.

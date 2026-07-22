@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 date: 2026-07-20
 deciders: [project maintainers]
 consulted: []
@@ -170,3 +170,7 @@ Key decisions recorded:
 - Makes the routing config operator-writable (populate a role pool to enable this feature): [024 Implement routing.configure persistence so operator routing config persists](../sdd/024-implement-routing-configure-persistence-so-operator-routing/spec.md)
 - The `routing` / `global:routing` scope→authority mapping the effective-config read shadows over: [033 Add a global authority scope for the pools (role_pools) operator config](../sdd/033-add-a-global-authority-scope-for-the-pools-role-pools-and/spec.md)
 - Makes the global routing config reachable/configurable, feeding the effective config: [034 Add an explicit operator scope selector so global-scoped config is reachable](../sdd/034-add-an-explicit-operator-scope-selector-so-global-scoped/spec.md)
+
+## Links
+
+- Related: ADR-0002, ADR-0042, ADR-0045.

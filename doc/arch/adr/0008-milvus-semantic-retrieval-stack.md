@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 date: 2026-07-18
 deciders: [project maintainers]
 ---
@@ -428,3 +428,7 @@ ADR-0006, and ADR-0007 are proposed.
 - Related ADR: [0007 — Semantic Tool Search Over the Shared Feature 006 Retrieval Stack](0007-add-semantic-embedding-and-reranker-retrieval-to-all-tool.md)
 </content>
 </invoke>
+
+## Links
+
+- Related: ADR-0019, ADR-0026, ADR-0050, ADR-0051.

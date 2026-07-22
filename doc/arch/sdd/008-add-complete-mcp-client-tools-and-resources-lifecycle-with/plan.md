@@ -322,6 +322,10 @@ warning bound.
 
 ## State machines
 
+SSOT diagrams for the MCP connection lifecycle and resource subscription live in
+[doc/arch/statecharts/mcp-connection.md](../../statecharts/mcp-connection.md)
+— do not re-copy those mermaid spans here.
+
 ### Connection lifecycle with reconnect, backoff, and resume (C2, C14)
 
 A connection is `configured` after config load; `connecting` while the transport attaches;
@@ -331,26 +335,7 @@ capability set is captured; `connected` once recorded. Terminal branches are `di
 Streamable HTTP drop enters `reconnecting` under bounded backoff with jitter, honoring
 session resume and `Last-Event-ID`; recovery re-runs negotiation and emits
 `mcp.server.capabilities_changed` on a diff. A stdio connection restarts under lifecycle
-control with child cleanup instead of backoff.
-
-```mermaid
-stateDiagram-v2
-    [*] --> configured: config load
-    configured --> connecting: connect transport
-    connecting --> negotiating: initialize and protocol negotiate
-    negotiating --> recording: capability exchange
-    recording --> connected: capabilities recorded
-    connecting --> needs_auth: unauthorized
-    negotiating --> needs_client_registration: registration required
-    connected --> reconnecting: streamable http drop
-    reconnecting --> negotiating: resume with last event id under backoff
-    reconnecting --> failed: max attempts exceeded
-    connected --> connecting: stdio restart under lifecycle
-    connected --> disabled: operator disable
-    connected --> failed: unrecoverable error
-    disabled --> [*]
-    failed --> [*]
-```
+control with child cleanup instead of backoff. See the statechart for transitions.
 
 ### Tool-catalog refresh flow (C4)
 
@@ -358,19 +343,8 @@ A catalog is `stale` on connect or on `notifications/tools/list_changed`; `walki
 the cursor-paginated `tools/list` walk under the duplicate-cursor guard; `fresh` once the
 walk completes and `defs[server]` is replaced and `mcp.tools_changed` is emitted; a repeated
 or non-advancing cursor or a max-page breach enters `guard_tripped`, which fails closed with
-a typed error and retains the prior `defs[server]`.
-
-```mermaid
-stateDiagram-v2
-    [*] --> stale: connect or list_changed
-    stale --> walking: begin paginated tools list
-    walking --> walking: cursor advances
-    walking --> fresh: final page and defs replaced
-    walking --> guard_tripped: duplicate cursor or max page
-    guard_tripped --> stale: retain prior defs and retry later
-    fresh --> stale: next list_changed
-    fresh --> [*]
-```
+a typed error and retains the prior `defs[server]`. (Catalog refresh is plan prose only;
+connection/subscription mermaid SSOT remains the mcp-connection statechart.)
 
 ### Resource subscription lifecycle (C9, C10)
 
@@ -379,21 +353,8 @@ A resource is `unsubscribed` by default; an operator grant with the server
 subscribed, `resources/updated` coalesces/dedupes/debounces into a bounded queue and updates
 UI and cache (notify + cache only) without a re-read/reindex/wake unless the per-server
 opt-in is set; an operator unsubscribe moves it to `unsubscribing` and back to
-`unsubscribed`; an unauthorized subscribe or a lost capability fails closed.
-
-```mermaid
-stateDiagram-v2
-    [*] --> unsubscribed: default
-    unsubscribed --> subscribing: operator grant and server capability
-    subscribing --> subscribed: subscription acknowledged
-    subscribing --> fail_closed: capability absent or unauthorized
-    subscribed --> subscribed: resources updated coalesced notify and cache
-    subscribed --> unsubscribing: operator unsubscribe
-    unsubscribing --> unsubscribed: unsubscribe acknowledged
-    subscribed --> fail_closed: capability lost
-    fail_closed --> unsubscribed: operator clears
-    unsubscribed --> [*]
-```
+`unsubscribed`; an unauthorized subscribe or a lost capability fails closed. See the
+statechart for transitions.
 
 ---
 

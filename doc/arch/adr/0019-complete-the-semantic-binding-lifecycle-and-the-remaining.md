@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 date: 2026-07-20
 deciders: [project maintainers]
 consulted: []
@@ -221,3 +221,7 @@ a state the real chain could never reach.
   fail-open, bounded design.
 - Bad: the experimental/extension badge reflects the operator's config-backed flag doc, not the
   runtime `cfg.mcp` behavior — a documented boundary until the SSOTs are reconciled.
+
+## Links
+
+- Related: ADR-0007, ADR-0008, ADR-0026, ADR-0050.

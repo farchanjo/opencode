@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 date: 2026-07-20
 deciders: [project maintainers]
 consulted: []
@@ -181,3 +181,7 @@ Key decisions recorded:
 - The shared-`routing`-authority CAS-token / preflight invariants + `command-authority.ts` SSOT: [ADR-0021 Operator config-backed saves must persist reliably and never silently zero](0021-operator-config-backed-saves-must-persist-reliably-and-never.md)
 - The operator mutation-plan handler contract + `mutateAuthority` pipeline: [ADR-0017 Close the implementable operator capability gaps](0017-close-the-implementable-operator-capability-gaps-so-the.md)
 - Mutation authority / CAS guard: [ADR-0003 Operator control plane and native command authority](0003-operator-control-plane-and-native-command-authority.md)
+
+## Links
+
+- Related: ADR-0029, ADR-0034, ADR-0036, ADR-0033.

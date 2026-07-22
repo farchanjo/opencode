@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 date: 2026-07-20
 deciders: [project maintainers]
 consulted: []
@@ -149,3 +149,7 @@ Key decisions recorded:
   synced into the store will not appear until the store updates — acceptable given
   the reactive memo re-derives on the next sync tick and the escape hatch covers
   the gap.
+
+## Links
+
+- Related: ADR-0038, ADR-0039.

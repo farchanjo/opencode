@@ -12,7 +12,8 @@ import (
 	"jobs/enums"
 )
 
-// EventKind carries the event type, schema version, class, source, actor and visibility.
+// Job EventKind — schedule/source classification for job.* only (FR11, FR12).
+// Includes JobSource so consumers distinguish cron, run-now, and reconcile origins.
 #EventKind: {
 	event_type:     enums.#JobEventType
 	schema_version: ids.#SchemaVersion
@@ -22,7 +23,8 @@ import (
 	visibility:     enums.#Visibility
 }
 
-// OccurrenceIdentity carries definition/schedule/occurrence/process identity and attempt/generation.
+// OccurrenceIdentity — definition/schedule/occurrence/process plus attempt/generation.
+// The idempotency tuple keys on these ids with nominal_due_time (C6); process_id is null until claim.
 #OccurrenceIdentity: {
 	job_definition_id: ids.#JobDefinitionId
 	schedule_id:       ids.#ScheduleId
@@ -32,25 +34,29 @@ import (
 	generation:        ids.#Generation
 }
 
-// TreeIdentity carries root-session and session identity.
+// TreeIdentity — root-session and optional session for scheduled headless work (FR21).
+// Session may be null until the Feature 002 Task Process admits the occurrence.
 #TreeIdentity: {
 	root_session_id: ids.#RootSessionId
 	session_id:      ids.#SessionId | null
 }
 
-// Ordering carries per-aggregate sequence, correlation and causation (FR12, C6).
+// Ordering — per-job-aggregate sequence plus correlation/causation (FR12, C6).
+// Sequence is local to the job aggregate; never a global event clock.
 #Ordering: {
-	sequence:       ids.#Sequence
-	correlation_id: ids.#CorrelationId
+	sequence:       ids.#Sequence       // jobs aggregate local order
+	correlation_id: ids.#CorrelationId  // ties trigger → occurrence → notify
 	causation_id:   ids.#CausationId | null
 }
 
-// RedactedMetadata is the bounded key/value metadata map; no secrets or payloads (FR32).
-#RedactedMetadata: {[string]: string}
+// Jobs redacted metadata map — bounded string pairs only; no secrets or payloads (FR32).
+// Job notifications and history projections may attach lag/outcome labels here only.
+#RedactedMetadata: {[string]: string} // jobs lag/outcome labels only
 
-// Delivery carries visibility, timestamp and redacted metadata.
+// Jobs delivery slice — visibility for observer authorization, occurrence timestamp,
+// and redacted metadata. Paths, prompts, and full results stay out of the envelope (FR22, FR32).
 #Delivery: {
-	visibility:        enums.#Visibility
-	timestamp:         ids.#Timestamp
-	redacted_metadata: #RedactedMetadata
+	visibility:        enums.#Visibility // jobs observer auth
+	timestamp:         ids.#Timestamp    // occurrence wall-clock
+	redacted_metadata: #RedactedMetadata // FR32 — no paths/prompts
 }

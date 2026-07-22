@@ -9,134 +9,30 @@ created_at: 2026-07-19T23:27:52.425498Z
 
 Feature: 017-close-the-implementable-operator-capability-gaps-so-the
 Created: 2026-07-19
-Scope: Feature 014 wired the reachable operator service backends and left a
-documented residual set of **honest capability gaps** — verbs the surface
-advertises that still degrade to a typed `unavailable`/`mcp_unavailable`/
-`milvus_unavailable` because their live dependency was not yet wired. A gap
-sweep confirmed a subset of those gaps is **implementable now** over machinery
-that already exists in the codebase, without an executor-composition or Smart
-Routing dependency. This feature closes exactly that implementable subset —
-MCP live reads and mutations, the OutputSpool production writer plus its reads
-and admin edge, the jobs occurrence projection, and the Milvus registry binding
-— and updates the TUI availability map to the new truth, while the
-executor-gated (`jobs.run-now`), lifecycle forced-abort (`cancel`), and Smart
-Routing consumption edges stay **typed capability gaps** by design. Feature 007
-remains the sole command-registration authority: no catalog id is added, no
-catalog version is bumped, no new dispatch path or flag is introduced. Every
-new backend degrades to a typed envelope and never fabricates state or a
-phantom write.
+Scope: Continues [Feature 014](../014-complete-the-operator-control-plane-persistence-and-service/spec.md)
+by closing the **implementable residual** capability gaps 014 left typed
+(`unavailable` / `mcp_unavailable` / `milvus_unavailable`). Closes MCP live
+reads/mutations, OutputSpool production writer + admin edge, jobs occurrence
+projection, and Milvus registry binding when configured; updates TUI availability
+to match. Executor-gated (`jobs.run-now`), lifecycle forced-abort (`cancel`), and
+Smart Routing consumption stay typed gaps. No new catalog id, catalog version,
+dispatch path, or flag. Gap inventory and decision drivers are SSOT in
+[ADR-0017](../../adr/0017-close-the-implementable-operator-capability-gaps-so-the.md)
+— not restated in this scope block.
 
 ## Problem
 
-Feature 014 closed the config round-trip, converted `langlock`/`jobs` to the
-`mutation_plan` contract, and wired the OutputSpool control store, the MCP
-admin host reads, and the config-backed semantic registry. It deliberately left
-a class of verbs as **typed capability gaps** — honest `unavailable` envelopes
-rather than fabricated success — where a live dependency was not yet reachable.
-A subsequent exhaustive gap sweep (2026-07-19, every fact `file:line` verified)
-found that a well-defined subset of those gaps is implementable **now** over
-machinery already shipped, with no executor-composition or Smart Routing
-dependency:
-
-- **MCP reads are gapped although the service exposes them (GAP E).**
-  `mcp.server.list`/`status`/`capabilities` return `unavailable` even though
-  `MCP.Service` exposes `status(): Record<string, Status>`
-  (`packages/opencode/src/mcp/index.ts:165`) and `clients()`
-  (`:166`), with the `Status` union (`connected`/`disabled`/`failed`/
-  `needs_auth`/`needs_client_registration`, `:83-106`) already typed. The
-  composition root injects `createMcpServiceOverride`
-  (`stack-live.ts:496`) supplying ONLY the auth + resource read ports
-  (`mcp/backend-live.ts:186`); the server/logging/experimental/extension ports
-  stay `gapBackend` (`backend-live.ts:93`). The "would fabricate state" caution
-  (`backend-live.ts:125-135`) is over-cautious for a **faithful** projection of
-  `{serverId, connection status, capabilities-present}`: the SSOT-only fields
-  (CAS version, `auditId`, trust profile, timestamps) stay absent/null and are
-  never fabricated.
-
-- **Every MCP mutation is gapped by the phantom-write trap.** The `mcp.*`
-  command port returns `kind:"query"` (Feature 008), which the Feature 007
-  dispatcher rejects for a `mutates` descriptor **after** any side effect — the
-  FR5 phantom-write trap documented at `backend-live.ts:128-135`. So no MCP
-  mutation can commit even where the operation is a real, reachable action.
-
-- **The OutputSpool is never populated (GAP A, headline).** Feature 005 shipped
-  the full `outputspool/` machinery — `control-store.ts`, `page-reader.ts`,
-  `spool-layout.ts`, `retention-sweeper.ts`, `file-sink-writer.ts`
-  (`createChannelWriter`, `:139`), `reconciler.ts`, `writer-queue.ts` — but a
-  grep confirms **no production caller** ever populates the spool. The operator
-  reads its own `<Global.Path.data>/outputspool/operator-control.db`
-  (`stack-live.ts:413-428`, the deliberate `bun:sqlite` choice documented at
-  `:404-408`), which stays empty, so `output.stat`/`read` reflect nothing.
-  Session output already exists as structured message parts
-  (`packages/opencode/src/session/message-v2.ts`, `session.ts`, `processor.ts`)
-  with a `PartUpdated`/`PartDelta` bus — the seam a production writer subscribes
-  to. `output.follow` stays gapped on its cursor-codec seam
-  (`outputspool/backend-live.ts:103`, `FOLLOW_GAP`); `release`/`delete`/`purge`
-  stay gapped on the control-store admin edge
-  (`backend-live.ts:100-102`, `CONTROL_STORE_ONLY`).
-
-- **Jobs occurrence projection is gapped although the durable read seam is
-  wired (GAP F).** `jobs.history`/`show-occurrences`/`watch` fail with
-  `unavailable` (`jobs/backend-live.ts:59-62`), yet the EventV2 durable
-  read/subscribe seams are already wired for lifecycle
-  (`lifecycle/stack-wiring.ts:180-259`, over the `EventV2Bridge.Service`
-  singleton). Projecting `job.*` occurrence events through the same
-  `EventV2Bridge` closes the gap with a bounded watch subscription.
-
-- **The Milvus registry binding is gapped although the machinery exists (GAP
-  D).** `semantic.index`/`validate`/`reindex`/`cutover` stay
-  `milvus_unavailable` (`semantic/backend-live.ts:79-85`) although the full
-  machinery is shipped (`semantic/milvus-adapter.ts`, `grpc-probe.ts`,
-  `embedding-client.ts`, `rerank-client.ts`, `credential-resolver.ts`,
-  `url-guard.ts`). Binding an `override.index`/`override.provider` over
-  `milvus-adapter` **when a Milvus endpoint is configured** closes the gap;
-  unconfigured degrades to the same typed `milvus_unavailable` gap.
-
-- **The operator TUI cannot actually configure a domain (user evidence).** Two
-  screenshots from the polished Feature 015/016 screens show the editing surface
-  is half-built:
-  1. On the Telemetry screen, selecting **Configure `telemetry.configure`**
-     opens a **single-field raw-JSON text prompt**. The user reports they still
-     "cannot configure" — a raw JSON blob is not a usable edit affordance. The
-     Feature 015 ADR deferred multi-field modals; that deferral is now the exact
-     user pain and must land here.
-  2. On the same screen, **Test** (`telemetry.test`) renders through the view
-     modal as `outcome: unreachable / target: {2} / reason: endpoint refused or
-     unreachable` — the nested `target` record collapses to a `{2}` count
-     placeholder (`status.ts` `formatStatusValue`,
-     `packages/tui/src/operator/status.ts:61-62`) instead of showing its
-     `endpoint`/`transport` fields. The `{n}`/`[n]` compaction is correct for the
-     bounded-height **inline status strip** (`toStatusNodes`, `:46`), but wrong
-     for the dedicated **view modal**, whose entire purpose is detail. The two
-     renderers must be distinct contracts.
-  3. On the Pools screen, selecting **Set `pools.set`** immediately toasts
-     `Operator invalid — pools.set requires a bindings array of { role, models }`
-     with the status strip showing `bindings: empty, configured: false`. The
-     single-field form cannot compose the `{bindings: [{role, models}],
-     expectedVersion}` payload the port contract requires
-     (`pools-command-port.ts:77` `parseBindings`,
-     `packages/protocol/src/pools/commands.ts:88` `PoolsSetInput`), and the
-     failure surfaces as a **global toast** rather than an in-modal error. A
-     structured bindings-list editor is required.
-  4. On the Routing screen, **Configure `routing.configure`** is the same raw
-     single-field JSON prompt family — the user reports they "cannot configure
-     ANYTHING". The routing policy is a large document
-     (`routing.configure`, catalog `mutates:true`, `catalog.ts:83`; the payload
-     spans `enabled`/`mode` plus the full policy/`budgetPolicy` document per
-     `packages/protocol/src/routing/index.ts`), so a bare unlabeled JSON prompt
-     must never be the only path.
-
-- **A runtime-generated `config.json` keeps leaking into the working tree.**
-  `packages/opencode/config.json` is generated by live CLI runs and has
-  repeatedly appeared as an untracked file carrying the operator's real global
-  config plus plaintext secret material (deleted twice this campaign, Feature
-  014 close-out). It must be git-ignored so it can never be committed.
-
-Leaving these residuals means the palette/slash/CLI/TUI advertise verbs that
-degrade to a permanent gap even where a live backend is now reachable, and the
-TUI availability map is stale. The fix is a **wiring** change over machinery
-that already exists — no new executor, no Smart Routing, no new catalog id or
-dispatch path.
+Feature 014 left residual typed capability gaps; a 2026-07-19 gap sweep found an
+implementable subset (MCP live reads/mutations, OutputSpool production writer
+and admin edge, jobs occurrence projection, Milvus registry binding when
+configured, TUI multi-field modals / detail tree / bindings editor, and
+git-ignoring leaked `packages/opencode/config.json`). Executor-gated and Smart
+Routing edges stay gapped by design. **Full gap inventory, file:line evidence,
+and decision drivers are SSOT in
+[ADR-0017](../../adr/0017-close-the-implementable-operator-capability-gaps-so-the.md)**
+— not restated here. The fix is wiring over already-shipped machinery: no new
+executor, catalog id, or dispatch path. Functional requirements below are the
+implementable contract.
 
 ## User Stories
 

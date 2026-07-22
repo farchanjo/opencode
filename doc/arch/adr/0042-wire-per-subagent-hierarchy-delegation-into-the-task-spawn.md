@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 date: 2026-07-21
 deciders: [project maintainers]
 consulted: []
@@ -257,3 +257,7 @@ Key decisions recorded:
 - Records the composition, safety, and back-compat contract this feature mirrors: [ADR-0037 Wire the operator Smart Routing engine into the live session](0037-wire-the-operator-smart-routing-engine-into-the-live-session.md)
 - The operator control plane and `ConfigPort` authority persistence the routing/hierarchy config lives under: [007 Add a unified native operator control plane](../sdd/007-add-a-unified-native-operator-control-plane-for-all-opencode/spec.md)
 - The `global:routing` authority that already persists the hierarchy config (`max_depth: 2`, `orchestration_only: true`): [033 Add a global authority scope for the pools (role_pools) operator config](../sdd/033-add-a-global-authority-scope-for-the-pools-role-pools-and/spec.md)
+
+## Links
+
+- Related: ADR-0049, ADR-0043, ADR-0044, ADR-0053, ADR-0055.

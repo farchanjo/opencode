@@ -61,16 +61,9 @@ unwind.
 
 ## Companion Artifacts
 
-The following optional companion files may be created alongside this plan to
-capture additional context:
-
-- `research.md` — background research, prior art, and trade-off notes.
-- `data-model.md` — entity and relationship definitions for the feature.
-- `contracts/` — interface contracts (OpenAPI, AsyncAPI, CUE schemas).
-- `quickstart.md` — step-by-step instructions for running the feature locally or
-  in a test environment.
-
-The authoritative domain model lives in
-`doc/arch/schemas/restore-the-production-compiled-build-the-lazy-live-module.cue`
-(the compile-safe lazy-load ValueObject); no additional companion files are
-required for this build-fix.
+This is a compile-safety fix, not a domain feature — no `research.md`,
+`data-model.md`, `contracts/`, or `quickstart.md` companions are needed. The
+authoritative compile-safe lazy-load ValueObject lives in
+`doc/arch/schemas/restore-the-production-compiled-build-the-lazy-live-module.cue`;
+behavioral requirements and FR-A–FR-D are only in [spec.md](spec.md) and
+ADR-0022.

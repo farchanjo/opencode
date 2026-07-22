@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 date: 2026-07-21
 deciders: [project maintainers]
 consulted: []
@@ -154,3 +154,7 @@ Key decisions recorded:
 - The operator control plane and live stack composition: [007 Add a unified native operator control plane for all opencode](../sdd/007-add-a-unified-native-operator-control-plane-for-all-opencode/spec.md)
 - Deferred this `InstanceRef` candidate-resolver fix (`stack-live.ts:314/341`) as a Phase 2 residual: [037 Wire the operator Smart Routing engine into the live session](../sdd/037-wire-the-operator-smart-routing-engine-into-the-live-session/spec.md)
 - The `pools.set` catalog validation this feature makes best-effort: [038 Make operator role pools accept the standard provider-qualified id](../sdd/038-make-operator-role-pools-accept-the-standard-provider/spec.md)
+
+## Links
+
+- Related: ADR-0020, ADR-0038.

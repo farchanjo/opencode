@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 date: 2026-07-20
 deciders: [project maintainers]
 consulted: []
@@ -128,3 +128,7 @@ Key decisions recorded:
 - Feature specification: [029 Fix the operator routing configure save UX so an empty mode](../sdd/029-fix-the-operator-routing-configure-save-ux-so-an-empty-mode/spec.md)
 - The routing.configure persistence and the enabled-only partial-merge this fix relies on: [024 Implement routing configure persistence so operator routing](../sdd/024-implement-routing-configure-persistence-so-operator-routing/spec.md)
 - The structured operator command result whose typed outcome + message this fix surfaces in-modal: [012 Expose the structured operator command result through the TUI](../sdd/012-expose-the-structured-operator-command-result-through-the/spec.md)
+
+## Links
+
+- Related: ADR-0025, ADR-0021, ADR-0024.

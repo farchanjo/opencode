@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 date: 2026-07-20
 deciders: [project maintainers]
 consulted: []
@@ -185,3 +185,7 @@ Key decisions recorded:
 - The `command-authority.ts` SSOT + degraded `pools.set → "routing"` fallback preserved: [021 Operator config-backed saves must persist reliably and never silently zero](../sdd/021-operator-config-backed-saves-must-persist-reliably-and-never/spec.md)
 - The profile-global config store the global write persists into: [030 Correct feature 028 so an OPENCODE_CONFIG_DIR profile layers](../sdd/030-correct-feature-028-so-an-opencode-config-dir-profile-layers/spec.md)
 - The project-profile wholesale vs global deep-merge write the pools write inherits: [032 Operator config writes must persist only the project owned](../sdd/032-operator-config-writes-must-persist-only-the-project-owned/spec.md)
+
+## Links
+
+- Related: ADR-0034.

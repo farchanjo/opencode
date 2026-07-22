@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 date: 2026-07-21
 deciders: [project maintainers]
 consulted: []
@@ -150,3 +150,7 @@ Key decisions recorded:
 - The layered global config read the effective parity depends on: [030 Correct feature 028 so an OPENCODE_CONFIG_DIR profile layers](../sdd/030-correct-feature-028-so-an-opencode-config-dir-profile-layers/spec.md)
 - The live effective read whose semantics the modal must match: [037 Wire the operator Smart Routing engine into the live session](../sdd/037-wire-the-operator-smart-routing-engine-into-the-live-session/spec.md)
 </content>
+
+## Links
+
+- Related: ADR-0011, ADR-0015, ADR-0016, ADR-0024, ADR-0036.

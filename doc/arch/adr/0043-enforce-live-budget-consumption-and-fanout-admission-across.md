@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 date: 2026-07-21
 deciders: [project maintainers]
 consulted: []
@@ -306,3 +306,7 @@ Known limitations / intentional edges (Phase 2b):
 - Records the composition, safety, and back-compat contract this feature mirrors: [ADR-0037 Wire the operator Smart Routing engine into the live session](0037-wire-the-operator-smart-routing-engine-into-the-live-session.md)
 - Records the fan-out admission gate this feature feeds real headroom: [ADR-0042 Wire per-subagent hierarchy delegation into the Task spawn](0042-wire-per-subagent-hierarchy-delegation-into-the-task-spawn.md)
 - The `global:routing` authority that persists the budget values the defaults are grounded in: [033 Add a global authority scope for the pools (role_pools) operator config](../sdd/033-add-a-global-authority-scope-for-the-pools-role-pools-and/spec.md)
+
+## Links
+
+- Related: ADR-0044, ADR-0049, ADR-0055, ADR-0053.

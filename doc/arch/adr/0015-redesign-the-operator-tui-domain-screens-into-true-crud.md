@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 date: 2026-07-19
 deciders: [project maintainers]
 consulted: []
@@ -192,3 +192,7 @@ statechart in `doc/arch/statecharts/operator-crud-screen.md`.
 - CRUD screen statechart: [operator-crud-screen](../statecharts/operator-crud-screen.md)
 - Related ADR: [0011 — Grouped Operator TUI Navigation](0011-restructure-the-operator-control-plane-tui-from-a-flat.md)
 - Related ADR: [0003 — Operator Control Plane and native command authority](0003-operator-control-plane-and-native-command-authority.md)
+
+## Links
+
+- Related: ADR-0011, ADR-0016, ADR-0012, ADR-0040.

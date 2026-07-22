@@ -700,11 +700,3 @@ specScopeGlobs = [
   # existing glob covers the TUI package:
   "packages/tui/src/routes/session/**",
 ]
-
-# Waivers for intentional near-empty files (warnings only; errors are never
-# waivable). Each keeps a written justification per the waiver validator.
-
-[[validate.waivers]]
-rule = "hygiene.empty-file"
-path = "packages/opencode/test/config/fixtures/no-frontmatter.md"
-reason = "Deliberately minimal test fixture exercised by markdown.test.ts and skill.test.ts to cover the no-front-matter parsing path."

@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 date: 2026-07-20
 deciders: [project maintainers]
 consulted: []
@@ -154,3 +154,7 @@ Key decisions recorded:
 - The rerank client + the `SemanticModelDescriptor` protocol shape + the reranker capability rules: [Feature 006 Milvus-backed multilingual semantic retrieval](../sdd/006-add-milvus-backed-multilingual-semantic-retrieval-and/spec.md)
 - The operator mutation-plan handler contract + `mutateAuthority` pipeline + the SecretPort: [ADR-0017 Close the implementable operator capability gaps](0017-close-the-implementable-operator-capability-gaps-so-the.md)
 - Mutation authority / CAS guard: [ADR-0003 Operator control plane and native command authority](0003-operator-control-plane-and-native-command-authority.md)
+
+## Links
+
+- Related: ADR-0007, ADR-0008, ADR-0019, ADR-0050, ADR-0051.

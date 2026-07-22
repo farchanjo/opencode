@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 date: 2026-07-19
 deciders: [project maintainers]
 consulted: []
@@ -168,3 +168,7 @@ in `doc/arch/statecharts/telemetry-probe.md`.
 - Related ADR: [0003 — Operator Control Plane and native command authority](0003-operator-control-plane-and-native-command-authority.md)
 - Related ADR: [0001 — OpenTelemetry telemetry foundation](0001-opentelemetry-telemetry-foundation.md)
 - Related ADR: [0002 — Core smart agent routing](0002-core-smart-agent-routing.md)
+
+## Links
+
+- Related: ADR-0014, ADR-0011.

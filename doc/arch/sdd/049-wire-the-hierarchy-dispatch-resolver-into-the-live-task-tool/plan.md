@@ -2,22 +2,20 @@
 
 ## Overview
 
-Describe the overall goal of this implementation plan and how it
-relates to the specification for feature 049-wire-the-hierarchy-dispatch-resolver-into-the-live-task-tool.
+Wire the existing hierarchy dispatch resolver into the live LLM `task`-tool
+execution path (`SessionTools.resolve` → `TaskTool.execute`) so Features 042 and
+048 actually run on real delegations, not only the mention/`handleSubtask`
+path. Requirements, precedence, blocked/degraded behavior, and the
+command-subtask fix are in [spec.md](spec.md) for feature
+`049-wire-the-hierarchy-dispatch-resolver-into-the-live-task-tool`.
 
 ## Technical Approach
 
-Outline the primary technical strategy: architectural layers affected,
-key algorithms or data structures, and integration points with existing
-components.
-
-## Companion Artifacts
-
-The following optional companion files may be created alongside this
-plan to capture additional context:
-
-- `research.md` — background research, prior art, and trade-off notes.
-- `data-model.md` — entity and relationship definitions for the feature.
-- `contracts/` — interface contracts (OpenAPI, AsyncAPI, CUE schemas).
-- `quickstart.md` — step-by-step instructions for running the feature
-  locally or in a test environment.
+Inject a per-spawn resolver closure (parent role, depth, main-context model)
+into `ctx.extra` at tool-build time; call `resolveHierarchyDispatch` with the
+actual spawn prompt inside `TaskTool.execute`. Reuse the same engine, consult
+guard, and route→dispatch mapping as `handleSubtask` — no second resolver.
+Child model precedence: explicit `task.model` / agent pin → routed model →
+parent inheritance. Blocked decisions fail the spawn; force-manager degraded
+tier resolution warns then inherits. Fix command-subtask so an unpinned
+command does not stamp a parent model that skips hierarchy consult.

@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 date: 2026-07-18
 deciders: [project maintainers]
 ---
@@ -486,3 +486,7 @@ accepted; ADR-0004 and ADR-0005 are proposed.
 - Related ADR: [0004 — Scheduled Job Runtime and Async Notification Channel](0004-scheduled-job-runtime-and-async-notification-channel.md)
 - Related ADR: [0005 — Lang Lock Artifact-Language Policy and Progressive Enforcement](0005-lang-lock-artifact-language-policy-and-progressive-enforcement.md)
 </content>
+
+## Links
+
+- Related: ADR-0017.

@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 date: 2026-07-19
 deciders: [project maintainers]
 consulted: []
@@ -101,3 +101,7 @@ and MUST NOT change the FFI contract; no Tokio/async runtime is introduced in ph
 - Bad: the FFI boundary must be maintained carefully (single-owner fd contract,
   `oc_free` discipline, `catch_unwind` on every entry point); mistakes there are memory
   bugs rather than TypeScript exceptions.
+
+## Links
+
+- Related: ADR-0023.

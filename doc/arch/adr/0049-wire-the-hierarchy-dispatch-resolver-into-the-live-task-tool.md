@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 date: 2026-07-21
 deciders: [your-org]
 consulted: []
@@ -98,3 +98,7 @@ Concretely:
   undefined on the off/no-route path, so behavior is byte-identical, but there is
   a small constant per-spawn cost. Mitigated by the existing hang/crash-safety
   wrap and bounded per-spawn LRU.
+
+## Links
+
+- Related: ADR-0042, ADR-0043, ADR-0044, ADR-0053.

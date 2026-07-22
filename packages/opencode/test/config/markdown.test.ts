@@ -187,7 +187,7 @@ describe("ConfigMarkdown: frontmatter parsing w/ no frontmatter", async () => {
   test("should parse without throwing", () => {
     expect(result).toBeDefined()
     expect(result.data).toEqual({})
-    expect(result.content.trim()).toBe("Content")
+    expect(result.content.trim()).toBe("Content without YAML frontmatter.")
   })
 })
 

@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 date: 2026-07-20
 deciders: [project maintainers]
 consulted: []
@@ -140,3 +140,8 @@ Key decisions recorded:
 - The replace-model this feature corrects: [028 Make the global opencode config honor the opencode config](../sdd/028-make-the-global-opencode-config-honor-the-opencode-config/spec.md)
 - The per-project relocation that introduced the `configRoot` pattern: [027 Relocate per-project operator persistence out of the working tree](../sdd/027-relocate-per-project-operator-persistence-out-of-the-working/spec.md)
 </content>
+
+## Links
+
+- Status: **accepted**. Supersedes ADR-0028 for the global config READ model (layer over replace).
+- Related: ADR-0031 (extends layering to TUI config), ADR-0032 (project-owned write isolation), ADR-0027 (configRoot / profiles).

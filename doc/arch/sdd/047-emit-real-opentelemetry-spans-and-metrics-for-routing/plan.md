@@ -2,22 +2,21 @@
 
 ## Overview
 
-Describe the overall goal of this implementation plan and how it
-relates to the specification for feature 047-emit-real-opentelemetry-spans-and-metrics-for-routing.
+Emit real, content-free OpenTelemetry spans and metrics for four routing
+domains — decision, budget consumption, fan-out admission, and orchestration
+outcomes — fire-and-forget on the hot path, hang-safe on collector failure, and
+byte-identical to a no-telemetry build when the telemetry authority is off.
+Full signal vocabulary, label rules, and acceptance criteria are in
+[spec.md](spec.md) for feature
+`047-emit-real-opentelemetry-spans-and-metrics-for-routing`.
 
 ## Technical Approach
 
-Outline the primary technical strategy: architectural layers affected,
-key algorithms or data structures, and integration points with existing
-components.
-
-## Companion Artifacts
-
-The following optional companion files may be created alongside this
-plan to capture additional context:
-
-- `research.md` — background research, prior art, and trade-off notes.
-- `data-model.md` — entity and relationship definitions for the feature.
-- `contracts/` — interface contracts (OpenAPI, AsyncAPI, CUE schemas).
-- `quickstart.md` — step-by-step instructions for running the feature
-  locally or in a test environment.
+Ground emission at the live seams that already produce the data
+(`session/routing-resolve.ts`, budget spend, hierarchy fan-out, orchestration
+worker/gate outcomes), reusing the ADR-0001 / Feature 001 OTLP exporter and
+bounded-cardinality helpers. Enqueue only in memory on the turn path; export on
+an `unref`'d background flush with timeout/drop. Metric dimensions stay
+bounded enums; per-turn-varying totals live on spans or as metric values, never
+as high-cardinality labels. No new exporter stack, no content/prompt/secret in
+any signal.

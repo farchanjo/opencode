@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 date: 2026-07-21
 deciders: [your-org]
 consulted: []
@@ -265,3 +265,7 @@ degrading to today's shipped behavior on any failure.
   deterministic-orchestration-handoff-role-to-agent-binding.cue`
   (`#HierarchyHandoffBinding`, `#InterceptionOutcome`,
   `#ReentrancyGuardState`, `#OrchestrationHandoffLog`).
+
+## Links
+
+- Related: ADR-0042, ADR-0043, ADR-0044, ADR-0049, ADR-0055.

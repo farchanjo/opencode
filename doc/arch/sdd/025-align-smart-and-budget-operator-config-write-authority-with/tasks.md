@@ -13,13 +13,6 @@ merge to `apply(current)` so a Save never clobbers a sibling (FR-C), confirms te
 global-only and unchanged (FR-E), and proves the reproduced scenarios over the REAL wired
 dispatcher (FR-F). Mirrors the Feature 024 `routing.configure` fix verbatim.
 
-Legend:
-
-- `[P]` — may run in parallel with other `[P]` tasks that share no overlapping paths
-- `Depends:` — task IDs that must complete first
-- Verification — acceptance checks for the task
-- Evidence — filled during implement (date + file:line + test result)
-
 ## Task Breakdown
 
 - [x] T001 — smart write authority follows the REQUEST scope (`scopeForRequest`) (FR-A)

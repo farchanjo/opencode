@@ -2,22 +2,18 @@
 
 ## Overview
 
-Describe the overall goal of this implementation plan and how it
-relates to the specification for feature 046-expose-the-hierarchy-capability-and-budget-operator-config.
+Expose every `RoutingConfig.Enforcement` leaf under `budget`, `hierarchy`, and
+`capability` for read and write on both the `op` CLI and the operator TUI,
+driven by one shared leaf registry so the surfaces cannot drift. Requirements,
+leaf inventory, CAS/scope rules, and acceptance criteria are in
+[spec.md](spec.md) for feature
+`046-expose-the-hierarchy-capability-and-budget-operator-config`.
 
 ## Technical Approach
 
-Outline the primary technical strategy: architectural layers affected,
-key algorithms or data structures, and integration points with existing
-components.
-
-## Companion Artifacts
-
-The following optional companion files may be created alongside this
-plan to capture additional context:
-
-- `research.md` — background research, prior art, and trade-off notes.
-- `data-model.md` — entity and relationship definitions for the feature.
-- `contracts/` — interface contracts (OpenAPI, AsyncAPI, CUE schemas).
-- `quickstart.md` — step-by-step instructions for running the feature
-  locally or in a test environment.
+Extend the existing budget/smart/pools operator path (Config.Service authority,
+Feature 034 scope flag, CAS via `mutateAuthority`) rather than inventing a new
+admin store. A single leaf registry (path, label, kind, bounds, enums) drives CLI
+parse/validation and TUI field declarations; reads project effective layered
+config; writes persist only the leaves the operator set, merged onto fresh
+on-disk routing config. No parallel command registry, no catalog bump.

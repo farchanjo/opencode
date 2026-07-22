@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 date: 2026-07-19
 deciders: [project maintainers]
 consulted: []
@@ -158,3 +158,7 @@ The projection model is specified as ValueObjects in
 - Related ADR: [0011 — Grouped operator TUI navigation](0011-restructure-the-operator-control-plane-tui-from-a-flat.md)
 - Related ADR: [0003 — Operator Control Plane and native command authority](0003-operator-control-plane-and-native-command-authority.md)
 - Related ADR: [0001 — OpenTelemetry telemetry foundation](0001-opentelemetry-telemetry-foundation.md)
+
+## Links
+
+- Related: ADR-0011, ADR-0015, ADR-0017.

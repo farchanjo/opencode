@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 date: 2026-07-20
 deciders: [project maintainers]
 consulted: []
@@ -184,3 +184,7 @@ Key decisions recorded:
 - The layered global READ that exposed the leak vector: [030 Correct feature 028 so an OPENCODE_CONFIG_DIR profile layers](../sdd/030-correct-feature-028-so-an-opencode-config-dir-profile-layers/spec.md)
 - The per-project relocation that owns the profile write target: [027 Relocate per-project operator persistence out of the working tree](../sdd/027-relocate-per-project-operator-persistence-out-of-the-working/spec.md)
 </content>
+
+## Links
+
+- Related: ADR-0030, ADR-0027, ADR-0035, ADR-0014.

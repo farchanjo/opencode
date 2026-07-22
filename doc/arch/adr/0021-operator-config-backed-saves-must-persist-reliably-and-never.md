@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 date: 2026-07-20
 deciders: [project maintainers]
 consulted: []
@@ -212,3 +212,7 @@ Key decisions recorded:
 - Operator form dispatch (`executeOperatorCommand`, `pools.set` bindings editor): [Feature 019 Complete the semantic binding lifecycle and the remaining operator residuals](../sdd/019-complete-the-semantic-binding-lifecycle-and-the-remaining/spec.md), [Feature 020 Replace the free-text model id entry in the operator](../sdd/020-replace-the-free-text-model-id-entry-in-the-operator/spec.md)
 - Mutation authority / CAS guard: [ADR-0003 Operator control plane and native command authority](0003-operator-control-plane-and-native-command-authority.md)
 - Domain schema: [operator-config-backed-saves ValueObject](../schemas/operator-config-backed-saves-must-persist-reliably-and-never.cue)
+
+## Links
+
+- Related: ADR-0029, ADR-0024, ADR-0025.

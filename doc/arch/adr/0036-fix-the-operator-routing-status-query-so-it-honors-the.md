@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 date: 2026-07-20
 deciders: [project maintainers]
 consulted: []
@@ -182,3 +182,7 @@ Key decisions recorded:
 - The mirrored precedent that threads the request scope into the smart/budget authority resolution: [025 Align smart and budget operator config write authority with the request scope](../sdd/025-align-smart-and-budget-operator-config-write-authority-with/spec.md)
 - `routing.configure` already threads the request scope; the same seam `routing.status` was missing: [024 Implement routing.configure persistence so operator routing config persists](../sdd/024-implement-routing-configure-persistence-so-operator-routing/spec.md)
 - T010 retained the `routing.status` config-backed shadow this feature makes scope-aware: [013 Wire the four remaining config-backed operator domains](../sdd/013-wire-the-four-remaining-config-backed-operator-domains-so/spec.md)
+
+## Links
+
+- Related: ADR-0035, ADR-0034, ADR-0024, ADR-0025.

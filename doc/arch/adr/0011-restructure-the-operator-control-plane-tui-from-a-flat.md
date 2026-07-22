@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 date: 2026-07-19
 deciders: [project maintainers]
 consulted: []
@@ -149,3 +149,7 @@ The navigation model is specified as ValueObjects in
 - Navigation statechart: [operator-menu-navigation](../statecharts/operator-menu-navigation.md)
 - Related ADR: [0003 — Operator Control Plane and native command authority](0003-operator-control-plane-and-native-command-authority.md)
 - Related ADR: [0001 — OpenTelemetry telemetry foundation](0001-opentelemetry-telemetry-foundation.md)
+
+## Links
+
+- Related: ADR-0015, ADR-0012, ADR-0014, ADR-0016, ADR-0040.

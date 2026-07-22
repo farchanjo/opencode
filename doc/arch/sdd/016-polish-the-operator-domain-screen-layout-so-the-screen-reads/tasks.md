@@ -15,13 +15,6 @@ inert, never a fabricated success. `packages/opencode` stays read-only. No code 
 executed in this documentary pass; tasks are the implement backlog. All items start
 unchecked.
 
-Legend:
-
-- `[P]` — may run in parallel with other `[P]` tasks that share no overlapping paths
-- `Depends:` — task IDs that must complete first
-- Verification — acceptance checks for the task
-- Evidence — filled during implement (date + file:line + test result)
-
 ## Task Breakdown
 
 Checkbox backlog (details under each group below).

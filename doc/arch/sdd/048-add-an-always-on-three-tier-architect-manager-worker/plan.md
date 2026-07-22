@@ -2,22 +2,19 @@
 
 ## Overview
 
-Describe the overall goal of this implementation plan and how it
-relates to the specification for feature 048-add-an-always-on-three-tier-architect-manager-worker.
+Add an opt-in `hierarchy.orchestration_mode` (`heuristic` default |
+`force_manager`) so every Architect task can flow Architect → Manager →
+Worker(s) → Manager → Architect on per-tier role-pool models, while leaving the
+heuristic path byte-identical. Requirements, five force-manager wiring fixes,
+and acceptance criteria are in [spec.md](spec.md) for feature
+`048-add-an-always-on-three-tier-architect-manager-worker`.
 
 ## Technical Approach
 
-Outline the primary technical strategy: architectural layers affected,
-key algorithms or data structures, and integration points with existing
-components.
-
-## Companion Artifacts
-
-The following optional companion files may be created alongside this
-plan to capture additional context:
-
-- `research.md` — background research, prior art, and trade-off notes.
-- `data-model.md` — entity and relationship definitions for the feature.
-- `contracts/` — interface contracts (OpenAPI, AsyncAPI, CUE schemas).
-- `quickstart.md` — step-by-step instructions for running the feature
-  locally or in a test environment.
+Gate `force_manager` on Smart Routing activation (`enabled` and `mode != never`)
+and on the new enforcement field. On that path only: unconditional Manager
+classification on Architect edges, honor `hierarchy.max_depth` for the
+Architect→Manager→Worker depth guard, surface (not silently inherit) unresolved
+tier pool models, inject a Manager persona for decomposition, and keep the
+engine `MAX_DELEGATION_DEPTH` leaf rule. Heuristic thresholds, silent fallback,
+and plain-subagent depth default of 1 stay untouched.

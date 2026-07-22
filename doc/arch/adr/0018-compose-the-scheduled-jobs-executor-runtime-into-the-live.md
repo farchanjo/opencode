@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 date: 2026-07-20
 deciders: [project maintainers]
 consulted: []
@@ -260,3 +260,7 @@ statechart in `doc/arch/statecharts/job-executor-composition.md`.
 - Related ADR: [0004 — Scheduled job runtime and async notification channel](0004-scheduled-job-runtime-and-async-notification-channel.md)
 - Related ADR: [0003 — Operator Control Plane and native command authority](0003-operator-control-plane-and-native-command-authority.md)
 - Related ADR: [0017 — Close the Implementable Operator Capability Gaps](0017-close-the-implementable-operator-capability-gaps-so-the.md)
+
+## Links
+
+- Related: ADR-0004.

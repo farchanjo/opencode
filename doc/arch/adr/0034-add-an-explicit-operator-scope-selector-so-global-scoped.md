@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 date: 2026-07-20
 deciders: [project maintainers]
 consulted: []
@@ -178,3 +178,7 @@ Key decisions recorded:
 - The original request-scope persistence + shared-`routing`-document contract: [024 Implement routing configure persistence so operator routing](../sdd/024-implement-routing-configure-persistence-so-operator-routing/spec.md)
 - The shared-authority CAS-token / preflight invariants preserved: [021 Operator config-backed saves must persist reliably and never silently zero](../sdd/021-operator-config-backed-saves-must-persist-reliably-and-never/spec.md)
 - The project-profile vs global write the reachable global scope targets: [032 Operator config writes must persist only the project owned](../sdd/032-operator-config-writes-must-persist-only-the-project-owned/spec.md)
+
+## Links
+
+- Related: ADR-0033, ADR-0035, ADR-0036, ADR-0025.

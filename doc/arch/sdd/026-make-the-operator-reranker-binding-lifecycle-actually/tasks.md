@@ -14,13 +14,6 @@ promotes a validated reranker model to an eligible selector candidate through th
 transition (FR4), keeps every failure honest (FR5), and proves the whole lifecycle over the REAL wired
 dispatcher (FR6). `semantic.model.validate` stays `mutates: false`.
 
-Legend:
-
-- `[P]` — may run in parallel with other `[P]` tasks that share no overlapping paths
-- `Depends:` — task IDs that must complete first
-- Verification — acceptance checks for the task
-- Evidence — filled during implement (date + file:line + test result)
-
 ## Task Breakdown
 
 - [x] T001 — Flip `semantic.reranker.validate` to persists_today in the palette (FR1)
