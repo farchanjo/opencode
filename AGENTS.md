@@ -106,174 +106,51 @@ Examples: `fix(tui): simplify thinking toggle styling`, `docs: update contributi
 
 ## Style Guide
 
-### General Principles
+- One function unless reusable; no single-use helper extraction by default.
+- Avoid try/catch and any; prefer const, early returns, no else.
+- Prefer functional arrays with type guards on filter; Bun APIs when possible.
+- Config modules: self-export pattern (`export * as ConfigAgent from "./agent"`).
+- Effect generators: bind services to named vars before method calls.
+- Inline one-shot values; avoid unnecessary destructuring; never alias or star-import.
+- Dynamic-import heavy branch-only modules; Effect schema helpers for untrusted JSON.
+- Drizzle fields snake_case; comments only for non-obvious constraints.
+- Happy-path main + small helpers below for multi-branch validation.
 
-- Keep things in one function unless composable or reusable
-- Do not extract single-use helpers preemptively. Inline the logic at the call site unless the helper is reused, hides a genuinely complex boundary, or has a clear independent name that improves the caller.
-- Avoid `try`/`catch` where possible
-- Avoid using the `any` type
-- Use Bun file APIs when possible (see example below)
-- Rely on type inference when possible; avoid explicit type annotations or interfaces unless necessary for exports or clarity
-- Prefer functional array methods (flatMap, filter, map) over for loops; use type guards on filter to maintain type inference downstream
-- In `packages/opencode/src/config`, follow the existing self-export pattern at the top of the file (for example `export * as ConfigAgent from "./agent"`) when adding a new config module.
-- In Effect generators, bind services to named variables before calling methods. Do not nest service yields.
+## Testing and typecheck
 
-Reduce total variable count by inlining when a value is only used once.
-
-```ts
-// Good
-const journal = await Bun["file"](join(dir, "journal.json")).json()
-
-// Bad
-const journalPath = join(dir, "journal.json")
-const journal = await Bun["file"](journalPath).json()
-```
-
-### Destructuring
-
-Avoid unnecessary destructuring. Use property access to preserve context.
-
-```ts
-// Good
-record["a"]
-record["b"]
-
-// Bad
-const { a, b } = record
-```
-
-### Imports
-
-- Never alias imports. Do not rename imports at the import site.
-- Never use star imports.
-- If a namespace-style value is needed, import the module's own exported namespace by name, for example `import { Project } from "@opencode-ai/core/project"`, then reference the project id constant from that namespace.
-- Prefer dynamic imports for heavy modules that are only needed in selected code paths, especially in startup-sensitive entrypoints. Destructure dynamic import bindings near the top of the narrowest scope that needs them so they read like normal imports. Avoid inline dynamic-import chains. Keep branch-specific imports inside the branch that needs them to preserve lazy loading.
-
-### Variables
-
-Prefer `const` over `let`. Use ternaries or early returns instead of reassignment.
-
-```ts
-// Good
-const foo = condition ? 1 : 2
-
-// Bad
-let foo
-if (condition) foo = 1
-else foo = 2
-```
-
-### Control Flow
-
-Avoid `else` statements. Prefer early returns.
-
-```ts
-// Good
-function foo() {
-  if (condition) return 1
-  return 2
-}
-
-// Bad
-function foo() {
-  if (condition) return 1
-  else return 2
-}
-```
-
-### Complex Logic
-
-When a function has several validation branches or supporting details, make the main function read as the happy path and move supporting details into small helpers below it.
-
-```ts
-// Good
-export function loadThing(input: unknown) {
-  const config = requireConfig(input)
-  const metadata = readMetadata(input)
-  return createThing({ config, metadata })
-}
-
-function requireConfig(input: unknown) {
-  ...
-}
-```
-
-- Keep helpers close to the code they support, below the main export when that improves readability.
-- Do not over-abstract simple expressions into many single-use helpers; extract only when it names a real concept like `requireConfig` or `readMetadata`.
-- Do not return Effect from helpers unless they actually perform effectful work. Synchronous parsing, validation, and option building should stay synchronous.
-- Prefer Effect schema helpers such as UnknownFromJsonString and decodeUnknownOption over manual JSON parse wrapped in Effect try when parsing untrusted JSON strings.
-- Add comments for non-obvious constraints and surprising behavior, not for obvious assignments or control flow.
-
-### Schema Definitions (Drizzle)
-
-Use snake_case for field names so column names don't need to be redefined as strings.
-
-```ts
-// Good
-const table = sqliteTable("session", {
-  id: text().primaryKey(),
-  project_id: text().notNull(),
-  created_at: integer().notNull(),
-})
-
-// Bad
-const table = sqliteTable("session", {
-  id: text("id").primaryKey(),
-  projectID: text("project_id").notNull(),
-  createdAt: integer("created_at").notNull(),
-})
-```
-
-## Testing
-
-- Avoid mocks as much as possible, you shouldn't be using globalThis at all unless it's the only option.
-- Test actual implementation, do not duplicate logic into tests
-- Tests cannot run from repo root (guard: do-not-run-tests-from-root); run from package dirs like `packages/opencode`.
-
-## Type Checking
-
-- Always run `bun typecheck` from package directories (e.g., `packages/opencode`), never `tsc` directly.
+- Prefer real implementations over mocks; avoid globalThis unless required.
+- Tests not from repo root (do-not-run-tests-from-root); package dirs only.
+- Always bun typecheck from package dirs; never tsc from root.
 
 ## V2 Session Core
 
-- Keep durable prompt admission separate from model execution. SessionV2 prompt admits one durable session_input row before scheduling advisory SessionExecution wake(sessionID) unless resume false requests admit-only behavior. The serialized runner promotes admitted inputs into visible user messages at safe boundaries.
-- Reusing a Session ID adopts the existing Session. Reusing a prompt message ID reconciles an exact retry only when Session, prompt, and delivery mode match; conflicting reuse fails. Historical projected prompts lazily synthesize promoted inbox records during exact retry.
-- Keep SessionExecution process-global and Session-ID based. Its local implementation owns the process-local Session coordinator and discovers placement through SessionStore plus LocationServiceMap lookup for the session location only when a drain starts; no layer should take a Session ID. V2 interruption targets the active process-local ownership chain for that Session; idle or missing interruption is a no-op.
-- Keep SessionRunner, model resolution, tool registry, permissions, and filesystem Location-scoped. Omitted Location workspaceID means implicit-local placement; explicit workspace identity remains reserved for future placement semantics.
-- Preserve one explicit llm stream call per provider turn and reload projected history before durable continuation. Do not bridge through legacy SessionPrompt loop or delegate orchestration to an in-memory tool loop.
-- Keep local Session drains process-local until clustering is implemented. SessionRunCoordinator joins explicit same-Session resumes, coalesces prompt wakeups, and allows different Sessions to run concurrently. Advisory wakes drain eligible durable inbox rows only; post-crash continuation recovery requires a separate explicit design before it may retry provider work. A drain has no durable identity or transcript boundary.
-- Keep delivery vocabulary explicit. Prompts steer by default and promote at the next safe provider-turn boundary while the current drain requires continuation. An explicit queue input remains pending until the Session would otherwise become idle; promote one queued input at that boundary, then reevaluate continuation before promoting another. Promoting any new user input resets the selected agent's provider-turn allowance; a batch of steers resets it once.
-- Keep EventV2 replay owner claims separate from clustered Session execution ownership.
-- Keep the System Context algebra, registry, and built-ins in `packages/core/src/system-context`; keep Context Source producers with their observed domains, and keep Session History selection plus Context Epoch persistence Session-owned.
+- Durable admission separate from execution: SessionV2 prompt admits one
+  session_input then advisory SessionExecution wake unless resume false.
+- Session ID reuse adopts Session; prompt ID reuse only exact matching retry.
+- SessionExecution process-global by Session ID; interrupt is no-op when idle.
+- Runner/tools/permissions Location-scoped; omitted workspaceID = implicit-local.
+- One llm stream call per provider turn; reload history before continuation.
+- Local drains process-local until clustering; steers promote at safe boundaries;
+  queue promotes one-at-a-time when idle.
+- System Context algebra in packages/core/src/system-context; history/epoch Session-owned.
 
 ## Operator Control Plane (Feature 007)
 
-Native management authority for setup/configuration. ADR-0003 accepted. Full integrator
-reference: `doc/arch/sdd/007-add-a-unified-native-operator-control-plane-for-all-opencode/reserved-catalog-v1.md`
+ADR-0003. Integrator:
+doc/arch/sdd/007-add-a-unified-native-operator-control-plane-for-all-opencode/reserved-catalog-v1.md
 
-- **Sole management path:** typed operator commands via Feature 007 registry + dispatcher + thin adapters (TUI Settings/palette/native slash, CLI opencode op, loopback HTTP/SDK). Reuse Config Service and EventV2 — no parallel config or event store.
-- **Never authority:** Config command / custom templates, session command prompt path, ToolRegistry admin tools, MCP tools/prompts, plugins, skills, LLM/shell free-form setup. Do not create LLM, custom, MCP, or plugin management authority.
-- **Future domain features (001–006, 008, …):** own domain schemas and business logic; register ports + adapters into the operator composition root under `packages/opencode/src/operator/`. Add reserved IDs only by additive bumps to `packages/core/src/operator/catalog.ts`. Surface aliases come from generateAliases only — never hand-fork slash/CLI/palette names or duplicate ID lists in the SDK.
-- **Reserved catalog v1:** import listReservedIds / RESERVED_CATALOG_VERSION from packages/core/src/operator (core package export). Collisions fail closed (reserved_name). Legacy admin-like names: one-release warn, reject new — see feature migration note.
-- **Flag:** experimental operator control plane (default off); sandbox OPENCODE_DEV_OPERATOR env. Dynamic resolve per dispatch — do not hardcode featureEnabled true in live stack.
-- **Phase 1 surfaces only:** core + TUI + CLI + loopback API/SDK. App/Desktop (T090–T091) and multi-user/vault/non-loopback (T092) are Phase 2, not Phase 1 incomplete work.
-- **Isolation:** Feature 007 local work uses `scripts/dev/opencode-operator-sandbox`, port 14096, `.dev/` only — never production user config dir, port 4096, service register, or real OAuth 19876.
+- Sole path: typed registry + dispatcher + TUI/CLI/loopback adapters; Config Service + EventV2.
+- Never authority: Config templates, session command setup, ToolRegistry/MCP/plugin free-form admin.
+- Domains register ports under packages/opencode/src/operator/; reserved IDs only via catalog bumps.
+- Flag experimental operator control plane (default off); sandbox OPENCODE_DEV_OPERATOR env.
+- Phase 1: core + TUI + CLI + loopback. App/Desktop and multi-user = Phase 2.
+- Isolation: scripts/dev/opencode-operator-sandbox, port 14096, .dev/ only.
 
-## Spec Kit on `fcustom`
+## Spec Kit on fcustom
 
-- On branch `fcustom`, the installed `speckit` library is the source of truth for requirements, decisions, and execution changes. `doc/arch` is the project source of truth; run `speckit status` and `speckit next` before changing anything.
-- Respect the active feature and the guard. Follow `specify → clarify` (when needed) → `plan → tasks → analyze → implement → validate`, and use incremental validation plus the repository hook.
-- When a decision or acceptance criterion changes, update the affected artifact and record the changed decision. Preserve upstream/project behavior unless the artifacts document an intentional divergence.
-- Do not implement Smart Routing while alternatives remain open and without explicit authorization. Do not edit `doc/.specify/` databases by hand or bypass the guard; require official validation before completion.
-
-### Versioned commit hook
-
-Run `make install-hooks` once per clone to set the local-only core hooksPath to
-`.husky`; the target is idempotent and does not change global Git configuration.
-On `fcustom`, `.husky/pre-commit` runs `git diff --cached --check` and the
-official `speckit validate --json` in both HEAD and a disposable worktree with
-only the staged patch applied. It compares deterministic finding identities
-(artifact, rule, message, heading, line span, and severity), so pre-existing
-findings in an edited file do not block while newly introduced findings do.
-The hook does not run on other branches. A missing Speckit or Bun executable is
-an explicit failure, never an automatic bypass.
+- Installed speckit + doc/arch SSOT; status then next before code; no hand-edit of doc/.specify.
+- Loop specify → clarify (if needed) → plan → tasks → analyze → implement → validate.
+- Record decision changes in artifacts; no Smart Routing while alternatives open without auth.
+- make install-hooks → .husky local hooksPath. On fcustom, pre-commit: cached check +
+  speckit validate --json on HEAD vs staged worktree (new findings only). Missing
+  Speckit/Bun is hard fail.
