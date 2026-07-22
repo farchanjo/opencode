@@ -16,17 +16,21 @@
  *       id (AC4).
  *   (c) no-change — identical hashes yield zero upserts/tombstones via
  *       `runReconcile` (AC5), and the embed-skip DECISION itself (the same
- *       `Projection.decideMutation` call `live-doc-source.ts` — T019, still
- *       in flight on a concurrent slice of this feature — will guard its
- *       embed call with) never fires for an unchanged hash. The full
- *       `AgentV2.Service`/`SkillV2.Service` live-read wiring behind that
- *       decision is T019/T020's own test file — deferred here, not
- *       reimplemented.
+ *       `Projection.decideMutation` call `live-doc-source.ts` guards its
+ *       embed call with) never fires for an unchanged hash.
+ *
+ * Also covers the disk-seeded LiveDocSource e2e (T019/T020 landed): write a
+ * skill file under a tmpdir, collect→reconcile, then delete/edit/no-change the
+ * file and re-run — no live solaris required.
  */
 import { describe, expect, test } from "bun:test"
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { tmpdir } from "node:os"
+import path from "node:path"
 import { Effect } from "effect"
 import { Projection } from "@opencode-ai/core/semantic/projection"
 import { IndexJobs } from "@/semantic/index-jobs"
+import { LiveDocSource } from "@/semantic/live-doc-source"
 import { MilvusAdapter } from "@/semantic/milvus-adapter"
 import { OutputSpoolStore } from "@/semantic/output-spool-store"
 import type { ChannelKey, IngestOutcome } from "@/session/output-spool-writer"
@@ -233,4 +237,242 @@ describe("Staleness — no-change (AC5)", () => {
       expect(embedSpy.calls).toBe(2)
     },
   )
+})
+
+// ---------------------------------------------------------------------------
+// Disk-seeded LiveDocSource e2e (T028-T030 extension — no live solaris)
+// ---------------------------------------------------------------------------
+
+/** Minimal SKILL.md frontmatter + body written to disk for LiveDocSource.skills(). */
+function writeSkillFile(root: string, name: string, description: string, body: string): string {
+  const dir = path.join(root, ".opencode", "skill", name)
+  mkdirSync(dir, { recursive: true })
+  const file = path.join(dir, "SKILL.md")
+  writeFileSync(file, `---\nname: ${name}\ndescription: ${description}\n---\n\n${body}\n`, "utf8")
+  return file
+}
+
+/** Read on-disk skills under root into LiveDocSource SkillSourceInput rows (content-hash seed). */
+async function loadSkillsFromDisk(root: string): Promise<readonly LiveDocSource.SkillSourceInput[]> {
+  const skillRoot = path.join(root, ".opencode", "skill")
+  const names = await Array.fromAsync(new Bun.Glob("*").scan({ cwd: skillRoot, onlyFiles: false }))
+  const out: LiveDocSource.SkillSourceInput[] = []
+  for (const name of names) {
+    const file = path.join(skillRoot, name, "SKILL.md")
+    if (!(await Bun.file(file).exists())) continue
+    const text = await Bun.file(file).text()
+    const fm = text.match(/^---\n([\s\S]*?)\n---\n?([\s\S]*)$/)
+    if (!fm) continue
+    const description = fm[1]!.match(/^description:\s*(.+)$/m)?.[1]?.trim() ?? name
+    out.push({ name, description, slash: false, content: fm[2]!.trim() })
+  }
+  return out
+}
+
+function createDiskSeedSource(root: string, embedCalls: string[][]) {
+  const { writer, reader } = createFakeSpool()
+  const spool = OutputSpoolStore.createOutputSpoolStore({ writer, reader })
+  return LiveDocSource.createLiveDocSource({
+    agents: async () => [],
+    skills: async () => loadSkillsFromDisk(root),
+    embed: async (texts) => {
+      embedCalls.push([...texts])
+      return texts.map((_, i) => [i + 1, 0])
+    },
+    spool,
+    chunking: { maxChunks: 4, chunkSizeTokens: 40, overlapTokens: 5 },
+    filters: (projectId) => ({ projectId, scope: "project", visibility: "public" }),
+  })
+}
+
+describe("Staleness e2e — disk-seeded LiveDocSource (T028-T030)", () => {
+  test("delete: seed skill on disk → index → delete file → reconcile tombstones (AC3)", async () => {
+    const root = mkdtempSync(path.join(tmpdir(), "f050-stale-del-"))
+    try {
+      writeSkillFile(root, "deploy-helper", "helps deploy things", "# Deploy\n\nDeploy reliably.")
+      const embedCalls: string[][] = []
+      const source = createDiskSeedSource(root, embedCalls)
+      const milvus = MilvusAdapter.createFakeMilvusAdapter()
+
+      const live1 = await source.collect({ collection: "skills", projectId: "p1", full: true })
+      expect(live1.length).toBe(1)
+      expect(live1[0]!.canonicalId).toBe("deploy-helper")
+      expect(embedCalls.length).toBe(1)
+
+      const index1 = await Effect.runPromise(
+        IndexJobs.runReconcile(
+          { milvus, spool: noopSpool },
+          {
+            collection: "skills",
+            live: live1,
+            indexed: [],
+            projectId: "p1",
+            bindingVersion: 1,
+          },
+        ),
+      )
+      expect(index1.summary.upsertedCount).toBe(1)
+
+      // Delete the skill file on disk (live source becomes empty).
+      rmSync(path.join(root, ".opencode", "skill", "deploy-helper"), { recursive: true, force: true })
+      const live2 = await source.collect({ collection: "skills", projectId: "p1" })
+      expect(live2).toEqual([])
+
+      const del = await Effect.runPromise(
+        IndexJobs.runReconcile(
+          { milvus, spool: noopSpool },
+          {
+            collection: "skills",
+            live: live2,
+            indexed: [{ canonicalId: live1[0]!.canonicalId, contentHash: live1[0]!.contentHash }],
+            projectId: "p1",
+            bindingVersion: 1,
+          },
+        ),
+      )
+      expect(del.summary.tombstonedCount).toBe(1)
+      expect(del.summary.upsertedCount).toBe(0)
+
+      const search = await Effect.runPromise(
+        milvus.search({
+          collection: "skills",
+          dense: [1, 0],
+          sparseTerms: [],
+          filters,
+          topK: 10,
+          consistency: "bounded",
+          metric: "cosine",
+        }),
+      )
+      expect(search.hits.some((h) => h.canonicalId === "deploy-helper")).toBe(false)
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  test("edit: seed skill → index → edit body on disk → reconcile supersedes (AC4)", async () => {
+    const root = mkdtempSync(path.join(tmpdir(), "f050-stale-edit-"))
+    try {
+      writeSkillFile(root, "edit-skill", "original description", "# V1 body")
+      const embedCalls: string[][] = []
+      const source = createDiskSeedSource(root, embedCalls)
+      const milvus = MilvusAdapter.createFakeMilvusAdapter()
+
+      const live1 = await source.collect({ collection: "skills", projectId: "p1", full: true })
+      await Effect.runPromise(
+        IndexJobs.runReconcile(
+          { milvus, spool: noopSpool },
+          { collection: "skills", live: live1, indexed: [], projectId: "p1", bindingVersion: 1 },
+        ),
+      )
+      const priorHash = live1[0]!.contentHash
+      embedCalls.length = 0
+
+      // Edit description (embed text) so content hash changes.
+      writeSkillFile(root, "edit-skill", "edited description", "# V2 body with more detail")
+      // Wire indexedHashes so embed-skip uses prior generation.
+      const sourceWithPrior = LiveDocSource.createLiveDocSource({
+        agents: async () => [],
+        skills: async () => loadSkillsFromDisk(root),
+        embed: async (texts) => {
+          embedCalls.push([...texts])
+          return texts.map(() => [0, 1])
+        },
+        spool: OutputSpoolStore.createOutputSpoolStore(createFakeSpool()),
+        indexedHashes: async () => new Map([["edit-skill", priorHash]]),
+        chunking: { maxChunks: 4, chunkSizeTokens: 40, overlapTokens: 5 },
+        filters: (projectId) => ({ projectId, scope: "project", visibility: "public" }),
+      })
+      const liveEdited = await sourceWithPrior.collect({ collection: "skills", projectId: "p1" })
+      expect(liveEdited.length).toBe(1)
+      expect(liveEdited[0]!.contentHash).not.toBe(priorHash)
+      expect(embedCalls.length).toBe(1) // changed hash embeds once
+
+      const result = await Effect.runPromise(
+        IndexJobs.runReconcile(
+          { milvus, spool: noopSpool },
+          {
+            collection: "skills",
+            live: liveEdited,
+            indexed: [{ canonicalId: "edit-skill", contentHash: priorHash }],
+            projectId: "p1",
+            bindingVersion: 1,
+          },
+        ),
+      )
+      expect(result.summary.upsertedCount).toBe(1)
+      expect(result.summary.tombstonedCount).toBe(0)
+
+      const search = await Effect.runPromise(
+        milvus.search({
+          collection: "skills",
+          dense: [0, 1],
+          sparseTerms: [],
+          filters,
+          topK: 10,
+          consistency: "bounded",
+          metric: "cosine",
+        }),
+      )
+      const matches = search.hits.filter((h) => h.canonicalId === "edit-skill")
+      expect(matches.length).toBe(1)
+      expect(matches[0]!.canonicalVersion).toBe(liveEdited[0]!.contentHash)
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  test("no-change: re-collect same disk skill → zero embeds and zero mutations (AC5)", async () => {
+    const root = mkdtempSync(path.join(tmpdir(), "f050-stale-noop-"))
+    try {
+      writeSkillFile(root, "stable-skill", "stable description", "# Stable body")
+      const embedCalls: string[][] = []
+      const milvus = MilvusAdapter.createFakeMilvusAdapter()
+
+      const sourceFull = createDiskSeedSource(root, embedCalls)
+      const live1 = await sourceFull.collect({ collection: "skills", projectId: "p1", full: true })
+      await Effect.runPromise(
+        IndexJobs.runReconcile(
+          { milvus, spool: noopSpool },
+          { collection: "skills", live: live1, indexed: [], projectId: "p1", bindingVersion: 1 },
+        ),
+      )
+      const priorHash = live1[0]!.contentHash
+      embedCalls.length = 0
+
+      const sourceIncremental = LiveDocSource.createLiveDocSource({
+        agents: async () => [],
+        skills: async () => loadSkillsFromDisk(root),
+        embed: async (texts) => {
+          embedCalls.push([...texts])
+          return texts.map(() => [1, 0])
+        },
+        spool: OutputSpoolStore.createOutputSpoolStore(createFakeSpool()),
+        indexedHashes: async () => new Map([["stable-skill", priorHash]]),
+        chunking: { maxChunks: 4, chunkSizeTokens: 40, overlapTokens: 5 },
+        filters: (projectId) => ({ projectId, scope: "project", visibility: "public" }),
+      })
+      const live2 = await sourceIncremental.collect({ collection: "skills", projectId: "p1" })
+      expect(embedCalls.length).toBe(0) // unchanged hash → ZERO embed calls
+      expect(live2[0]!.row.dense).toEqual([])
+
+      const result = await Effect.runPromise(
+        IndexJobs.runReconcile(
+          { milvus, spool: noopSpool },
+          {
+            collection: "skills",
+            live: live2,
+            indexed: [{ canonicalId: "stable-skill", contentHash: priorHash }],
+            projectId: "p1",
+            bindingVersion: 1,
+          },
+        ),
+      )
+      expect(result.summary.upsertedCount).toBe(0)
+      expect(result.summary.tombstonedCount).toBe(0)
+      expect(result.summary.unchangedCount).toBe(1)
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
 })

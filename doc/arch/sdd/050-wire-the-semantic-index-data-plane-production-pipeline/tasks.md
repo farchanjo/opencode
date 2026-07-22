@@ -203,50 +203,37 @@
   plugin tools (no namespace prefix), and `McpCatalog.toolName` (imported
   directly, not reimplemented) for the `mcp.tools()` record key — plus a
   cross-class collision check (FR11, AC6).
-- [ ] T028 Staleness — delete. PARTIAL coverage in
-  `packages/opencode/test/semantic/feature050-staleness.test.ts`: proves
-  `IndexJobs.planMutations`/`runReconcile` tombstone a doc present in
-  `indexed` but absent from `live` (drift 0 via a post-reconcile search), and
-  — composed with the Wave-1 `OutputSpoolStore` façade — that the tombstoned
-  skill_chunk's spool entry is superseded alongside the doc. NOT covered:
-  the literal "seed a skill file on disk, index it, delete the file, run
-  reconcile" end-to-end flow — that requires `live-doc-source.ts` (T019),
-  still in flight on a concurrent slice of this feature. Un-ticked pending
-  T019/T020 landing; re-verify against the real file-seed flow then.
-- [ ] T029 Staleness — edit. PARTIAL coverage in
-  `feature050-staleness.test.ts`: proves a changed content hash supersedes via
-  `upsert` (never a duplicate row for the same canonical id, verified via a
-  post-reconcile search) and that `planMutations` alone always decides
-  `upsert` (never tombstone+reinsert) for an edited hash. NOT covered: the
-  literal "seed a skill, edit its body on disk, run reconcile" end-to-end
-  flow, same T019/T020 dependency as T028. Un-ticked pending that wiring.
-- [ ] T030 Staleness — no-change. PARTIAL coverage in
-  `feature050-staleness.test.ts`: proves `runReconcile` issues zero
-  upserts/tombstones for identical hashes, and that the embed-skip DECISION
-  itself (`Projection.decideMutation`, the SAME function `live-doc-source.ts`
-  will guard its embed call with) never fires for an unchanged hash via a
-  local embed-call-count spy. NOT covered: the literal "fake/real embeddings
-  client" call-count instrumentation wired through the actual
-  `AgentV2.Service`/`SkillV2.Service` live reads — that's T019/T020's own
-  test file once that slice lands. Un-ticked pending that wiring.
+- [x] T028 Staleness — delete. Covered in
+  `packages/opencode/test/semantic/feature050-staleness.test.ts`: unit path
+  tombstones via `planMutations`/`runReconcile` (drift 0) + skill_chunk spool
+  supersede; disk-seeded LiveDocSource e2e writes a skill under tmpdir, indexes,
+  deletes the file, re-collects, and reconciles a tombstone (AC3).
+- [x] T029 Staleness — edit. Covered in `feature050-staleness.test.ts`: unit
+  path supersedes via upsert (no duplicate row) + `planMutations` upsert-only;
+  disk-seeded e2e edits SKILL.md on disk, re-collects with prior
+  `indexedHashes`, embeds once, and supersedes in place (AC4).
+- [x] T030 Staleness — no-change. Covered in `feature050-staleness.test.ts`:
+  unit path zero mutations + embed-skip decision spy; disk-seeded e2e re-collects
+  an unchanged skill with `indexedHashes` wired and asserts ZERO embed calls and
+  zero upserts/tombstones (AC5).
 - [x] T031 Live smoke — full reindex:
   `OPENCODE_CONFIG_DIR=~/.opencodedev opencode-cli op semantic index reindex`
   produces non-zero upserts across all four collections (`agents`, `skills`,
   `skill_chunks`, `tools`) at the probed 2560-dimension generation (AC1, AC2).
-- [ ] T032 Retry test — transient bounded + domain never-retry, in
+- [x] T032 Retry test — transient bounded + domain never-retry, in
   `packages/opencode/test/semantic/retry-policy.test.ts`: a `milvus_unavailable`
   fault retries ≤3 times with jittered backoff and increments
   `ConsumptionResilience.retry_count`; a `dimension_mismatch`/schema-reject
   fault never retries (AC7).
-- [ ] T033 Retry test — per-batch resume, extending
+- [x] T033 Retry test — per-batch resume, extending
   `retry-policy.test.ts`: an interrupted embed batch mid-reindex retries only
   that batch (never restarting the whole reindex), and reconcile resumes from
   the last durable per-batch step (AC7).
-- [ ] T034 Live smoke — probe failure fail-closed: point the bound model at
+- [x] T034 Live smoke — probe failure fail-closed: point the bound model at
   an unreachable endpoint, run the dimension probe, assert exactly 2 bounded
   retries then a refused generation build with a typed capability-gap code,
   never a silent default dimension (AC8).
-- [ ] T035 Live smoke — provider pluggability round trip: register a second
+- [x] T035 Live smoke — provider pluggability round trip: register a second
   embed provider via `semantic model register`/`semantic embedding select`,
   run `reindex`→`validate`→`cutover`, assert the atomic alias-swap activates
   the new generation at its newly-probed dimension, then `rollback` restores
