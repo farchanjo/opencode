@@ -151,7 +151,7 @@
 
 ### Phase 5 — Verification
 
-- [ ] T023 Golden — disabled path: byte-identical snapshot of the rendered
+- [x] T023 Golden — disabled path: byte-identical snapshot of the rendered
   `task` description, skill listing, and native+MCP tool set before and after
   this feature's changes, with all three `semantic_narrowing` gates off
   (AC7/FR6); reuses Feature 050's snapshot-harness pattern.
@@ -168,7 +168,7 @@
   once and would succeed on a second attempt produces exactly one failed
   call and an immediate passthrough for that surface — no second attempt
   within the turn (AC6, FR7).
-- [ ] T027 Gates: `bun test test/semantic/ test/session/ test/tool/` green;
+- [x] T027 Gates: `bun test test/semantic/ test/session/ test/tool/` green;
   `bunx tsgo --noEmit -p packages/opencode/tsconfig.json` clean; `speckit
   validate --json` → `ok:true`.
 
