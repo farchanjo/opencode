@@ -37,6 +37,8 @@ import { McpEvent } from "@opencode-ai/schema/mcp-event"
 import { McpBrowser } from "./browser"
 
 const DEFAULT_TIMEOUT = 30_000
+/** Grace between SIGTERM and SIGKILL when reaping local MCP process trees. */
+const STDIO_TREE_KILL_GRACE_MS = 500
 const CLIENT_OPTIONS = {
   capabilities: {
     // https://github.com/anomalyco/opencode/issues/11948
@@ -152,6 +154,30 @@ interface State {
   clients: Record<string, MCPClient>
   defs: Record<string, MCPToolDef[]>
   instructions: Record<string, string>
+  /** Root PIDs of local stdio transports, cached while connected (SDK clears pid after exit). */
+  stdioPids: Record<string, number>
+}
+
+function stdioRootPid(client: MCPClient | undefined): number | null {
+  const transport = client?.transport
+  if (!(transport instanceof StdioClientTransport)) return null
+  const pid = transport.pid
+  return typeof pid === "number" ? pid : null
+}
+
+function signalPid(pid: number, signal: NodeJS.Signals) {
+  try {
+    process.kill(pid, signal)
+  } catch {}
+}
+
+function pidAlive(pid: number) {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch {
+    return false
+  }
 }
 
 export interface ServerInstructions {
@@ -462,18 +488,58 @@ const layer = Layer.effect(
       Effect.catch(() => Effect.succeed([] as number[])),
     )
 
+    /** Snapshot root + descendants and SIGTERM → grace → SIGKILL. Prevents pnpm/npx/Chrome orphans. */
+    const terminateStdioTree = Effect.fnUntraced(
+      function* (root: number) {
+        if (process.platform === "win32") {
+          const handle = yield* spawner.spawn(
+            ChildProcess.make("taskkill", ["/F", "/T", "/PID", String(root)], { stdin: "ignore" }),
+          )
+          yield* handle.exitCode.pipe(Effect.catch(() => Effect.succeed(1)))
+          return
+        }
+
+        const first = yield* descendants(root)
+        const seen = new Set<number>([root, ...first])
+        for (const pid of [...seen].reverse()) signalPid(pid, "SIGTERM")
+        yield* Effect.sleep(`${STDIO_TREE_KILL_GRACE_MS} millis`)
+        const second = yield* descendants(root)
+        for (const pid of second) seen.add(pid)
+        for (const pid of seen) {
+          if (pidAlive(pid)) signalPid(pid, "SIGKILL")
+        }
+      },
+      Effect.scoped,
+      Effect.catch(() => Effect.void),
+    )
+
+    const terminateLocalClient = Effect.fnUntraced(function* (
+      client: MCPClient | undefined,
+      cachedRoot?: number | null,
+    ) {
+      const root = stdioRootPid(client) ?? (typeof cachedRoot === "number" ? cachedRoot : null)
+      if (typeof root === "number") yield* terminateStdioTree(root)
+      if (client) yield* Effect.tryPromise(() => client.close()).pipe(Effect.ignore)
+      // Second pass: reparented leftovers may still hang under a living wrapper after close.
+      if (typeof root === "number" && pidAlive(root)) yield* terminateStdioTree(root)
+    })
+
     function watch(s: State, name: string, client: MCPClient, bridge: EffectBridge.Shape, timeout?: number) {
       client.onclose = () => {
         if (s.clients[name] !== client) return
+        const cachedPid = s.stdioPids[name]
         delete s.clients[name]
         delete s.defs[name]
         delete s.instructions[name]
+        delete s.stdioPids[name]
         s.status[name] = { status: "failed", error: "Connection closed" }
         bridge.fork(
-          Effect.logWarning("MCP connection closed", { server: name }).pipe(
-            Effect.andThen(events.publish(ToolsChanged, { server: name })),
-            Effect.ignore,
-          ),
+          Effect.gen(function* () {
+            // Root may already be dead; still try residual tree from last known root.
+            if (typeof cachedPid === "number") yield* terminateStdioTree(cachedPid)
+            yield* Effect.logWarning("MCP connection closed", { server: name })
+            yield* events.publish(ToolsChanged, { server: name })
+          }).pipe(Effect.ignore),
         )
       }
 
@@ -523,6 +589,7 @@ const layer = Layer.effect(
           clients: {},
           defs: {},
           instructions: {},
+          stdioPids: {},
         }
 
         yield* Effect.forEach(
@@ -545,6 +612,8 @@ const layer = Layer.effect(
                 s.clients[key] = result.mcpClient
                 s.defs[key] = result.defs!
                 if (result.instructions) s.instructions[key] = result.instructions
+                const root = stdioRootPid(result.mcpClient)
+                if (typeof root === "number") s.stdioPids[key] = root
                 watch(s, key, result.mcpClient, bridge, mcp.timeout)
               }
             }),
@@ -553,25 +622,15 @@ const layer = Layer.effect(
 
         yield* Effect.addFinalizer(() =>
           Effect.gen(function* () {
-            const clients = Object.values(s.clients)
+            const entries = Object.entries(s.clients)
+            const cached = { ...s.stdioPids }
             s.clients = {}
             s.defs = {}
             s.instructions = {}
+            s.stdioPids = {}
             yield* Effect.forEach(
-              clients,
-              (client) =>
-                Effect.gen(function* () {
-                  const pid = client.transport instanceof StdioClientTransport ? client.transport.pid : null
-                  if (typeof pid === "number") {
-                    const pids = yield* descendants(pid)
-                    for (const dpid of pids) {
-                      try {
-                        process.kill(dpid, "SIGTERM")
-                      } catch {}
-                    }
-                  }
-                  yield* Effect.tryPromise(() => client.close()).pipe(Effect.ignore)
-                }),
+              entries,
+              ([name, client]) => terminateLocalClient(client, cached[name]),
               { concurrency: "unbounded" },
             )
             pendingOAuthTransports.clear()
@@ -584,11 +643,13 @@ const layer = Layer.effect(
 
     function closeClient(s: State, name: string) {
       const client = s.clients[name]
+      const cachedPid = s.stdioPids[name]
       delete s.clients[name]
       delete s.defs[name]
       delete s.instructions[name]
-      if (!client) return Effect.void
-      return Effect.tryPromise(() => client.close()).pipe(Effect.ignore)
+      delete s.stdioPids[name]
+      if (!client && typeof cachedPid !== "number") return Effect.void
+      return terminateLocalClient(client, cachedPid)
     }
 
     const storeClient = Effect.fnUntraced(function* (
@@ -601,13 +662,17 @@ const layer = Layer.effect(
     ) {
       const bridge = yield* EffectBridge.make()
       const previous = s.clients[name]
+      const previousPid = s.stdioPids[name]
       s.status[name] = { status: "connected" }
       s.clients[name] = client
       s.defs[name] = listed
       if (instructions) s.instructions[name] = instructions
       else delete s.instructions[name]
+      const root = stdioRootPid(client)
+      if (typeof root === "number") s.stdioPids[name] = root
+      else delete s.stdioPids[name]
       watch(s, name, client, bridge, timeout)
-      if (previous) yield* Effect.tryPromise(() => previous.close()).pipe(Effect.ignore)
+      if (previous) yield* terminateLocalClient(previous, previousPid)
       return s.status[name]
     })
 
