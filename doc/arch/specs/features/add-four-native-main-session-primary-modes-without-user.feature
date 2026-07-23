@@ -27,6 +27,20 @@ Feature: Four native main-session primary modes without profile agent MD
     When bash runs an allowed Speckit status command form
     Then the bash permission ruleset allows it
 
+  Scenario: Speckit mode keeps MCP tools permission-visible
+    Given the session agent is speckit
+    And no global deny rule targets a representative MCP tool id
+    When permission is evaluated for chrome-devtools_list_pages
+    Then the tool is not disabled by a blanket star deny
+    And skill permission is allowed
+
+  Scenario: Solo keeps MCP tools permission-visible
+    Given the session agent is solo
+    And no global deny rule targets a representative MCP tool id
+    When permission is evaluated for chrome-devtools_list_pages
+    Then the tool is allowed subject to global user permission config
+    And task spawn remains denied
+
   Scenario: Solo denies task spawn
     Given the session agent is solo
     When task spawn of a subagent is attempted

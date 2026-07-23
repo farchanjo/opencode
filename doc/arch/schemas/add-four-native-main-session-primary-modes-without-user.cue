@@ -3,6 +3,9 @@
 // Feature 057 — Four native main-session primary modes (plan/build/solo/speckit)
 // without user profile agent MD. Wire ids and mode flags only; permissions live
 // in harness TypeScript.
+// Residual FR 6 / 11b (MCP): solo and speckit MUST keep server-prefixed MCP tool
+// ids permission-visible — no agent-level blanket "*" deny. Enforced in TS
+// Permission rulesets, not additional CUE defs (calisthenics budget).
 
 package schemas
 

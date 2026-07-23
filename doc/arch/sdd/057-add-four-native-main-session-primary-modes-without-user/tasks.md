@@ -26,9 +26,31 @@
 - [x] T006 Run `bun typecheck` / targeted `bun test` in `packages/opencode` (and
   core if touched); `~/bin/speckit validate` green for the feature artefacts.
 
+## Residual — MCP visibility (FR 6 / 11b)
+
+- [x] T007 Speckit permissions: remove blanket `"*": "deny"`; keep explicit
+  denials for `edit`, `task`, `plan_enter`/`plan_exit`, and bash (allowlist
+  Speckit CLI + deny `implement*`). Allow `skill` and leave MCP server-prefixed
+  tools permission-visible subject to global/user config.
+
+- [x] T008 Solo: document/assert full tools including MCP; never introduce
+  blanket `"*": "deny"`; keep `task: deny`.
+
+- [x] T009 Update defaults MD for solo/speckit to state MCP is allowed for live
+  evidence; Speckit still never free-edits product code or runs implement.
+
+- [x] T010 Tests: `Permission.evaluate` / `Permission.disabled` for a
+  representative MCP tool id (e.g. `chrome-devtools_list_pages`) is allow / not
+  disabled on both `solo` and `speckit`; `skill` allow on speckit.
+
+- [x] T011 Corpus residual: align plan, tasks, ADR-0057, Gherkin feature, and CUE
+  schema with FR 6 / 11b; `~/bin/speckit validate` green.
+
 ## Dependencies
 
 - Feature 056 hierarchy collapse (main→workers) already implemented.
 - Existing native `plan`/`build`/`general`/`explore` agents.
 - Speckit CLI external binary for runtime Speckit mode (not bundled).
 - No fapp catalog dependency.
+- MCP servers configured by operator (e.g. chrome-devtools) — product only
+  exposes tools when servers are enabled; this residual is permission shape only.

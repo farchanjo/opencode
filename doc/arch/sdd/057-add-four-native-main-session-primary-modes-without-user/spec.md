@@ -44,6 +44,9 @@ workers via `task`.
   spawning subagents so that I keep full control without hierarchy noise.
 - As a user I want Speckit mode to run the Speckit SDD/corpus CLI safely so that
   I never free-edit code or run `speckit implement` in that mode.
+- As a user I want Solo and Speckit modes to use configured MCP tools (e.g.
+  browser DevTools) for live evidence so that I do not leave those modes only
+  to call MCP.
 - As a maintainer I want system prompts as shipped MD under the package agent
   tree so that defaults are versioned in the monorepo, not user profile MD.
 - As a maintainer I want core plugin agent parity so that V1 and V2 agent paths
@@ -136,8 +139,9 @@ workers via `task`.
 23. Automated tests MUST prove: all four primaries exist and are primary/native;
     `solo` and `speckit` deny `task`; `speckit` denies free `edit` and denies
     bash `implement` patterns while allowing a representative Speckit status
-    command pattern; same-session switch retains session identity (existing
-    seams if already covered).
+    command pattern; a representative MCP tool id (e.g. `chrome-devtools_list_pages`)
+    is not disabled on `solo` or `speckit` under default rules; same-session
+    switch retains session identity (existing seams if already covered).
 
 ## Security Requirements
 
@@ -186,6 +190,16 @@ Given agent `solo`
 When  the model attempts to invoke `task` to spawn a subagent
 Then  the spawn is denied.
 
+Given agent `solo`
+When  permission is evaluated for a representative MCP tool id
+      (e.g. `chrome-devtools_list_pages`) under default agent rules
+Then  the tool is not hidden by a blanket `"*": "deny"`.
+
+Given agent `speckit`
+When  permission is evaluated for a representative MCP tool id
+      (e.g. `chrome-devtools_list_pages`) under default agent rules
+Then  the tool is not hidden by a blanket `"*": "deny"` and `skill` is allowed.
+
 Given agent `build`
 When  the model invokes `task` with a valid subagent type
 Then  the spawn is allowed subject to existing hierarchy/task rules.
@@ -219,3 +233,6 @@ bounded reason enums only. Export conventions: `doc/arch/observability/observabi
 - C2 — Speckit mode forbids **code** implementation; Speckit CLI writes under
   `doc/arch` remain in scope for that mode.
 - C3 — System prompt MD lives under the package agent tree, not user profile.
+- C4 — MCP on Solo/Speckit means agent permission shape keeps server-prefixed
+  tools visible; global/user config may still deny individual heavy tools
+  (traces, heap). Speckit still never free-edits product source via edit tools.
