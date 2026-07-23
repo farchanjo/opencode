@@ -1,38 +1,27 @@
 import { describe, expect, test } from "bun:test"
-import { applyChatBudget, chatOutputSystemBlock, resolveChatBudget, wordCount } from "../../src/session/chat-output"
+import { chatOutputSystemBlock, hasChatOutputBudget, wordCount } from "../../src/session/chat-output"
 
-describe("chat-output budget", () => {
-  test("resolveChatBudget ignores empty config", () => {
-    expect(resolveChatBudget(undefined)).toBeUndefined()
-    expect(resolveChatBudget({})).toBeUndefined()
-    expect(resolveChatBudget({ max_words: 0 })).toBeUndefined()
+describe("chat-output budget (soft / LLM self-size)", () => {
+  test("hasChatOutputBudget ignores empty and zero", () => {
+    expect(hasChatOutputBudget(undefined)).toBe(false)
+    expect(hasChatOutputBudget({})).toBe(false)
+    expect(hasChatOutputBudget({ max_words: 0 })).toBe(false)
+    expect(hasChatOutputBudget({ max_words: 50 })).toBe(true)
+    expect(hasChatOutputBudget({ max_tokens: 100 })).toBe(true)
   })
 
-  test("resolveChatBudget accepts words and/or tokens", () => {
-    expect(resolveChatBudget({ max_words: 50 })).toMatchObject({ maxWords: 50, exhausted: false })
-    expect(resolveChatBudget({ max_tokens: 100 })).toMatchObject({ maxTokens: 100, exhausted: false })
+  test("wordCount", () => {
+    expect(wordCount("one two three")).toBe(3)
+    expect(wordCount("  ")).toBe(0)
   })
 
-  test("applyChatBudget clamps words", () => {
-    const text = "one two three four five six"
-    const result = applyChatBudget(text, { maxWords: 3 })
-    expect(result.exhausted).toBe(true)
-    expect(wordCount(result.text)).toBe(3)
-    expect(result.text).toContain("one")
-    expect(result.text).toContain("three")
-    expect(result.text).not.toContain("four")
-  })
-
-  test("applyChatBudget leaves short text alone", () => {
-    const result = applyChatBudget("hello world", { maxWords: 10, maxTokens: 100 })
-    expect(result.exhausted).toBe(false)
-    expect(result.text).toBe("hello world")
-  })
-
-  test("chatOutputSystemBlock mentions words and tool exemption", () => {
+  test("chatOutputSystemBlock asks model to self-size, not hard-filter language", () => {
     const block = chatOutputSystemBlock({ max_words: 120 })
     expect(block).toContain("120 words")
+    expect(block).toContain("self-edit")
+    expect(block).toContain("console chat")
     expect(block).toContain("write/edit")
-    expect(block).toContain("Console chat")
+    expect(block.toLowerCase()).not.toContain("stream")
+    expect(block.toLowerCase()).not.toContain("truncat")
   })
 })

@@ -83,7 +83,7 @@ export function DialogChatOutput() {
 
     opts.push({
       title: `Current: ${label()}`,
-      description: "Primary-agent console text only — tools/file writes exempt",
+      description: "Main console: model self-sizes reply (no hard filter). Tools/writes exempt.",
       value: "status",
       category: "Status",
       disabled: true,
@@ -102,7 +102,7 @@ export function DialogChatOutput() {
     for (const n of wordChoices) {
       opts.push({
         title: `Max words: ${n}${cur.max_words === n ? "  ✓" : ""}`,
-        description: cur.max_words === n ? "Active" : `Clamp console chat to ${n} words (stream-enforced)`,
+        description: cur.max_words === n ? "Active" : `Ask model to fit console chat in ${n} words`,
         value: `words:${n}`,
         category: "Words",
         onSelect: () => {
@@ -124,7 +124,7 @@ export function DialogChatOutput() {
     for (const n of tokenChoices) {
       opts.push({
         title: `Max tokens: ${n}${cur.max_tokens === n ? "  ✓" : ""}`,
-        description: cur.max_tokens === n ? "Active" : `Clamp console chat to ~${n} estimated tokens`,
+        description: cur.max_tokens === n ? "Active" : `Ask model to fit console chat in ~${n} tokens`,
         value: `tokens:${n}`,
         category: "Tokens",
         onSelect: () => {

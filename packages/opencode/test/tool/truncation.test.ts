@@ -39,17 +39,30 @@ describe("Truncate", () => {
       }),
     )
 
-    it.live("returns content unchanged when under limits but always persists full buffer", () =>
+    it.live("returns content unchanged when under limits without disk for primary/console", () =>
       Effect.gen(function* () {
         const svc = yield* Truncate.Service
-        const fsys = yield* FSUtil.Service
         const content = "line1\nline2\nline3"
         const result = yield* svc.output(content)
 
         expect(result.truncated).toBe(false)
         expect(result.content).toBe(content)
+        expect(result.outputPath).toBeUndefined()
+      }),
+    )
+
+    it.live("subagent under limits still persists full buffer for peer agents", () =>
+      Effect.gen(function* () {
+        const svc = yield* Truncate.Service
+        const fsys = yield* FSUtil.Service
+        const content = "line1\nline2\nline3"
+        const agent = { mode: "subagent" as const, name: "explore", permission: [] }
+        const result = yield* svc.output(content, {}, agent as any)
+
+        expect(result.truncated).toBe(false)
+        expect(result.content).toBe(content)
         expect(result.outputPath).toBeDefined()
-        expect(yield* fsys.readFileString(result.outputPath)).toBe(content)
+        expect(yield* fsys.readFileString(result.outputPath!)).toBe(content)
       }),
     )
 
@@ -159,7 +172,7 @@ describe("Truncate", () => {
             maxBytes: 1024 * 1024,
           })
           expect(result.truncated).toBe(false)
-          expect(result.outputPath).toBeDefined()
+          expect(result.outputPath).toBeUndefined()
         }),
       )
     })
@@ -222,16 +235,14 @@ describe("Truncate", () => {
       }),
     )
 
-    it.live("always writes full buffer even when not truncated", () =>
+    it.live("does not write file when not truncated on primary path", () =>
       Effect.gen(function* () {
         const svc = yield* Truncate.Service
-        const fsys = yield* FSUtil.Service
         const content = "short content"
         const result = yield* svc.output(content)
 
         expect(result.truncated).toBe(false)
-        expect(result.outputPath).toBeDefined()
-        expect(yield* fsys.readFileString(result.outputPath)).toBe(content)
+        expect(result.outputPath).toBeUndefined()
       }),
     )
 

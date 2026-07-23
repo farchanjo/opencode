@@ -568,8 +568,8 @@ export const ShellTool = Tool.define(
       const raw = list.map((item) => item.text).join("")
       const end = tail(raw, limits.maxLines, limits.maxBytes)
       if (end.cut) cut = true
-      // Always persist the full shell buffer for other agents / post-compact recovery.
-      if (!file) {
+      // Disk buffer only when truncated (console) — subagent path uses Truncate.output elsewhere.
+      if (!file && end.cut) {
         file = yield* trunc.write(raw || "(no output)")
       }
 
@@ -589,7 +589,7 @@ export const ShellTool = Tool.define(
           output: last || preview(output),
           exit: code,
           truncated: cut,
-          outputPath: file,
+          ...(cut && file ? { outputPath: file } : {}),
         },
         output,
       }

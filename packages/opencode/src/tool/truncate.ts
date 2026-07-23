@@ -18,20 +18,25 @@ export const DIR = TRUNCATION_DIR
 export const GLOB = path.join(TRUNCATION_DIR, "*")
 
 /**
- * Full tool output is **always** written to disk (`outputPath`) so other agents
- * can Read/Grep the complete buffer. `content` is the in-context preview (full
- * when under limits, truncated with path hint when over).
+ * In-context tool result. `outputPath` is set when the full buffer was written
+ * to disk: always for subagents (agent handoff), or for primary only when the
+ * in-context preview had to be truncated.
  */
 export type Result = {
   content: string
   truncated: boolean
-  outputPath: string
+  outputPath?: string
 }
 
 export interface Options {
   maxLines?: number
   maxBytes?: number
   direction?: "head" | "tail"
+  /**
+   * Force full buffer to disk even under limits. Defaults true for subagents,
+   * false for primary/console agents.
+   */
+  persistFull?: boolean
 }
 
 function hasTaskTool(agent?: Agent.Info) {
@@ -39,12 +44,19 @@ function hasTaskTool(agent?: Agent.Info) {
   return evaluate("task", "*", agent.permission).action !== "deny"
 }
 
+/** Subagents (and only they by default) keep full buffers on disk for peer agents. */
+export function shouldPersistFullBuffer(agent?: Agent.Info, options?: Options): boolean {
+  if (options?.persistFull === true) return true
+  if (options?.persistFull === false) return false
+  return agent?.mode === "subagent"
+}
+
 export interface Interface {
   readonly cleanup: () => Effect.Effect<void>
   readonly write: (text: string) => Effect.Effect<string>
   /**
-   * Always persists the full buffer to the truncation directory, then returns
-   * either the full text (under limits) or a preview + path for agents.
+   * Returns in-context content (full or preview). Writes full buffer to disk when
+   * over limits, or when persistFull/subagent so other agents can recover it.
    */
   readonly output: (text: string, options?: Options, agent?: Agent.Info) => Effect.Effect<Result>
   /**
@@ -98,14 +110,20 @@ const layer = Layer.effect(
       const direction = options.direction ?? "head"
       const lines = text.split("\n")
       const totalBytes = Buffer.byteLength(text, "utf-8")
+      const underLimits = lines.length <= maxLines && totalBytes <= maxBytes
+      const persistFull = shouldPersistFullBuffer(agent, options)
 
-      // Always persist the full buffer so other agents can recover everything.
-      const file = yield* write(text)
+      if (underLimits && !persistFull) {
+        return { content: text, truncated: false }
+      }
 
-      if (lines.length <= maxLines && totalBytes <= maxBytes) {
-        // Full buffer is on disk; in-context keeps the full text (no preview cut).
+      if (underLimits && persistFull) {
+        const file = yield* write(text)
         return { content: text, truncated: false, outputPath: file }
       }
+
+      // Over limits: always write full buffer so agents can recover the rest.
+      const file = yield* write(text)
 
       const out: string[] = []
       let i = 0

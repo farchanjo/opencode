@@ -17,7 +17,7 @@ import { mergeDeep } from "remeda"
 import { Config } from "@/config/config"
 import { LangLockInjection } from "@/langlock/injection-service"
 import { resolveSessionLangLockEffective } from "@/langlock/session-effective"
-import { chatOutputSystemBlock } from "../chat-output"
+import { chatOutputSystemBlock, hasChatOutputBudget } from "../chat-output"
 
 const USER_AGENT = `opencode/${InstallationVersion}`
 
@@ -77,9 +77,11 @@ export const prepare = Effect.fn("LLMRequestPrep.prepare")(function* (input: Pre
       ? yield* configOption.value.get()
       : ({} as { operator?: unknown; chat_output?: { max_words?: number; max_tokens?: number } })
   const langLockEffective = yield* Effect.promise(() => resolveSessionLangLockEffective({ config: info }))
-  // Primary agents only: console chat budget instruction (tool/file payloads exempt).
+  // Primary main-context only: instruct the LLM to self-size console chat (no stream filter).
   const chatBlock =
-    input.agent.mode === "primary" && info.chat_output ? chatOutputSystemBlock(info.chat_output) : ""
+    input.agent.mode === "primary" && hasChatOutputBudget(info.chat_output)
+      ? chatOutputSystemBlock(info.chat_output!)
+      : ""
   const system = LangLockInjection.injectIntoSystemArray(
     chatBlock ? [header, chatBlock] : [header],
     langLockEffective,

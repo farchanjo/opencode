@@ -144,8 +144,7 @@ async function buildTool() {
         Effect.succeed(output)) as Plugin.Interface["trigger"],
     }),
     Layer.mock(Truncate.Service, {
-      output: (text: string) =>
-        Effect.succeed({ content: text, truncated: false, outputPath: "/tmp/tool_mock" }),
+      output: (text: string) => Effect.succeed({ content: text, truncated: false }),
     }),
     Layer.mock(Agent.Service, { get: () => Effect.succeed({ name: "build", permission: [] } as any) }),
     Layer.mock(Session.Service, { get: () => Effect.succeed({ permission: [] } as any) }),

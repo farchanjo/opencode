@@ -14,15 +14,15 @@ Created: 2026-07-23
 
 Two operator-facing controls for session fidelity and chat verbosity:
 
-1. **Durable tool buffers** — every tool result (native, shell, MCP) is always
-   written to the truncation/tool-output directory with `metadata.outputPath`.
-   In-context preview may still truncate via `tool_output` limits, but the full
-   buffer is never discarded. Compaction prune keeps a recoverable path instead
-   of `[Old tool result content cleared]`.
+1. **Durable tool buffers (subagent path)** — when the executing agent is a
+   **subagent** (or over `tool_output` limits), the full tool buffer is written
+   to disk with `metadata.outputPath` so peer agents can recover it. Primary
+   console agents only write to disk when the in-context preview is truncated.
+   Compaction prune keeps a recoverable path instead of irreversible clear.
 
-2. **Primary chat output budget** — config `chat_output.{max_words,max_tokens}`
-   (0 = unlimited) enforces a console-chat reply budget for **primary** agents
-   only, via system instruction + stream clamp on text-delta/text-end. Tool-call
+2. **Primary chat output budget (soft)** — config `chat_output.{max_words,max_tokens}`
+   (0 = unlimited) instructs the **primary** model to *compose* console chat
+   within the limit via system prompt only — **no stream filtering**. Tool-call
    arguments and file write/edit payloads are exempt. Live TUI control patches
    global config so the next model turn picks up the budget.
 
@@ -41,12 +41,12 @@ Two operator-facing controls for session fidelity and chat verbosity:
 
 ### Durable tool buffers
 
-1. `Truncate.output` MUST always persist the full text to the truncation
-   directory and MUST always return `outputPath`.
-2. When under `tool_output` limits, in-context `content` remains the full text;
-   when over limits, `content` is a preview with path hint and `truncated: true`.
-3. Native tool wrap (`tool.ts`), MCP session tools, plugin registry path, and
-   shell MUST attach `metadata.outputPath` (and `truncated`) on completed results.
+1. `Truncate.output` MUST persist the full text and return `outputPath` when
+   `agent.mode === "subagent"` (or `persistFull: true`), even under limits.
+2. For primary/console agents under limits, MUST NOT write disk; content is full
+   text in context only.
+3. When over `tool_output` limits for any agent, MUST write full buffer, return
+   preview + path, `truncated: true`.
 4. Compaction prune, before marking `time.compacted`, MUST ensure a full file
    exists (`write` if `outputPath` missing) and MUST replace bulky in-context
    `output` with a pointer to that path.
@@ -57,15 +57,12 @@ Two operator-facing controls for session fidelity and chat verbosity:
 
 6. Config surface `chat_output` MUST support optional non-negative
    `max_words` and `max_tokens` (0 or omit = unlimited for that dimension).
-7. Budget MUST apply only when `agent.mode === "primary"` and the assistant
-   message is not a summary/compaction-only path.
-8. Budget MUST clamp only assistant **console text** (text-delta / text-end).
-   Tool-call argument streams and write/edit/apply_patch payloads MUST NOT be
-   clamped by this budget.
-9. When active, primary turns MUST inject a system block stating the console
-   budget and the file-write exemption.
-10. Stream enforcement MUST stop appending text once the word and/or token
-    budget is exhausted; final text-end MUST re-apply the clamp after plugins.
+7. Budget MUST apply only when `agent.mode === "primary"` (main context console).
+8. Budget MUST be communicated via system instruction so the **model self-sizes**
+   its console chat. Runtime MUST NOT hard-truncate or filter streamed text.
+9. Tool-call arguments and write/edit/apply_patch payloads MUST remain exempt.
+10. When active, primary turns MUST inject a system block stating the console
+    budget, self-edit expectation, and file-write exemption.
 
 ### Live TUI
 

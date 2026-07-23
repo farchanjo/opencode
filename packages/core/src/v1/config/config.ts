@@ -189,16 +189,16 @@ export const Info = Schema.Struct({
     Schema.Struct({
       max_words: Schema.optional(NonNegativeInt).annotate({
         description:
-          "Hard cap on primary-agent console chat text (words). 0 or omit = unlimited. Does not limit tool-call arguments or file write payloads.",
+          "Target max words for primary-agent console chat. The model is instructed to self-size within this budget (not hard-filtered). 0 or omit = unlimited. Does not limit tool-call arguments or file write payloads.",
       }),
       max_tokens: Schema.optional(NonNegativeInt).annotate({
         description:
-          "Hard cap on primary-agent console chat text (estimated tokens). 0 or omit = unlimited. Does not limit tool-call arguments or file write payloads.",
+          "Target max estimated tokens for primary-agent console chat (model self-sizes). 0 or omit = unlimited. Does not limit tool-call arguments or file write payloads.",
       }),
     }),
   ).annotate({
     description:
-      "Console chat generation budget for primary/main agents. Enforced via system instruction and stream-side text clamp; tool/file write payloads are exempt. TUI can patch this live via global config update.",
+      "Main-context console chat length budget for primary agents. Soft: system instruction so the LLM composes within the limit (no stream truncation). Tool/file write payloads and subagent work are exempt. TUI can patch this live.",
   }),
   compaction: Schema.optional(
     Schema.Struct({

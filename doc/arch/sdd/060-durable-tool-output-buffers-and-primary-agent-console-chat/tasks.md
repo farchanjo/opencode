@@ -4,12 +4,10 @@
 
 ### Durable tool buffers (shipped)
 
-- [x] T001 Always-persist `Truncate.output` + `outputPath` always on Result
-  (`packages/opencode/src/tool/truncate.ts`).
+- [x] T001 `Truncate.output` persist-full for **subagents** (or over limits);
+  primary under limits = no disk (`packages/opencode/src/tool/truncate.ts`).
 
-- [x] T002 Attach `metadata.outputPath` on native tools (`tool.ts`), MCP
-  (`session/tools.ts`), plugin registry (`tool/registry.ts`), shell
-  (`tool/shell.ts`).
+- [x] T002 Attach `metadata.outputPath` when present on native/MCP/registry/shell.
 
 - [x] T003 Compaction prune writes missing full file and pointer output before
   `time.compacted` (`session/compaction.ts` + Truncate dep).
@@ -17,20 +15,18 @@
 - [x] T004 MessageV2 compact rendering prefers path over cleared placeholder
   (`session/message-v2.ts`).
 
-- [x] T005 Truncation tests updated for always-persist; typecheck green.
+- [x] T005 Truncation tests: primary no-disk under limits; subagent persists.
 
 ### Chat output budget (shipped)
 
 - [x] T010 Config `chat_output` NonNegativeInt max_words/max_tokens + migrate
   (`packages/core/src/v1/config/config.ts`, `migrate.ts`).
 
-- [x] T011 Domain helper `session/chat-output.ts` (resolve, apply, system block)
-  + unit tests.
+- [x] T011 Domain helper `session/chat-output.ts` (system block self-size) + unit tests.
 
-- [x] T012 Primary system inject in `session/llm/request.ts`.
+- [x] T012 Primary system inject in `session/llm/request.ts` (soft only).
 
-- [x] T013 Stream clamp on text-delta/text-end in `session/processor.ts`
-  (primary only; summary excluded).
+- [x] T013 No stream filter in processor — model composes within budget.
 
 ### Live TUI (shipped)
 
