@@ -21,8 +21,8 @@ MD) for those modes:
 | -------- | ------- | ---- |
 | Plan | `plan` | plan-only (existing) |
 | Agent | `build` | full tools + `task` spawn (existing wire id) |
-| Solo | `solo` | full tools, **no** `task`/subagents (new) |
-| Speckit | `speckit` | Speckit CLI only; **no** free edit; **no** `implement` (new) |
+| Solo | `solo` | full tools (incl. MCP), **no** `task`/subagents (new) |
+| Speckit | `speckit` | Speckit CLI + read/MCP; **no** free edit; **no** `implement` (new) |
 
 There is **no** primary named `ask`. Speckit mode is the dedicated Speckit loop
 surface and MUST NOT implement product code.
@@ -69,6 +69,7 @@ workers via `task`.
 
 6. Native primary `solo` MUST allow normal project tools (edit/bash/MCP subject
    to global/user permission config) and MUST deny **`task`** (no subagent spawn).
+   `solo` MUST NOT use a blanket `"*": "deny"` that would hide MCP tools.
 7. `solo` MUST be `mode: "primary"`, `native: true`, and MUST NOT require a
    profile agent MD file to exist.
 
@@ -80,6 +81,10 @@ workers via `task`.
 10. `speckit` MUST deny **`task`**.
 11. `speckit` MUST allow read-oriented tools needed for orientation: at least
     `read`, `grep`, `glob`, `list`, and `question`.
+11b. `speckit` MUST allow **MCP tools** (server-prefixed tool ids) and `skill`
+    for live evidence that supports SDD work, subject to global/user permission
+    config. Permission rules MUST use **explicit denials** for mutation/spawn;
+    a blanket `"*": "deny"` is forbidden because it hides MCP tools.
 12. `speckit` MUST allow `bash` only for Speckit CLI invocations via an allowlist
     of patterns that match the canonical binary paths and `speckit <subcommand>`
     forms (including `~/bin/speckit` and `*/bin/speckit`). All other bash MUST

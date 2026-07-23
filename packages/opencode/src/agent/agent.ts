@@ -202,7 +202,7 @@ const layer = Layer.effect(
           },
           solo: {
             name: "solo",
-            description: "Solo mode. Full tools in the main session; cannot spawn subagents.",
+            description: "Solo mode. Full tools (incl. MCP) in the main session; cannot spawn subagents.",
             options: {},
             prompt: PROMPT_SOLO,
             permission: Permission.merge(
@@ -210,6 +210,8 @@ const layer = Layer.effect(
               Permission.fromConfig({
                 question: "allow",
                 plan_enter: "allow",
+                skill: "allow",
+                // MCP tools are named server_tool; keep defaults * allow (do not * deny).
                 task: "deny",
               }),
               user,
@@ -220,18 +222,19 @@ const layer = Layer.effect(
           speckit: {
             name: "speckit",
             description:
-              "Speckit mode. Run ~/bin/speckit for SDD and corpus. No free edits; no implement; no subagents.",
+              "Speckit mode. Speckit CLI + read/MCP; no free edits; no implement; no subagents.",
             options: {},
             prompt: PROMPT_SPECKIT,
             permission: Permission.merge(
               defaults,
               Permission.fromConfig({
-                "*": "deny",
+                // Explicit denials only — do not use "*": "deny" or MCP tools are hidden.
                 read: "allow",
                 grep: "allow",
                 glob: "allow",
                 list: "allow",
                 question: "allow",
+                skill: "allow",
                 task: "deny",
                 edit: "deny",
                 plan_enter: "deny",

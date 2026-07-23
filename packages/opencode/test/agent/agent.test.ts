@@ -101,6 +101,11 @@ it.instance("solo agent is primary and denies task", () =>
     expect(solo?.native).toBe(true)
     expect(Permission.evaluate("task", "general", solo!.permission).action).toBe("deny")
     expect(evalPerm(solo, "edit")).toBe("allow")
+    // MCP tools use server_tool names; solo must not hide them via * deny.
+    expect(evalPerm(solo, "chrome-devtools_list_pages")).toBe("allow")
+    expect(Permission.disabled(["chrome-devtools_list_pages"], solo!.permission).has("chrome-devtools_list_pages")).toBe(
+      false,
+    )
   }),
 )
 
@@ -116,6 +121,12 @@ it.instance("speckit agent denies edit/task and implement bash, allows speckit s
     expect(Permission.evaluate("bash", "~/bin/speckit status", speckit!.permission).action).toBe("allow")
     expect(Permission.evaluate("bash", "speckit implement", speckit!.permission).action).toBe("deny")
     expect(Permission.evaluate("bash", "sed -i s/a/b/ file", speckit!.permission).action).toBe("deny")
+    // MCP allowed for live evidence; must not be hidden by blanket * deny.
+    expect(evalPerm(speckit, "chrome-devtools_list_pages")).toBe("allow")
+    expect(
+      Permission.disabled(["chrome-devtools_list_pages"], speckit!.permission).has("chrome-devtools_list_pages"),
+    ).toBe(false)
+    expect(evalPerm(speckit, "skill")).toBe("allow")
   }),
 )
 

@@ -13,10 +13,10 @@ const BUILD_SYSTEM =
   "You are an AI coding agent. Help the user accomplish software engineering tasks by inspecting the workspace, making targeted changes, and using tools according to the configured permissions."
 
 const SOLO_SYSTEM =
-  "You are in Solo mode. Use full tools in the main session. Do not spawn subagents; the task tool is denied."
+  "You are in Solo mode. Use full tools including MCP in the main session. Do not spawn subagents; the task tool is denied."
 
 const SPECKIT_SYSTEM =
-  "You are in Speckit mode. Run ~/bin/speckit for SDD and corpus work only. Never free-edit product code and never run speckit implement; switch to build or solo for implementation."
+  "You are in Speckit mode. Run ~/bin/speckit for SDD and corpus work. MCP tools are allowed for live evidence. Never free-edit product code and never run speckit implement; switch to build or solo for implementation."
 const PROMPT_EXPLORE = `You are a file search specialist. You excel at thoroughly navigating and exploring codebases.
 
 Your strengths:
@@ -160,13 +160,14 @@ export const Plugin = define({
       })
 
       draft.update(AgentV2.ID.make("solo"), (item) => {
-        item.description = "Solo mode. Full tools in the main session; cannot spawn subagents."
+        item.description = "Solo mode. Full tools (incl. MCP) in the main session; cannot spawn subagents."
         item.system ??= SOLO_SYSTEM
         item.mode = "primary"
         item.permissions.push(
           ...PermissionV2.merge(defaults, [
             { action: "question", resource: "*", effect: "allow" },
             { action: "plan_enter", resource: "*", effect: "allow" },
+            { action: "skill", resource: "*", effect: "allow" },
             { action: "task", resource: "*", effect: "deny" },
           ]),
         )
@@ -174,19 +175,22 @@ export const Plugin = define({
 
       draft.update(AgentV2.ID.make("speckit"), (item) => {
         item.description =
-          "Speckit mode. Run ~/bin/speckit for SDD and corpus. No free edits; no implement; no subagents."
+          "Speckit mode. Speckit CLI + read/MCP; no free edits; no implement; no subagents."
         item.system ??= SPECKIT_SYSTEM
         item.mode = "primary"
         item.permissions.push(
           ...PermissionV2.merge(defaults, [
-            { action: "*", resource: "*", effect: "deny" },
+            // Explicit denials only — blanket "*": deny hides MCP tools.
             { action: "read", resource: "*", effect: "allow" },
             { action: "grep", resource: "*", effect: "allow" },
             { action: "glob", resource: "*", effect: "allow" },
             { action: "list", resource: "*", effect: "allow" },
             { action: "question", resource: "*", effect: "allow" },
+            { action: "skill", resource: "*", effect: "allow" },
             { action: "task", resource: "*", effect: "deny" },
             { action: "edit", resource: "*", effect: "deny" },
+            { action: "plan_enter", resource: "*", effect: "deny" },
+            { action: "plan_exit", resource: "*", effect: "deny" },
             { action: "bash", resource: "*", effect: "deny" },
             { action: "bash", resource: "speckit *", effect: "allow" },
             { action: "bash", resource: "*/bin/speckit *", effect: "allow" },
