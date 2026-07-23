@@ -7,11 +7,19 @@ export function DialogAgent() {
   const local = useLocal()
   const dialog = useDialog()
 
+  const primaryLabel = (name: string) => {
+    if (name === "build") return "Agent"
+    if (name === "plan") return "Plan"
+    if (name === "solo") return "Solo"
+    if (name === "speckit") return "Speckit"
+    return name
+  }
+
   const options = createMemo(() =>
     local.agent.list().map((item) => {
       return {
         value: item.name,
-        title: item.name,
+        title: primaryLabel(item.name),
         description: item.native ? "native" : item.description,
       }
     }),

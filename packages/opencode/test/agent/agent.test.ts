@@ -50,11 +50,14 @@ it.instance("returns default native agents when no config", () =>
     const names = agents.map((a) => a.name)
     expect(names).toContain("build")
     expect(names).toContain("plan")
+    expect(names).toContain("solo")
+    expect(names).toContain("speckit")
     expect(names).toContain("general")
     expect(names).toContain("explore")
     expect(names).toContain("compaction")
     expect(names).toContain("title")
     expect(names).toContain("summary")
+    expect(names).not.toContain("ask")
   }),
 )
 
@@ -80,13 +83,39 @@ it.instance("plan agent denies edits except .opencode/plans/*", () =>
   }),
 )
 
-it.instance("plan agent denies the general subagent by default", () =>
+it.instance("plan agent denies all task spawns by default", () =>
   Effect.gen(function* () {
     const plan = yield* load((svc) => svc.get("plan"))
     expect(plan).toBeDefined()
     expect(Permission.evaluate("task", "general", plan!.permission).action).toBe("deny")
-    expect(Permission.evaluate("task", "explore", plan!.permission).action).toBe("allow")
-    expect(Permission.evaluate("task", "custom", plan!.permission).action).toBe("allow")
+    expect(Permission.evaluate("task", "explore", plan!.permission).action).toBe("deny")
+    expect(Permission.evaluate("task", "custom", plan!.permission).action).toBe("deny")
+  }),
+)
+
+it.instance("solo agent is primary and denies task", () =>
+  Effect.gen(function* () {
+    const solo = yield* load((svc) => svc.get("solo"))
+    expect(solo).toBeDefined()
+    expect(solo?.mode).toBe("primary")
+    expect(solo?.native).toBe(true)
+    expect(Permission.evaluate("task", "general", solo!.permission).action).toBe("deny")
+    expect(evalPerm(solo, "edit")).toBe("allow")
+  }),
+)
+
+it.instance("speckit agent denies edit/task and implement bash, allows speckit status", () =>
+  Effect.gen(function* () {
+    const speckit = yield* load((svc) => svc.get("speckit"))
+    expect(speckit).toBeDefined()
+    expect(speckit?.mode).toBe("primary")
+    expect(speckit?.native).toBe(true)
+    expect(evalPerm(speckit, "edit")).toBe("deny")
+    expect(Permission.evaluate("task", "general", speckit!.permission).action).toBe("deny")
+    expect(Permission.evaluate("bash", "speckit status", speckit!.permission).action).toBe("allow")
+    expect(Permission.evaluate("bash", "~/bin/speckit status", speckit!.permission).action).toBe("allow")
+    expect(Permission.evaluate("bash", "speckit implement", speckit!.permission).action).toBe("deny")
+    expect(Permission.evaluate("bash", "sed -i s/a/b/ file", speckit!.permission).action).toBe("deny")
   }),
 )
 
@@ -749,6 +778,8 @@ it.instance(
       agent: {
         build: { disable: true },
         plan: { disable: true },
+        solo: { disable: true },
+        speckit: { disable: true },
       },
     },
   },

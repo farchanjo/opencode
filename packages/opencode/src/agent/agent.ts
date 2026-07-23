@@ -14,6 +14,10 @@ import PROMPT_COMPACTION from "./prompt/compaction.txt"
 import PROMPT_EXPLORE from "./prompt/explore.txt"
 import PROMPT_SUMMARY from "./prompt/summary.txt"
 import PROMPT_TITLE from "./prompt/title.txt"
+import PROMPT_PLAN from "./defaults/plan.md" with { type: "text" }
+import PROMPT_BUILD from "./defaults/build.md" with { type: "text" }
+import PROMPT_SOLO from "./defaults/solo.md" with { type: "text" }
+import PROMPT_SPECKIT from "./defaults/speckit.md" with { type: "text" }
 import { Permission } from "@/permission"
 import { mergeDeep, pipe, sortBy, values } from "remeda"
 import { Global } from "@opencode-ai/core/global"
@@ -157,8 +161,9 @@ const layer = Layer.effect(
         const agents: Record<string, Info> = {
           build: {
             name: "build",
-            description: "The default agent. Executes tools based on configured permissions.",
+            description: "Agent mode. Executes tools and may spawn subagents via task.",
             options: {},
+            prompt: PROMPT_BUILD,
             permission: Permission.merge(
               defaults,
               Permission.fromConfig({
@@ -172,16 +177,15 @@ const layer = Layer.effect(
           },
           plan: {
             name: "plan",
-            description: "Plan mode. Disallows all edit tools.",
+            description: "Plan mode. Disallows all edit tools outside plan paths.",
             options: {},
+            prompt: PROMPT_PLAN,
             permission: Permission.merge(
               defaults,
               Permission.fromConfig({
                 question: "allow",
                 plan_exit: "allow",
-                task: {
-                  general: "deny",
-                },
+                task: "deny",
                 external_directory: {
                   [path.join(Global.Path.data, "plans", "*")]: "allow",
                 },
@@ -189,6 +193,57 @@ const layer = Layer.effect(
                   "*": "deny",
                   [path.join(".opencode", "plans", "*.md")]: "allow",
                   [path.relative(ctx.worktree, path.join(Global.Path.data, path.join("plans", "*.md")))]: "allow",
+                },
+              }),
+              user,
+            ),
+            mode: "primary",
+            native: true,
+          },
+          solo: {
+            name: "solo",
+            description: "Solo mode. Full tools in the main session; cannot spawn subagents.",
+            options: {},
+            prompt: PROMPT_SOLO,
+            permission: Permission.merge(
+              defaults,
+              Permission.fromConfig({
+                question: "allow",
+                plan_enter: "allow",
+                task: "deny",
+              }),
+              user,
+            ),
+            mode: "primary",
+            native: true,
+          },
+          speckit: {
+            name: "speckit",
+            description:
+              "Speckit mode. Run ~/bin/speckit for SDD and corpus. No free edits; no implement; no subagents.",
+            options: {},
+            prompt: PROMPT_SPECKIT,
+            permission: Permission.merge(
+              defaults,
+              Permission.fromConfig({
+                "*": "deny",
+                read: "allow",
+                grep: "allow",
+                glob: "allow",
+                list: "allow",
+                question: "allow",
+                task: "deny",
+                edit: "deny",
+                plan_enter: "deny",
+                plan_exit: "deny",
+                bash: {
+                  "*": "deny",
+                  "speckit *": "allow",
+                  "*/bin/speckit *": "allow",
+                  "~/bin/speckit *": "allow",
+                  "speckit implement*": "deny",
+                  "*/bin/speckit implement*": "deny",
+                  "~/bin/speckit implement*": "deny",
                 },
               }),
               user,

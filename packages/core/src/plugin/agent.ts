@@ -12,6 +12,11 @@ const TRUNCATION_GLOB = path.join(Global.Path.data, "tool-output", "*")
 const BUILD_SYSTEM =
   "You are an AI coding agent. Help the user accomplish software engineering tasks by inspecting the workspace, making targeted changes, and using tools according to the configured permissions."
 
+const SOLO_SYSTEM =
+  "You are in Solo mode. Use full tools in the main session. Do not spawn subagents; the task tool is denied."
+
+const SPECKIT_SYSTEM =
+  "You are in Speckit mode. Run ~/bin/speckit for SDD and corpus work only. Never free-edit product code and never run speckit implement; switch to build or solo for implementation."
 const PROMPT_EXPLORE = `You are a file search specialist. You excel at thoroughly navigating and exploring codebases.
 
 Your strengths:
@@ -123,7 +128,7 @@ export const Plugin = define({
 
     yield* ctx.agent.transform((draft) => {
       draft.update(AgentV2.defaultID, (item) => {
-        item.description = "The default agent. Executes tools based on configured permissions."
+        item.description = "Agent mode. Executes tools and may spawn subagents via task."
         item.system ??= BUILD_SYSTEM
         item.mode = "primary"
         item.permissions.push(
@@ -135,12 +140,13 @@ export const Plugin = define({
       })
 
       draft.update(AgentV2.ID.make("plan"), (item) => {
-        item.description = "Plan mode. Disallows all edit tools."
+        item.description = "Plan mode. Disallows all edit tools outside plan paths."
         item.mode = "primary"
         item.permissions.push(
           ...PermissionV2.merge(defaults, [
             { action: "question", resource: "*", effect: "allow" },
             { action: "plan_exit", resource: "*", effect: "allow" },
+            { action: "task", resource: "*", effect: "deny" },
             { action: "external_directory", resource: path.join(Global.Path.data, "plans", "*"), effect: "allow" },
             { action: "edit", resource: "*", effect: "deny" },
             { action: "edit", resource: path.join(".opencode", "plans", "*.md"), effect: "allow" },
@@ -149,6 +155,45 @@ export const Plugin = define({
               resource: path.relative(worktree, path.join(Global.Path.data, "plans", "*.md")),
               effect: "allow",
             },
+          ]),
+        )
+      })
+
+      draft.update(AgentV2.ID.make("solo"), (item) => {
+        item.description = "Solo mode. Full tools in the main session; cannot spawn subagents."
+        item.system ??= SOLO_SYSTEM
+        item.mode = "primary"
+        item.permissions.push(
+          ...PermissionV2.merge(defaults, [
+            { action: "question", resource: "*", effect: "allow" },
+            { action: "plan_enter", resource: "*", effect: "allow" },
+            { action: "task", resource: "*", effect: "deny" },
+          ]),
+        )
+      })
+
+      draft.update(AgentV2.ID.make("speckit"), (item) => {
+        item.description =
+          "Speckit mode. Run ~/bin/speckit for SDD and corpus. No free edits; no implement; no subagents."
+        item.system ??= SPECKIT_SYSTEM
+        item.mode = "primary"
+        item.permissions.push(
+          ...PermissionV2.merge(defaults, [
+            { action: "*", resource: "*", effect: "deny" },
+            { action: "read", resource: "*", effect: "allow" },
+            { action: "grep", resource: "*", effect: "allow" },
+            { action: "glob", resource: "*", effect: "allow" },
+            { action: "list", resource: "*", effect: "allow" },
+            { action: "question", resource: "*", effect: "allow" },
+            { action: "task", resource: "*", effect: "deny" },
+            { action: "edit", resource: "*", effect: "deny" },
+            { action: "bash", resource: "*", effect: "deny" },
+            { action: "bash", resource: "speckit *", effect: "allow" },
+            { action: "bash", resource: "*/bin/speckit *", effect: "allow" },
+            { action: "bash", resource: "~/bin/speckit *", effect: "allow" },
+            { action: "bash", resource: "speckit implement*", effect: "deny" },
+            { action: "bash", resource: "*/bin/speckit implement*", effect: "deny" },
+            { action: "bash", resource: "~/bin/speckit implement*", effect: "deny" },
           ]),
         )
       })
