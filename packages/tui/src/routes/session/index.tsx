@@ -48,6 +48,7 @@ import { useDialog } from "../../ui/dialog"
 import { DialogAlert } from "../../ui/dialog-alert"
 import { TodoItem } from "../../component/todo-item"
 import { DialogMessage } from "./dialog-message"
+import { DialogChatOutput } from "../../component/dialog-chat-output"
 import type { PromptInfo } from "../../component/prompt/history"
 import { DialogConfirm } from "../../ui/dialog-confirm"
 import { DialogTimeline } from "./dialog-timeline"
@@ -757,6 +758,18 @@ export function Session() {
       run: () => {
         setShowGenericToolOutput((prev) => !prev)
         dialog.clear()
+      },
+    },
+    {
+      title: "Chat output budget…",
+      value: "chat.output",
+      category: "Session",
+      slash: {
+        name: "chat-output",
+        aliases: ["response-budget", "chat-budget"],
+      },
+      run: () => {
+        dialog.replace(() => <DialogChatOutput />)
       },
     },
     {

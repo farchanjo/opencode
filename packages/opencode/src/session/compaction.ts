@@ -22,6 +22,7 @@ import { ProviderV2 } from "@opencode-ai/core/provider"
 import { ModelV2 } from "@opencode-ai/core/model"
 import { buildPrompt } from "@opencode-ai/core/session/compaction"
 import { SessionCompactionEvent } from "@opencode-ai/schema/session-compaction-event"
+import { Truncate } from "@/tool/truncate"
 
 export const Event = SessionCompactionEvent
 
@@ -164,6 +165,7 @@ const layer = Layer.effect(
     const provider = yield* Provider.Service
     const events = yield* EventV2Bridge.Service
     const flags = yield* RuntimeFlags.Service
+    const truncate = yield* Truncate.Service
 
     const isOverflow = Effect.fn("SessionCompaction.isOverflow")(function* (input: {
       tokens: SessionV1.Assistant["tokens"]
@@ -278,6 +280,20 @@ const layer = Layer.effect(
       if (pruned > PRUNE_MINIMUM) {
         for (const part of toPrune) {
           if (part.state.status === "completed") {
+            // Ensure full buffer exists on disk before clearing in-context output.
+            let outputPath =
+              typeof part.state.metadata?.outputPath === "string" ? part.state.metadata.outputPath : undefined
+            if (!outputPath && part.state.output) {
+              outputPath = yield* truncate.write(part.state.output)
+            }
+            if (outputPath) {
+              part.state.metadata = {
+                ...(part.state.metadata ?? {}),
+                outputPath,
+                truncated: true,
+              }
+              part.state.output = `Full tool output at: ${outputPath}`
+            }
             part.state.time.compacted = Date.now()
             yield* session.updatePart(part)
           }
@@ -556,6 +572,7 @@ export const node = LayerNode.make({
     Provider.node,
     EventV2Bridge.node,
     RuntimeFlags.node,
+    Truncate.node,
   ],
 })
 

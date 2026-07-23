@@ -39,14 +39,17 @@ describe("Truncate", () => {
       }),
     )
 
-    it.live("returns content unchanged when under limits", () =>
+    it.live("returns content unchanged when under limits but always persists full buffer", () =>
       Effect.gen(function* () {
         const svc = yield* Truncate.Service
+        const fsys = yield* FSUtil.Service
         const content = "line1\nline2\nline3"
         const result = yield* svc.output(content)
 
         expect(result.truncated).toBe(false)
         expect(result.content).toBe(content)
+        expect(result.outputPath).toBeDefined()
+        expect(yield* fsys.readFileString(result.outputPath)).toBe(content)
       }),
     )
 
@@ -156,6 +159,7 @@ describe("Truncate", () => {
             maxBytes: 1024 * 1024,
           })
           expect(result.truncated).toBe(false)
+          expect(result.outputPath).toBeDefined()
         }),
       )
     })
@@ -180,7 +184,7 @@ describe("Truncate", () => {
         const result = yield* svc.output(lines, { maxLines: 10 })
 
         expect(result.truncated).toBe(true)
-        expect(result.content).toContain("The tool call succeeded but the output was truncated")
+        expect(result.content).toContain("The tool call succeeded but the in-context preview was truncated")
         expect(result.content).toContain("Grep")
         if (!result.truncated) throw new Error("expected truncated")
         expect(result.outputPath).toBeDefined()
@@ -218,15 +222,16 @@ describe("Truncate", () => {
       }),
     )
 
-    it.live("does not write file when not truncated", () =>
+    it.live("always writes full buffer even when not truncated", () =>
       Effect.gen(function* () {
         const svc = yield* Truncate.Service
+        const fsys = yield* FSUtil.Service
         const content = "short content"
         const result = yield* svc.output(content)
 
         expect(result.truncated).toBe(false)
-        if (result.truncated) throw new Error("expected not truncated")
-        expect("outputPath" in result).toBe(false)
+        expect(result.outputPath).toBeDefined()
+        expect(yield* fsys.readFileString(result.outputPath)).toBe(content)
       }),
     )
 

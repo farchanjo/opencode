@@ -160,12 +160,12 @@ const layer = Layer.effect(
                 const out = yield* truncate.output(output, {}, info)
                 return {
                   title: typeof result === "string" ? "" : (result.title ?? ""),
-                  output: out.truncated ? out.content : output,
+                  output: out.content,
                   attachments,
                   metadata: {
                     ...metadata,
                     truncated: out.truncated,
-                    ...(out.truncated && { outputPath: out.outputPath }),
+                    outputPath: out.outputPath,
                   },
                 }
               }).pipe(

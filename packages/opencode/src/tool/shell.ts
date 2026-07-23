@@ -568,8 +568,9 @@ export const ShellTool = Tool.define(
       const raw = list.map((item) => item.text).join("")
       const end = tail(raw, limits.maxLines, limits.maxBytes)
       if (end.cut) cut = true
-      if (!file && end.cut) {
-        file = yield* trunc.write(raw)
+      // Always persist the full shell buffer for other agents / post-compact recovery.
+      if (!file) {
+        file = yield* trunc.write(raw || "(no output)")
       }
 
       let output = end.text
@@ -588,7 +589,7 @@ export const ShellTool = Tool.define(
           output: last || preview(output),
           exit: code,
           truncated: cut,
-          ...(cut && file ? { outputPath: file } : {}),
+          outputPath: file,
         },
         output,
       }

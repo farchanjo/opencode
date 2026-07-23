@@ -52,6 +52,18 @@ function truncateToolOutput(text: string, maxChars?: number) {
   return `${text.slice(0, maxChars)}\n[Tool output truncated for compaction: omitted ${omitted} chars]`
 }
 
+/** Compacted tool results must keep a path to the full buffer — never drop the only copy. */
+function compactedToolOutputText(part: SessionV1.ToolPart): string {
+  const path =
+    part.state.status === "completed" && typeof part.state.metadata?.outputPath === "string"
+      ? part.state.metadata.outputPath
+      : undefined
+  if (path) {
+    return `Tool output compacted for context size. Full output is preserved at: ${path}\nUse Read/Grep on that path — content was not discarded.`
+  }
+  return "[Old tool result content cleared]"
+}
+
 export const Event = {
   Updated: SessionV1.Event.MessageUpdated,
   Removed: SessionV1.Event.MessageRemoved,
@@ -291,7 +303,7 @@ export const toModelMessagesEffect = Effect.fnUntraced(function* (
           toolNames.add(part.tool)
           if (part.state.status === "completed") {
             const outputText = part.state.time.compacted
-              ? "[Old tool result content cleared]"
+              ? compactedToolOutputText(part)
               : truncateToolOutput(part.state.output, options?.toolOutputMaxChars)
             const attachments = part.state.time.compacted || options?.stripMedia ? [] : (part.state.attachments ?? [])
 

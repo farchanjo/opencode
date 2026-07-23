@@ -264,7 +264,7 @@ export const resolve = Effect.fn("SessionTools.resolve")(function* (input: {
                 servers: resourceServers,
                 ...(parsed.server ? { server: parsed.server } : {}),
                 truncated: truncated.truncated,
-                ...(truncated.truncated && { outputPath: truncated.outputPath }),
+                outputPath: truncated.outputPath,
               },
               output: truncated.content,
             }
@@ -347,7 +347,7 @@ export const resolve = Effect.fn("SessionTools.resolve")(function* (input: {
                 servers: resourceServers,
                 ...(parsed.server ? { server: parsed.server } : {}),
                 truncated: truncated.truncated,
-                ...(truncated.truncated && { outputPath: truncated.outputPath }),
+                outputPath: truncated.outputPath,
               },
               output: truncated.content,
             }
@@ -423,7 +423,7 @@ export const resolve = Effect.fn("SessionTools.resolve")(function* (input: {
                 contents: formatted.contents,
                 attachments: formatted.attachments.length,
                 truncated: truncated.truncated,
-                ...(truncated.truncated && { outputPath: truncated.outputPath }),
+                outputPath: truncated.outputPath,
               },
               output: truncated.content,
               attachments: formatted.attachments.map((attachment) => ({
@@ -534,7 +534,7 @@ export const resolve = Effect.fn("SessionTools.resolve")(function* (input: {
           const metadata = {
             ...result.metadata,
             truncated: truncated.truncated,
-            ...(truncated.truncated && { outputPath: truncated.outputPath }),
+            outputPath: truncated.outputPath,
           }
 
           const output = {
