@@ -59,6 +59,12 @@ export class Experimental extends Schema.Class<Experimental>("ConfigV2.Experimen
    * `skill_autoprime.enabled && semantic_narrowing.skills.enabled`.
    */
   skill_autoprime: NarrowingConfig.AutoSkillConfig.pipe(Schema.optional),
+  /**
+   * Feature 058: Tier-1 skill listing cap/format so large catalogs (100+) do not
+   * flood the system prompt. Absent → defaults (max_listed 24, format compact,
+   * hard_cap true). Independent of semantic ranking passthrough.
+   */
+  skill_list: NarrowingConfig.SkillListConfig.pipe(Schema.optional),
 }) {}
 
 /**
@@ -211,3 +217,41 @@ export const resolveAutoSkillConfig = (
   maxChunks: retrieval?.max_skill_chunks ?? AUTO_SKILL_DEFAULTS.maxChunks,
   maxTokens: retrieval?.max_skill_tokens ?? AUTO_SKILL_DEFAULTS.maxTokens,
 })
+
+/** Feature 058 — defaults for Tier-1 skill listing cap/format. */
+export const SKILL_LIST_DEFAULTS = Object.freeze({
+  maxListed: 24,
+  format: "compact" as const,
+  hardCap: true,
+  showStatus: true,
+})
+
+export type SkillListFormat = "verbose" | "compact" | "names"
+
+export interface ResolvedSkillListConfig {
+  readonly maxListed: number
+  readonly format: SkillListFormat
+  readonly hardCap: boolean
+  readonly showStatus: boolean
+}
+
+/**
+ * Resolve skill listing policy. Pure. `max_listed` clamped to [1, 256].
+ * `0` or negative is treated as default (never unlimited by accident).
+ */
+export const resolveSkillListConfig = (
+  config: NarrowingConfig.SkillListConfig | undefined,
+): ResolvedSkillListConfig => {
+  const raw = config?.max_listed
+  const maxListed =
+    typeof raw === "number" && Number.isFinite(raw) && raw > 0
+      ? Math.min(256, Math.floor(raw))
+      : SKILL_LIST_DEFAULTS.maxListed
+  const format = config?.format
+  return {
+    maxListed,
+    format: format === "verbose" || format === "names" || format === "compact" ? format : SKILL_LIST_DEFAULTS.format,
+    hardCap: config?.hard_cap ?? SKILL_LIST_DEFAULTS.hardCap,
+    showStatus: config?.show_status ?? SKILL_LIST_DEFAULTS.showStatus,
+  }
+}

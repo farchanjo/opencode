@@ -52,3 +52,27 @@ export const AutoSkillConfig = Schema.Struct({
   score_floor: Schema.optional(Confidence), // default 0.75 (FR2)
 }).annotate({ identifier: "SemanticConfig.AutoSkillConfig" })
 export type AutoSkillConfig = Schema.Schema.Type<typeof AutoSkillConfig>
+
+// Feature 058 — hard cap + format for the Tier-1 <available_skills> listing so a
+// full catalog (100+) never floods the system prompt. Independent of semantic
+// ranking: when ranking is absent (passthrough), hard_cap still trims the list.
+
+/** Listing density for Tier-1 skill names shown to the model. */
+export const SkillListFormat = Schema.Literals(["verbose", "compact", "names"]).annotate({
+  identifier: "SemanticConfig.SkillListFormat",
+})
+export type SkillListFormat = Schema.Schema.Type<typeof SkillListFormat>
+
+/**
+ * SkillListConfig caps and formats the Tier-1 skill listing injected every turn.
+ * `max_listed` default 24; `format` default compact; `hard_cap` default true
+ * (always apply max even when semantic ranking is passthrough).
+ */
+export const SkillListConfig = Schema.Struct({
+  max_listed: Schema.optional(Schema.Number),
+  format: Schema.optional(SkillListFormat),
+  hard_cap: Schema.optional(Schema.Boolean),
+  /** One-line [skill_list: …] status in system prompt (default true). */
+  show_status: Schema.optional(Schema.Boolean),
+}).annotate({ identifier: "SemanticConfig.SkillListConfig" })
+export type SkillListConfig = Schema.Schema.Type<typeof SkillListConfig>

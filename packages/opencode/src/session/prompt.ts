@@ -1717,7 +1717,12 @@ const layer = Layer.effect(
             yield* plugin.trigger("experimental.chat.messages.transform", {}, { messages: msgs })
 
             const [skills, autoSkills, env, instructions, mcpInstructions, modelMsgs] = yield* Effect.all([
-              sys.skills(agent, narrowed.skills),
+              // Feature 058: pass semantic ranks + prompt so listing is natural (ranked /
+              // matched / lexical), never A–Z full-catalog dump when ranking is passthrough.
+              sys.skills(agent, {
+                ranked: narrowed.skills,
+                prompt: promptText,
+              }),
               buildAutoSkills(agent, narrowed.chunks, sessionID),
               sys.environment(model),
               instruction.system().pipe(Effect.orDie),

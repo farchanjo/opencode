@@ -27,6 +27,9 @@ import { Reference } from "@opencode-ai/core/reference"
 import { MCP } from "@/mcp"
 import { PermissionV1 } from "@opencode-ai/core/v1/permission"
 import { ToolRetrieval } from "@/semantic/tool-retrieval"
+import { ConfigExperimental } from "@opencode-ai/core/config/experimental"
+import { Config } from "@/config/config"
+import { applySkillListCap, formatSkillListBlock, formatSkillListStatus } from "@/skill/list-policy"
 
 export function provider(model: Provider.Model) {
   if (model.api.id.includes("muse-spark")) return [PROMPT_META]
@@ -49,11 +52,12 @@ export interface Interface {
   readonly environment: (model: Provider.Model) => Effect.Effect<string[]>
   readonly skills: (
     agent: Agent.Info,
-    /** Feature 051 — the turn's ranked, revalidated skill-id subset (FR4, skills
-     * seam). Absent → the full permission-visible skill list renders unchanged
-     * (the full-set passthrough floor). Tier-1 listing only — never spends
-     * `max_skill_chunks`/`max_skill_tokens`. */
-    ranked?: readonly string[],
+    /** Feature 051 ranked skill ids + Feature 058 natural order context. */
+    order?: {
+      ranked?: readonly string[]
+      prompt?: string
+      cwdFiles?: readonly string[]
+    },
   ) => Effect.Effect<string | undefined>
   readonly mcp: (agent: Agent.Info, permission?: PermissionV1.Ruleset) => Effect.Effect<string | undefined>
   /** Feature 052 (FR3, FR4, FR6) — render the turn's qualifying skill chunks into an
@@ -146,19 +150,47 @@ const layer = Layer.effect(
         ].filter((part): part is string => part !== undefined)
       }),
 
-      skills: Effect.fn("SystemPrompt.skills")(function* (agent: Agent.Info, ranked?: readonly string[]) {
+      skills: Effect.fn("SystemPrompt.skills")(function* (
+        agent: Agent.Info,
+        order?: { ranked?: readonly string[]; prompt?: string; cwdFiles?: readonly string[] },
+      ) {
         if (Permission.disabled(["skill"], agent.permission).has("skill")) return
 
         const available = yield* skill.available(agent)
+        // When semantic ranked is present, narrow to that set first (permission-safe).
+        // When absent, keep full visible set and let applySkillListCap pick natural order
+        // (matched / lexical) instead of dumping the catalog alphabetically.
+        const ranked = order?.ranked
+        // When ranked is defined (even empty), membership is the ranked set.
+        // When undefined (semantic passthrough), keep full visible and re-order
+        // by match/lexical under hard_cap — never dump A–Z full catalog.
         const gate: ToolRetrieval.RankedGate = { enabled: ranked !== undefined, ranked }
-        const list = [...ToolRetrieval.narrow(available, (item) => item.name, gate)]
+        const membership = [...ToolRetrieval.narrow(available, (item) => item.name, gate)].filter(
+          (item) => item.description !== undefined,
+        )
+
+        // Config is soft: unit tests / minimal layers may omit it → defaults.
+        const configOption = yield* Effect.serviceOption(Config.Service)
+        const policy = yield* Option.match(configOption, {
+          onNone: () => Effect.succeed(ConfigExperimental.resolveSkillListConfig(undefined)),
+          onSome: (svc) =>
+            svc.get().pipe(
+              Effect.map((info) => ConfigExperimental.resolveSkillListConfig(info.experimental?.skill_list)),
+              Effect.catchCause(() => Effect.succeed(ConfigExperimental.resolveSkillListConfig(undefined))),
+            ),
+        })
+        const applied = applySkillListCap(membership, policy, {
+          ranked,
+          prompt: order?.prompt,
+          cwdFiles: order?.cwdFiles,
+        })
+        const status = policy.showStatus ? formatSkillListStatus(applied) : undefined
 
         return [
           "Skills provide specialized instructions and workflows for specific tasks.",
           "Use the skill tool to load a skill when a task matches its description.",
-          // the agents seem to ingest the information about skills a bit better if we present a more verbose
-          // version of them here and a less verbose version in tool description, rather than vice versa.
-          Skill.fmt(list, { verbose: true }),
+          ...(status ? [status] : []),
+          formatSkillListBlock(applied.list, applied.format),
         ].join("\n")
       }),
 
@@ -222,7 +254,7 @@ const locationServiceMapNode = LayerNode.make({
 export const node = LayerNode.make({
   service: Service,
   layer: layer,
-  deps: [Skill.node, MCP.node, locationServiceMapNode],
+  deps: [Skill.node, MCP.node, locationServiceMapNode, Config.node], // Config optional at call-site via serviceOption
 })
 
 export * as SystemPrompt from "./system"

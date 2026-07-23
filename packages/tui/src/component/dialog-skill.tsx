@@ -5,6 +5,7 @@ import { useDialog } from "../ui/dialog"
 import { useSDK } from "../context/sdk"
 import { useTheme } from "../context/theme"
 import { errorMessage } from "../util/error"
+import { DialogSkillListPolicy } from "./dialog-skill-list-policy"
 
 export type DialogSkillProps = {
   onSelect: (skill: string) => void
@@ -36,16 +37,28 @@ export function DialogSkill(props: DialogSkillProps) {
     if (showError()) return []
     const list = skills() ?? []
     const maxWidth = Math.max(0, ...list.map((s) => s.name.length))
-    return list.map((skill) => ({
-      title: skill.name.padEnd(maxWidth),
-      description: skill.description?.replace(/\s+/g, " ").trim(),
-      value: skill.name,
-      category: "Skills",
+    const policy: DialogSelectOption<string> = {
+      title: "⚙ Skill list policy…",
+      description: "Cap max listed / format (compact|names|verbose) — applies next turn",
+      value: "__skill_list_policy__",
+      category: "Control",
       onSelect: () => {
-        props.onSelect(skill.name)
-        dialog.clear()
+        dialog.replace(() => <DialogSkillListPolicy />)
       },
-    }))
+    }
+    return [
+      policy,
+      ...list.map((skill) => ({
+        title: skill.name.padEnd(maxWidth),
+        description: skill.description?.replace(/\s+/g, " ").trim(),
+        value: skill.name,
+        category: "Skills",
+        onSelect: () => {
+          props.onSelect(skill.name)
+          dialog.clear()
+        },
+      })),
+    ]
   })
 
   return (

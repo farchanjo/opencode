@@ -86,4 +86,8 @@ export const Flag = {
   get OPENCODE_OPERATOR_CONTROL_PLANE() {
     return truthy("OPENCODE_OPERATOR_CONTROL_PLANE") || process.env["OPENCODE_DEV_OPERATOR_"] === "1"
   },
+  /** Dump LLM HTTP request summaries (skill markers on the wire). See opencode debug/llm-http. */
+  get OPENCODE_DEBUG_LLM_HTTP() {
+    return truthy("OPENCODE_DEBUG_LLM_HTTP")
+  },
 }

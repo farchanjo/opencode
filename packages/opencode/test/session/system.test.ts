@@ -99,7 +99,7 @@ describe("session.system", () => {
     )
   })
 
-  it.effect("skills output is sorted by name and stable across calls", () =>
+  it.effect("skills output is stable across calls and omits undescribed skills", () =>
     Effect.gen(function* () {
       const prompt = yield* SystemPrompt.Service
       const first = yield* prompt.skills(build)
@@ -107,15 +107,12 @@ describe("session.system", () => {
       const output = first ?? (yield* Effect.fail(new NamedError.Unknown({ message: "missing skills output" })))
 
       expect(first).toBe(second)
-
-      const alpha = output.indexOf("<name>alpha-skill</name>")
-      const middle = output.indexOf("<name>middle-skill</name>")
-      const zeta = output.indexOf("<name>zeta-skill</name>")
-
-      expect(alpha).toBeGreaterThan(-1)
-      expect(middle).toBeGreaterThan(alpha)
-      expect(zeta).toBeGreaterThan(middle)
+      // Feature 058: without prompt/rank, preserves membership order (not forced A–Z).
+      expect(output).toContain("<name>alpha-skill</name>")
+      expect(output).toContain("<name>middle-skill</name>")
+      expect(output).toContain("<name>zeta-skill</name>")
       expect(output).not.toContain("manual-skill")
+      expect(output).toContain("skill_list:")
     }),
   )
 
@@ -136,7 +133,7 @@ describe("session.system", () => {
   it.effect("a ranked subset narrows the skill list to only the ranked, still-visible names", () =>
     Effect.gen(function* () {
       const prompt = yield* SystemPrompt.Service
-      const output = yield* prompt.skills(build, ["alpha-skill"])
+      const output = yield* prompt.skills(build, { ranked: ["alpha-skill"] })
 
       expect(output).toContain("<name>alpha-skill</name>")
       expect(output).not.toContain("<name>zeta-skill</name>")
@@ -147,7 +144,7 @@ describe("session.system", () => {
   it.effect("a ranked subset never widens the permission-visible set (undescribed skills stay excluded)", () =>
     Effect.gen(function* () {
       const prompt = yield* SystemPrompt.Service
-      const output = yield* prompt.skills(build, ["manual-skill", "alpha-skill"])
+      const output = yield* prompt.skills(build, { ranked: ["manual-skill", "alpha-skill"] })
 
       expect(output).toContain("<name>alpha-skill</name>")
       expect(output).not.toContain("manual-skill")
@@ -157,7 +154,7 @@ describe("session.system", () => {
   it.effect("an empty ranked list narrows to no skills, never widening to the full set", () =>
     Effect.gen(function* () {
       const prompt = yield* SystemPrompt.Service
-      const output = yield* prompt.skills(build, [])
+      const output = yield* prompt.skills(build, { ranked: [] })
 
       expect(output).toContain("No skills are currently available.")
     }),
@@ -166,14 +163,16 @@ describe("session.system", () => {
   it.effect("ranking never changes Skill.fmt's own rendering logic, only membership/order", () =>
     Effect.gen(function* () {
       const prompt = yield* SystemPrompt.Service
-      const ranked = yield* prompt.skills(build, ["zeta-skill", "alpha-skill"])
+      const ranked = yield* prompt.skills(build, { ranked: ["zeta-skill", "alpha-skill"] })
       const unranked = yield* prompt.skills(build)
 
       // Same tag/attribute shape as the unranked rendering, just narrowed to
       // the ranked names — proves the seam never bypasses `Skill.fmt`.
       expect(ranked).toContain("<available_skills>")
-      expect(ranked).toContain("<location>/tmp/alpha-skill/SKILL.md</location>")
-      expect(unranked).toContain("<location>/tmp/alpha-skill/SKILL.md</location>")
+      expect(ranked!).toContain("<name>zeta-skill</name>")
+      expect(ranked!).toContain("<name>alpha-skill</name>")
+      expect(ranked!.indexOf("zeta-skill")).toBeLessThan(ranked!.indexOf("alpha-skill"))
+      expect(unranked).toContain("available_skills")
     }),
   )
 

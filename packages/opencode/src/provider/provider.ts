@@ -1734,7 +1734,9 @@ const layer = Layer.effect(
         delete options["headerTimeout"]
 
         options["fetch"] = async (input: any, init?: BunFetchRequestInit) => {
-          const fetchFn = customFetch ?? fetch
+          // OPENCODE_DEBUG_LLM_HTTP=1 wraps transport fetch to capture skill markers on the wire.
+          const { wrapFetchForLlmHttpDebug } = await import("@/debug/llm-http")
+          const fetchFn = wrapFetchForLlmHttpDebug((customFetch ?? fetch) as typeof globalThis.fetch)
           const opts = init ?? {}
           const chunkAbortCtl = typeof chunkTimeout === "number" && chunkTimeout > 0 ? new AbortController() : undefined
           const headerTimeoutMs = headerTimeout === false ? undefined : headerTimeout

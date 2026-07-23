@@ -246,6 +246,10 @@ export const Info = Schema.Struct({
         description:
           "Feature 052 fourth retrieval pass gate over skill_chunks (Tier-2 <auto_skills> auto-priming), a SEPARATE surface from semantic_narrowing that composes with (never replaces) its 'skills' gate. Absent, or enabled false, keeps the Tier-1-only floor (identical to today).",
       }),
+      skill_list: Schema.optional(NarrowingConfig.SkillListConfig).annotate({
+        description:
+          "Feature 058 Tier-1 skill listing cap/format (max_listed, format verbose|compact|names, hard_cap). Prevents large catalogs from flooding the system prompt even when semantic ranking is passthrough.",
+      }),
     }),
   ),
 }).annotate({ identifier: "Config" })

@@ -839,15 +839,27 @@ export async function createLiveOperatorStack(input: CreateLiveOperatorStackInpu
     reindex: (input) => withSemanticReconcileLock(port.reindex(input), "reindex"),
     reconcile: (input) => withSemanticReconcileLock(port.reconcile(input), "reconcile"),
   })
+  const semanticIndexPort = milvus
+    ? withLockedMaintenance(MilvusBinding.createMilvusIndexPort(milvus))
+    : undefined
   const semanticBackend = SemanticBackendLive.createLiveSemanticBackend({
     config: store.config,
     milvus,
     milvusPort,
     rerankProbe,
     embeddingProbe,
-    override: milvus ? { index: withLockedMaintenance(MilvusBinding.createMilvusIndexPort(milvus)) } : undefined,
+    override: semanticIndexPort ? { index: semanticIndexPort } : undefined,
   })
   const semanticWiring = SemanticStackWiring.createSemanticDomainWiring({ backend: semanticBackend })
+
+  // Feature 058 — when OpenCode opens with a live index port, dispatch background
+  // skills + skill_chunks reconcile/reindex so semantic ranking is not stuck on
+  // passthrough. Fail-open; never blocks stack construction.
+  if (semanticIndexPort) {
+    void import("@/semantic/startup-index")
+      .then(({ dispatchStartupSemanticIndex }) => dispatchStartupSemanticIndex(semanticIndexPort))
+      .catch(() => {})
+  }
 
   // === Feature 008 / 014 T008 — mcp domain port composition =================
   // The typed 30 `mcp.*` operator ports over the Feature 008 application host. The
