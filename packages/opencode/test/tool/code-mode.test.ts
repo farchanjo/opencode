@@ -48,7 +48,8 @@ function harness(input: {
       trigger: input.trigger ?? (((_name, _input, output) => Effect.succeed(output)) as Plugin.Interface["trigger"]),
     }),
     Layer.mock(Truncate.Service, {
-      output: (text: string) => Effect.succeed({ content: text, truncated: false as const }),
+      output: (text: string) =>
+        Effect.succeed({ content: text, truncated: false, outputPath: "/tmp/tool_mock" }),
     }),
     Layer.mock(Agent.Service, {
       get: () => Effect.succeed({ name: "build", permission: input.permission ?? [] } as any),

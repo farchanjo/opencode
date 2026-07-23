@@ -684,7 +684,56 @@ describe("session.message-v2.toModelMessage", () => {
     ])
   })
 
-  test("replaces compacted tool output with placeholder", async () => {
+  test("replaces compacted tool output with path when full buffer was preserved", async () => {
+    const userID = "m-user"
+    const assistantID = "m-assistant"
+
+    const input: SessionV1.WithParts[] = [
+      {
+        info: userInfo(userID),
+        parts: [
+          {
+            ...basePart(userID, "u1"),
+            type: "text",
+            text: "run tool",
+          },
+        ] as SessionV1.Part[],
+      },
+      {
+        info: assistantInfo(assistantID, userID),
+        parts: [
+          {
+            ...basePart(assistantID, "a1"),
+            type: "tool",
+            callID: "call-1",
+            tool: "bash",
+            state: {
+              status: "completed",
+              input: { cmd: "ls" },
+              output: "this should be cleared",
+              title: "Bash",
+              metadata: { outputPath: "/tmp/tool_full_output.txt" },
+              time: { start: 0, end: 1, compacted: 1 },
+            },
+          },
+        ] as SessionV1.Part[],
+      },
+    ]
+
+    const messages = await MessageV2.toModelMessages(input, model)
+    expect(messages[0]).toEqual({
+      role: "user",
+      content: [{ type: "text", text: "run tool" }],
+    })
+    const toolMsg = messages.find((m) => m.role === "tool") as
+      | { content: Array<{ type: string; output?: { type: string; value?: string } }> }
+      | undefined
+    const value = toolMsg?.content?.[0]?.output?.value ?? ""
+    expect(value).toContain("/tmp/tool_full_output.txt")
+    expect(value).not.toContain("this should be cleared")
+  })
+
+  test("replaces compacted tool output with placeholder when no path", async () => {
     const userID = "m-user"
     const assistantID = "m-assistant"
 

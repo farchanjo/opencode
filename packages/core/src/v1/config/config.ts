@@ -173,15 +173,32 @@ export const Info = Schema.Struct({
   tool_output: Schema.optional(
     Schema.Struct({
       max_lines: Schema.optional(PositiveInt).annotate({
-        description: "Maximum lines of tool output before it is truncated and saved to disk (default: 2000)",
+        description:
+          "Maximum lines of tool output kept in-context before preview truncation (default: 2000). Full buffer is always saved to disk.",
       }),
       max_bytes: Schema.optional(PositiveInt).annotate({
-        description: "Maximum bytes of tool output before it is truncated and saved to disk (default: 51200)",
+        description:
+          "Maximum bytes of tool output kept in-context before preview truncation (default: 51200). Full buffer is always saved to disk.",
       }),
     }),
   ).annotate({
     description:
-      "Thresholds for truncating tool output. When output exceeds either limit, the full text is written to the truncation directory and a preview is returned.",
+      "In-context tool output preview thresholds. The full tool buffer is always written to the truncation directory so other agents can Read/Grep it; when either limit is exceeded only a preview is injected into the model context.",
+  }),
+  chat_output: Schema.optional(
+    Schema.Struct({
+      max_words: Schema.optional(NonNegativeInt).annotate({
+        description:
+          "Hard cap on primary-agent console chat text (words). 0 or omit = unlimited. Does not limit tool-call arguments or file write payloads.",
+      }),
+      max_tokens: Schema.optional(NonNegativeInt).annotate({
+        description:
+          "Hard cap on primary-agent console chat text (estimated tokens). 0 or omit = unlimited. Does not limit tool-call arguments or file write payloads.",
+      }),
+    }),
+  ).annotate({
+    description:
+      "Console chat generation budget for primary/main agents. Enforced via system instruction and stream-side text clamp; tool/file write payloads are exempt. TUI can patch this live via global config update.",
   }),
   compaction: Schema.optional(
     Schema.Struct({

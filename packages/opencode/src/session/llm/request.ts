@@ -17,6 +17,7 @@ import { mergeDeep } from "remeda"
 import { Config } from "@/config/config"
 import { LangLockInjection } from "@/langlock/injection-service"
 import { resolveSessionLangLockEffective } from "@/langlock/session-effective"
+import { chatOutputSystemBlock } from "../chat-output"
 
 const USER_AGENT = `opencode/${InstallationVersion}`
 
@@ -72,9 +73,17 @@ export const prepare = Effect.fn("LLMRequestPrep.prepare")(function* (input: Pre
   // Config.Service is optional so unit tests that drive prepare without Instance still run.
   const configOption = yield* Effect.serviceOption(Config.Service)
   const info =
-    configOption._tag === "Some" ? yield* configOption.value.get() : ({} as { operator?: unknown })
+    configOption._tag === "Some"
+      ? yield* configOption.value.get()
+      : ({} as { operator?: unknown; chat_output?: { max_words?: number; max_tokens?: number } })
   const langLockEffective = yield* Effect.promise(() => resolveSessionLangLockEffective({ config: info }))
-  const system = LangLockInjection.injectIntoSystemArray([header], langLockEffective)
+  // Primary agents only: console chat budget instruction (tool/file payloads exempt).
+  const chatBlock =
+    input.agent.mode === "primary" && info.chat_output ? chatOutputSystemBlock(info.chat_output) : ""
+  const system = LangLockInjection.injectIntoSystemArray(
+    chatBlock ? [header, chatBlock] : [header],
+    langLockEffective,
+  )
 
   const headerBeforeTransform = system[0]
   yield* input.plugin.trigger(

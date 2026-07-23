@@ -33,6 +33,7 @@ import { OrchestrationAggregate } from "./orchestration-aggregate"
 import { createConfigAdapter, AUTHORITY } from "@/routing/adapters/outbound/config-adapter"
 import { sessionConfigReadPort, createBoundedLru } from "./routing-resolve"
 import type { RoutingConfig } from "@opencode-ai/schema/routing/config"
+import { applyChatBudget, resolveChatBudget, type ChatBudget } from "./chat-output"
 
 const DOOM_LOOP_THRESHOLD = 3
 export type Result = "compact" | "stop" | "continue"
@@ -98,6 +99,8 @@ interface ProcessorContext extends Input {
   needsCompaction: boolean
   currentText: SessionV1.TextPart | undefined
   reasoningMap: Record<string, SessionV1.ReasoningPart>
+  /** Primary-agent console text budget; tool-call streams are unaffected. */
+  chatBudget: ChatBudget | undefined
 }
 
 type StreamEvent = LLMEvent
@@ -161,6 +164,12 @@ const layer = Layer.effect(
       // may execute tools internally before emitting start-step events,
       // so capturing inside the event handler can be too late.
       const initialSnapshot = yield* snapshot.track()
+      const cfg = yield* config.get()
+      const agentInfo = yield* agents.get(input.assistantMessage.agent).pipe(Effect.catch(() => Effect.succeed(undefined)))
+      const chatBudget =
+        agentInfo?.mode === "primary" && !input.assistantMessage.summary
+          ? resolveChatBudget(cfg.chat_output)
+          : undefined
       const ctx: ProcessorContext = {
         assistantMessage: input.assistantMessage,
         sessionID: input.sessionID,
@@ -172,6 +181,7 @@ const layer = Layer.effect(
         needsCompaction: false,
         currentText: undefined,
         reasoningMap: {},
+        chatBudget,
       }
       let aborted = false
 
@@ -661,15 +671,38 @@ const layer = Layer.effect(
 
           case "text-delta":
             if (!ctx.currentText) return
-            ctx.currentText.text += value.text
-            if (value.providerMetadata) ctx.currentText.metadata = value.providerMetadata
-            yield* session.updatePartDelta({
-              sessionID: ctx.currentText.sessionID,
-              messageID: ctx.currentText.messageID,
-              partID: ctx.currentText.id,
-              field: "text",
-              delta: value.text,
-            })
+            // Hard cap console chat text for primary agents. Tool-call arguments
+            // stream on other events and are never passed through this path.
+            if (ctx.chatBudget?.exhausted) return
+            {
+              const before = ctx.currentText.text
+              const candidate = before + value.text
+              if (ctx.chatBudget) {
+                const enforced = applyChatBudget(candidate, ctx.chatBudget)
+                ctx.chatBudget.exhausted = enforced.exhausted
+                const kept = enforced.text.slice(before.length)
+                if (!kept) return
+                ctx.currentText.text = enforced.text
+                if (value.providerMetadata) ctx.currentText.metadata = value.providerMetadata
+                yield* session.updatePartDelta({
+                  sessionID: ctx.currentText.sessionID,
+                  messageID: ctx.currentText.messageID,
+                  partID: ctx.currentText.id,
+                  field: "text",
+                  delta: kept,
+                })
+                return
+              }
+              ctx.currentText.text = candidate
+              if (value.providerMetadata) ctx.currentText.metadata = value.providerMetadata
+              yield* session.updatePartDelta({
+                sessionID: ctx.currentText.sessionID,
+                messageID: ctx.currentText.messageID,
+                partID: ctx.currentText.id,
+                field: "text",
+                delta: value.text,
+              })
+            }
             return
 
           case "text-end":
@@ -685,6 +718,12 @@ const layer = Layer.effect(
               },
               { text: ctx.currentText.text },
             )).text
+            // Final clamp after plugins (console text only).
+            if (ctx.chatBudget) {
+              const enforced = applyChatBudget(ctx.currentText.text, ctx.chatBudget)
+              ctx.currentText.text = enforced.text
+              ctx.chatBudget.exhausted = enforced.exhausted
+            }
             {
               const end = Date.now()
               ctx.currentText.time = { start: ctx.currentText.time?.start ?? end, end }

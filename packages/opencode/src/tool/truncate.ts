@@ -17,7 +17,16 @@ export const MAX_BYTES = 50 * 1024
 export const DIR = TRUNCATION_DIR
 export const GLOB = path.join(TRUNCATION_DIR, "*")
 
-export type Result = { content: string; truncated: false } | { content: string; truncated: true; outputPath: string }
+/**
+ * Full tool output is **always** written to disk (`outputPath`) so other agents
+ * can Read/Grep the complete buffer. `content` is the in-context preview (full
+ * when under limits, truncated with path hint when over).
+ */
+export type Result = {
+  content: string
+  truncated: boolean
+  outputPath: string
+}
 
 export interface Options {
   maxLines?: number
@@ -34,8 +43,8 @@ export interface Interface {
   readonly cleanup: () => Effect.Effect<void>
   readonly write: (text: string) => Effect.Effect<string>
   /**
-   * Returns output unchanged when it fits within the limits, otherwise writes the full text
-   * to the truncation directory and returns a preview plus a hint to inspect the saved file.
+   * Always persists the full buffer to the truncation directory, then returns
+   * either the full text (under limits) or a preview + path for agents.
    */
   readonly output: (text: string, options?: Options, agent?: Agent.Info) => Effect.Effect<Result>
   /**
@@ -90,8 +99,12 @@ const layer = Layer.effect(
       const lines = text.split("\n")
       const totalBytes = Buffer.byteLength(text, "utf-8")
 
+      // Always persist the full buffer so other agents can recover everything.
+      const file = yield* write(text)
+
       if (lines.length <= maxLines && totalBytes <= maxBytes) {
-        return { content: text, truncated: false } as const
+        // Full buffer is on disk; in-context keeps the full text (no preview cut).
+        return { content: text, truncated: false, outputPath: file }
       }
 
       const out: string[] = []
@@ -124,11 +137,10 @@ const layer = Layer.effect(
       const removed = hitBytes ? totalBytes - bytes : lines.length - out.length
       const unit = hitBytes ? "bytes" : "lines"
       const preview = out.join("\n")
-      const file = yield* write(text)
 
       const hint = hasTaskTool(agent)
-        ? `The tool call succeeded but the output was truncated. Full output saved to: ${file}\nUse the Task tool to have explore agent process this file with Grep and Read (with offset/limit). Do NOT read the full file yourself - delegate to save context.`
-        : `The tool call succeeded but the output was truncated. Full output saved to: ${file}\nUse Grep to search the full content or Read with offset/limit to view specific sections.`
+        ? `The tool call succeeded but the in-context preview was truncated. Full output saved to: ${file}\nUse the Task tool to have explore agent process this file with Grep and Read (with offset/limit). Do NOT read the full file yourself - delegate to save context.`
+        : `The tool call succeeded but the in-context preview was truncated. Full output saved to: ${file}\nUse Grep to search the full content or Read with offset/limit to view specific sections.`
 
       return {
         content:
@@ -137,7 +149,7 @@ const layer = Layer.effect(
             : `...${removed} ${unit} truncated...\n\n${hint}\n\n${preview}`,
         truncated: true,
         outputPath: file,
-      } as const
+      }
     })
 
     yield* cleanup().pipe(
